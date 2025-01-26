@@ -1,0 +1,15 @@
+{
+  "name": "pterobot",
+  "version": "0.1.0",
+  "description": "a discord bot that interacts with pterodactyls API",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "flakey",
+  "license": "ISC",
+  "dependencies": {
+    "discord.js": "^14.17.3",
+    "dotenv": "^16.4.7"
+  }
+}
