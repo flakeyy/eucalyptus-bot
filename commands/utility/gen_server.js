@@ -5,7 +5,6 @@ const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
 
 async function getUserIdByName(username) {
-    console.log("started user lookup")
     const result = await client.request({
         path: `/api/application/users?filter[username]=${username}`,
         method: 'GET',
@@ -13,7 +12,6 @@ async function getUserIdByName(username) {
     });
     const jsonString = await result.body.json();
     const jsonObject = await jsonString.data[0];
-    console.log("finishing user lookup")
     try {
         return jsonObject.attributes.id;
     } catch(error) {
@@ -25,7 +23,6 @@ async function getUserIdByName(username) {
 
 // CANT FILTER NESTS
 async function getNestIdByName(nest) { 
-    console.log("started nest lookup")
     const result = await client.request({
         path: `/api/application/nests?filter[name]=${nest}`,
         method: 'GET',
@@ -33,7 +30,6 @@ async function getNestIdByName(nest) {
     }); 
     const jsonString = await result.body.json();
     const jsonObject = await jsonString.data[0];
-    console.log("finishing nest lookup")
     try {
         return jsonObject.attributes.id;
     } catch(error) {
@@ -44,7 +40,6 @@ async function getNestIdByName(nest) {
 
 // CANT FILTER EGGS
 async function getEggIdByName(nestId, egg) {
-    console.log("started egg lookup")
     const result = await client.request({
         path: `/api/application/nests/${nestId}/eggs?filter[name]=${egg}`,
         method: 'GET',
@@ -52,7 +47,6 @@ async function getEggIdByName(nestId, egg) {
     });
     const jsonString = await result.body.json();
     const jsonObject = await jsonString.data[0];
-    console.log("finishing egg lookup")
     try {
         console.
         console.log(jsonObject);
@@ -66,8 +60,8 @@ async function getEggIdByName(nestId, egg) {
 
 
 async function createServer(name, user, nest, egg, memory) {
-    console.log("started server creation")
-    returnMessage = -1;
+    console.log("starting server creation")
+    returnMessage = "";
     const userId = await getUserIdByName(user);
     const nestId = await getNestIdByName(nest);
     const eggId = await getEggIdByName(nestId, egg);
