@@ -30,7 +30,7 @@ async function getUserIdByName(username) {
     try {
         return jsonObject.attributes.id;
     } catch(error) {
-        console.error(`User ${username} does not exist`)
+        console.error(`User '${username}' does not exist`)
         return -1;
     }
     
@@ -46,7 +46,7 @@ async function getNestIdByName(nest) {
     const jsonData = await jsonString.data;
     const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(nest.toLowerCase()))[0]
     if(filteredData == undefined) {
-        console.error(`Nest ${nest} does not exist`)
+        console.error(`Nest '${nest}' does not exist`)
         return -1;
     }
     else {
@@ -64,7 +64,7 @@ async function getEggIdByName(nestId, egg) {
     const jsonData = await jsonString.data;
     const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(egg.toLowerCase()))[0]
     if(filteredData == undefined) {
-        console.error(`Egg ${egg} does not exist`)
+        console.error(`Egg '${egg}' does not exist`)
         return -1;
     }
     else {
