@@ -4,6 +4,21 @@ const { api_key } = require('../../config.json');
 const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
 
+const discordIds = {
+    "flakey":['132675281348460544'],
+    "death":['929565941958852679']
+}
+
+function authenticateUser(username, discordId) {
+    console.log(discordIds[username], discordId)
+    if(discordIds[username] == discordId.toString()) {
+        return true
+    }
+    else {
+        return false
+    }
+}
+
 async function getUserIdByName(username) {
     const result = await client.request({
         path: `/api/application/users?filter[username]=${username}`,
@@ -21,77 +36,133 @@ async function getUserIdByName(username) {
     
 }
 
-// CANT FILTER NESTS
 async function getNestIdByName(nest) { 
     const result = await client.request({
-        path: `/api/application/nests?filter[name]=${nest}`,
+        path: `/api/application/nests`,
         method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
     }); 
     const jsonString = await result.body.json();
-    const jsonObject = await jsonString.data[0];
-    try {
-        return jsonObject.attributes.id;
-    } catch(error) {
+    const jsonData = await jsonString.data;
+    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(nest.toLowerCase()))[0]
+    if(filteredData == undefined) {
         console.error(`Nest ${nest} does not exist`)
         return -1;
     }
+    else {
+        return filteredData.attributes.id;
+    }
 }
 
-// CANT FILTER EGGS
 async function getEggIdByName(nestId, egg) {
     const result = await client.request({
-        path: `/api/application/nests/${nestId}/eggs?filter[name]=${egg}`,
+        path: `/api/application/nests/${nestId}/eggs`,
         method: 'GET',
         headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
     });
     const jsonString = await result.body.json();
-    const jsonObject = await jsonString.data[0];
-    try {
-        console.
-        console.log(jsonObject);
-        console.log(jsonObject.attributes.name);
-        return jsonObject.attributes.id;
-    } catch(error) {
+    const jsonData = await jsonString.data;
+    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(egg.toLowerCase()))[0]
+    if(filteredData == undefined) {
         console.error(`Egg ${egg} does not exist`)
         return -1;
     }
+    else {
+        return filteredData.attributes.id;
+    }
 }
 
+async function getDefaultAllocation() {
+    const result = await client.request({
+        path: `/api/application/nodes/1/allocations`,
+        method: 'GET',
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
+    });
+    const jsonString = await result.body.json();
+    const jsonData = await jsonString.data;
 
-async function createServer(name, user, nest, egg, memory) {
-    console.log("starting server creation")
-    returnMessage = "";
-    const userId = await getUserIdByName(user);
-    const nestId = await getNestIdByName(nest);
-    const eggId = await getEggIdByName(nestId, egg);
+    for(i=0;i<jsonData.length;i++) {
+        if(!jsonData[i].attributes.assigned && jsonData[i].attributes.alias == null) {
+            return jsonData[i].attributes.id;
+        }
+    }
+    return -1;
+}
 
+async function createServer(name, user, nest, egg, memory, discordId) {
     if(name == "" || name == null) {
-        returnMessage = `Server name cannot be blank.`
+        return `Server name cannot be blank.`
     }
-    else if(userId == -1) {
-        returnMessage = `User ${user} does not exist.\nPlease try again.`
+    const userId = await getUserIdByName(user);
+    if(userId == -1) {
+        return `User ${user} does not exist.\nPlease try again.`
     }
-    else if(nestId == -1) {
-        returnMessage = `Nest ${nest} does not exist.\nPlease try again.`
+    if(!authenticateUser(user, discordId)) {
+        return `Unable to authenticate user '${user}' based on your Discord account.\nPlease try again with your own user.`
     }
-    else if(eggId == -1) {
-        returnMessage = `Egg ${egg} does not exist.\nPlease try again.`
+    const nestId = await getNestIdByName(nest);
+    if(nestId == -1) {
+        return `Nest ${nest} does not exist.\nPlease try again.`
+    }
+    const eggId = await getEggIdByName(nestId, egg);
+    if(eggId == -1) {
+        return `Egg ${egg} does not exist.\nPlease try again.`
+    }
+    const defaultAllocation = await getDefaultAllocation();
+    if(defaultAllocation == -1) {
+        return `Could not find a port to assign to the server.\nPlease let <@132675281348460544> know.`
+    }
+
+    const requestBody = JSON.stringify({
+        "name": name,
+        "user": userId,
+        "egg": eggId,
+        "docker_image": "ghcr.io/pterodactyl/yolks:java_21",
+        "startup": "java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=true -jar {{SERVER_JARFILE}}",
+        "environment" : {
+            "SERVER_JARFILE": "server.jar",
+            "VANILLA_VERSION": "latest",
+            "BUILD_NUMBER": "latest"
+        },
+        "limits": {
+            "memory": memory,
+            "swap": 0,
+            "disk": 0,
+            "io": 500,
+            "cpu": 400
+        },
+        "feature_limits": {
+            "databases": 0,
+            "backups": 24,
+            "allocations": 2
+        },
+        "allocation": {
+            "default": defaultAllocation
+        }
+    })
+
+    const result = await client.request({
+        path: `/api/application/servers`,
+        method: 'POST',
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
+        body: requestBody
+    });
+
+    // take buffer data, turn into text, then into a json object
+    const bufferData = await result.body.arrayBuffer();
+    const buffer = Buffer.from(bufferData);
+    const text = buffer.toString('utf-8');
+    const jsonText = JSON.parse(text);
+
+    if(result.statusCode == 201) {
+        console.log(`A server was created.\n${text}`)
+        return `Server '${jsonText.attributes.name}' successfully created and is currently installing and should be available at https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
     }
     else {
-        returnMessage = `Server successfully created.\nname: ${name}, user: ${user}, nest: ${nest}, egg: ${egg}, memory: ${memory}`
+        return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${result.statusCode}`
     }
-    console.log("finishing server creation")
-    return returnMessage
-
+    
 }
-
-/*client.request({
-    path: '/application/servers',
-    method: 'POST',
-    headers: '',
-    body: '?'
-})*/
 
 module.exports = {
 	data: new SlashCommandBuilder()
@@ -109,7 +180,7 @@ module.exports = {
         )
         .addStringOption(option =>
             option.setName('nest')
-                .setDescription('The Game Name')
+                .setDescription('Game Name')
                 .setRequired(true)
         )
         .addStringOption(option =>
@@ -124,13 +195,13 @@ module.exports = {
         ),
 
 	async execute(interaction) {
+        const discordId = interaction.user.id;
         const serverName = interaction.options.getString('server-name');
         const userName = interaction.options.getString('user');
         const nestName = interaction.options.getString('nest');
         const eggName = interaction.options.getString('egg');
-        const memoryMB = interaction.options.getInteger('memory')
-        
-        const serverResult = await createServer(serverName, userName, nestName, eggName, memoryMB)
+        const memoryMB = interaction.options.getInteger('memory');
+        const serverResult = await createServer(serverName, userName, nestName, eggName, memoryMB, discordId)
 
         await interaction.deferReply();
         await wait(2_500);
