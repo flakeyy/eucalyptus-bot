@@ -10,7 +10,6 @@ const discordIds = {
 }
 
 function authenticateUser(username, discordId) {
-    console.log(discordIds[username], discordId)
     if(discordIds[username] == discordId.toString()) {
         return true
     }
