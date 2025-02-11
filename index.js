@@ -1,15 +1,36 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { Client, Collection, Events, GatewayIntentBits } = require('discord.js');
-const { discord_token } = require('./config.json');
+const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
+const { Client: httpClient } = require('undici');
+const { discord_token, api_key } = require('./config.json');
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
+const hClient = new httpClient('https://dino.flakey.tech/');
 
-client.once(Events.ClientReady, readyClient => {
+async function setPresence(){
+	const result = await hClient.request({
+        path: `/api/application/servers`,
+        method: 'GET',
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
+    });
+	const jsonString = await result.body.json();
+    const jsonData = await jsonString.data;
+
+	dClient.user.setPresence({
+		activities: [{
+			name: `over ${jsonData.length} servers.`,
+			type: ActivityType.Watching
+		}],
+		status:"online"
+	})
+};
+
+dClient.once(Events.ClientReady, readyClient => {
 	console.log(`${readyClient.user.tag} is ready.`);
+	setPresence();
 });
 
-client.commands = new Collection();
+dClient.commands = new Collection();
 
 const foldersPath = path.join(__dirname, 'commands');
 const commandFolders = fs.readdirSync(foldersPath);
@@ -22,14 +43,14 @@ for (const folder of commandFolders) {
 		const command = require(filePath);
 		// Set a new item in the Collection with the key as the command name and the value as the exported module
 		if ('data' in command && 'execute' in command) {
-			client.commands.set(command.data.name, command);
+			dClient.commands.set(command.data.name, command);
 		} else {
 			console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
 		}
 	}
 }
 
-client.on(Events.InteractionCreate, async interaction => {
+dClient.on(Events.InteractionCreate, async interaction => {
 	if (!interaction.isChatInputCommand()) return;
 
 	const command = interaction.client.commands.get(interaction.commandName);
@@ -43,6 +64,7 @@ client.on(Events.InteractionCreate, async interaction => {
         await interaction.deferReply();
         await wait(4_000);
         await interaction.editReply('done!');
+		setPresence();
     }
 
 	try {
@@ -57,4 +79,4 @@ client.on(Events.InteractionCreate, async interaction => {
 	}
 });
 
-client.login(discord_token);
+dClient.login(discord_token);
