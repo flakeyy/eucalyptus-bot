@@ -112,16 +112,27 @@ async function createServer(name, user, nest, egg, memory, discordId) {
         return `Could not find a port to assign to the server.\nPlease let <@132675281348460544> know.`
     }
 
+    var startupCMD = ""
+
+    if(eggId == 18 && nestId == 1) {
+        startupCMD = "./bedrock_server"
+    }
+    else if(nestId == 1) {
+        startupCMD = "./bedrock_server"
+    }
+
     const requestBody = JSON.stringify({
         "name": name,
         "user": userId,
         "egg": eggId,
         "docker_image": "ghcr.io/pterodactyl/yolks:java_21",
-        "startup": "java -Xms128M -XX:MaxRAMPercentage=95.0 -Dterminal.jline=false -Dterminal.ansi=true -jar {{SERVER_JARFILE}}",
+        "startup": `${startupCMD}`,
         "environment" : {
             "SERVER_JARFILE": "server.jar",
             "VANILLA_VERSION": "latest",
-            "BUILD_NUMBER": "latest"
+            "BUILD_NUMBER": "latest",
+            "LD_LIBRARY_PATH": ".",
+            "BEDROCK_VERSION": "latest"
         },
         "limits": {
             "memory": memory,
@@ -158,6 +169,7 @@ async function createServer(name, user, nest, egg, memory, discordId) {
         return `Server '${jsonText.attributes.name}' successfully created and is currently installing and should be available at https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
     }
     else {
+        console.log(`Server creation failed.\n${text}`)
         return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${result.statusCode}`
     }
     
