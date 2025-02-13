@@ -25,6 +25,10 @@ async function setPresence(){
 	})
 };
 
+setInterval(() => {
+	setPresence();
+}, 300000)
+
 dClient.once(Events.ClientReady, readyClient => {
 	console.log(`${readyClient.user.tag} is ready.`);
 	setPresence();
@@ -64,7 +68,6 @@ dClient.on(Events.InteractionCreate, async interaction => {
         await interaction.deferReply();
         await wait(4_000);
         await interaction.editReply('done!');
-		setPresence();
     }
 
 	try {
