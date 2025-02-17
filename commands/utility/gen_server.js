@@ -32,7 +32,6 @@ async function getUserIdByName(username) {
         console.error(`User '${username}' does not exist`)
         return -1;
     }
-    
 }
 
 async function getNestIdByName(nest) { 
@@ -96,7 +95,7 @@ async function getEggData(nestId, eggId) {
     });
     const jsonString = await result.body.json();
     const jsonData = await jsonString.attributes;
-    console.log(jsonData.startup)
+    
     if(jsonData == undefined) {
         return -1;
     }
@@ -210,12 +209,12 @@ module.exports = {
         )
         .addStringOption(option =>
             option.setName('nest')
-                .setDescription('Game Name')
+                .setDescription('/get-nests for details')
                 .setRequired(true)
         )
         .addStringOption(option =>
             option.setName('egg')
-                .setDescription('The Server Type (if supported)')
+                .setDescription('/get-eggs for details')
                 .setRequired(true)
         )
         .addIntegerOption(option =>
