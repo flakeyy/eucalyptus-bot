@@ -25,6 +25,10 @@ async function setPresence(){
 	})
 };
 
+setInterval(() => {
+	setPresence();
+}, 300000)
+
 dClient.once(Events.ClientReady, readyClient => {
 	console.log(`${readyClient.user.tag} is ready.`);
 	setPresence();
