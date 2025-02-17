@@ -88,7 +88,35 @@ async function getDefaultAllocation() {
     return -1;
 }
 
+async function getEggData(nestId, eggId) {
+    const result = await client.request({
+        path: `/api/application/nests/${nestId}/eggs/${eggId}?include=variables`,
+        method: 'GET',
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
+    });
+    const jsonString = await result.body.json();
+    const jsonData = await jsonString.attributes;
+    console.log(jsonData.startup)
+    if(jsonData == undefined) {
+        return -1;
+    }
+    else {
+        return jsonData;
+    }
+}
+
+function extractEnvVariables(jsonData) {
+    const envVariables = {};
+
+    jsonData.data.forEach(item => {
+        const { env_variable, default_value } = item.attributes;
+        envVariables[env_variable] = default_value;
+    });
+    return envVariables;
+}
+
 async function createServer(name, user, nest, egg, memory, discordId) {
+    const testRequest = false;
     if(name == "" || name == null) {
         return `Server name cannot be blank.`
     }
@@ -111,29 +139,18 @@ async function createServer(name, user, nest, egg, memory, discordId) {
     if(defaultAllocation == -1) {
         return `Could not find a port to assign to the server.\nPlease let <@132675281348460544> know.`
     }
-
-    var startupCMD = ""
-
-    if(eggId == 18 && nestId == 1) {
-        startupCMD = "./bedrock_server"
-    }
-    else if(nestId == 1) {
-        startupCMD = "./bedrock_server"
+    const eggInfo = await getEggData(nestId, eggId);
+    if(eggInfo == -1) {
+        return `Egg info could not be returned.\nPlease let <@132675281348460544> know.`
     }
 
     const requestBody = JSON.stringify({
         "name": name,
         "user": userId,
         "egg": eggId,
-        "docker_image": "ghcr.io/pterodactyl/yolks:java_21",
-        "startup": `${startupCMD}`,
-        "environment" : {
-            "SERVER_JARFILE": "server.jar",
-            "VANILLA_VERSION": "latest",
-            "BUILD_NUMBER": "latest",
-            "LD_LIBRARY_PATH": ".",
-            "BEDROCK_VERSION": "latest"
-        },
+        "docker_image": eggInfo.docker_image,
+        "startup": eggInfo.startup,
+        "environment" : extractEnvVariables(eggInfo.relationships.variables),
         "limits": {
             "memory": memory,
             "swap": 0,
@@ -150,7 +167,9 @@ async function createServer(name, user, nest, egg, memory, discordId) {
             "default": defaultAllocation
         }
     })
-
+    if(testRequest) {
+        return `Request was marked as test, no real API request was made, check console for details.`;
+    }
     const result = await client.request({
         path: `/api/application/servers`,
         method: 'POST',
