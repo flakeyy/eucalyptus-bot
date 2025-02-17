@@ -28,7 +28,7 @@ async function setPresence(){
 dClient.once(Events.ClientReady, readyClient => {
 	console.log(`${readyClient.user.tag} is ready.`);
 	setPresence();
-	setInterval(setPresence, 60000);
+	setInterval(setPresence, 300000);
 });
 
 dClient.commands = new Collection();
