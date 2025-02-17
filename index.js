@@ -28,6 +28,7 @@ async function setPresence(){
 dClient.once(Events.ClientReady, readyClient => {
 	console.log(`${readyClient.user.tag} is ready.`);
 	setPresence();
+	setInterval(setPresence, 60000);
 });
 
 dClient.commands = new Collection();
@@ -59,13 +60,6 @@ dClient.on(Events.InteractionCreate, async interaction => {
 		console.error(`No command matching ${interaction.commandName} was found.`);
 		return;
 	}
-
-    if(command === 'gen-server') {
-        await interaction.deferReply();
-        await wait(4_000);
-        await interaction.editReply('done!');
-		setPresence();
-    }
 
 	try {
 		await command.execute(interaction);
