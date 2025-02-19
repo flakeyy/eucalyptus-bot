@@ -9,12 +9,18 @@ const discordIds = {
     "death":['929565941958852679']
 }
 
-function authenticateUser(username, discordId) {
-    if(discordIds[username] == discordId.toString()) {
-        return true
+async function authenticateUserAndReturnUserId(discordId) {
+    var username = "";
+    for (const key in testValues) {
+        if (discordIds[key].includes(discordId)) {
+            username = key;
+        }
+    }
+    if(username != "") {
+        return await getUserIdByName(username);
     }
     else {
-        return false
+        return -1;
     }
 }
 
@@ -114,17 +120,14 @@ function extractEnvVariables(jsonData) {
     return envVariables;
 }
 
-async function createServer(name, user, nest, egg, memory, discordId) {
+async function createServer(name, nest, egg, memory, discordId) {
     const testRequest = false;
     if(name == "" || name == null) {
         return `Server name cannot be blank.`
     }
-    const userId = await getUserIdByName(user);
+    const userId = await authenticateUserAndReturnUserId(discordId);
     if(userId == -1) {
-        return `User ${user} does not exist.\nPlease try again.`
-    }
-    if(!authenticateUser(user, discordId)) {
-        return `Unable to authenticate user '${user}' based on your Discord account.\nPlease try again with your own user.`
+        return `Unable to find any authenticatable user based on your Discord account.\nPlease let <@132675281348460544> know if you believe this is in error.`
     }
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
@@ -166,9 +169,11 @@ async function createServer(name, user, nest, egg, memory, discordId) {
             "default": defaultAllocation
         }
     })
+
     if(testRequest) {
         return `Request was marked as test, no real API request was made, check console for details.`;
     }
+    
     const result = await client.request({
         path: `/api/application/servers`,
         method: 'POST',
@@ -187,7 +192,7 @@ async function createServer(name, user, nest, egg, memory, discordId) {
         return `Server '${jsonText.attributes.name}' successfully created and is currently installing and should be available at https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
     }
     else {
-        console.log(`Server creation failed.\n${text}`)
+        console.error(`Server creation failed.\n${text}`)
         return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${result.statusCode}`
     }
     
@@ -200,11 +205,6 @@ module.exports = {
         .addStringOption(option =>
             option.setName('server-name')
                 .setDescription('Server Name')
-                .setRequired(true)
-        )
-        .addStringOption(option => 
-            option.setName('user')
-                .setDescription('Your Panel Username')
                 .setRequired(true)
         )
         .addStringOption(option =>
@@ -226,11 +226,10 @@ module.exports = {
 	async execute(interaction) {
         const discordId = interaction.user.id;
         const serverName = interaction.options.getString('server-name');
-        const userName = interaction.options.getString('user');
         const nestName = interaction.options.getString('nest');
         const eggName = interaction.options.getString('egg');
         const memoryMB = interaction.options.getInteger('memory');
-        const serverResult = await createServer(serverName, userName, nestName, eggName, memoryMB, discordId)
+        const serverResult = await createServer(serverName, nestName, eggName, memoryMB, discordId)
 
         await interaction.deferReply();
         await wait(2_500);
