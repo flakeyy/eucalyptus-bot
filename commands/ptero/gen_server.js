@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { Client } = require('undici');
 const { api_key } = require('../../keys.json');
+const config = require('../../config.json');
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
@@ -102,8 +103,6 @@ function extractEnvVariables(jsonData) {
 }
 
 async function createServer(name, nest, egg, memory, discordId) {
-    const testRequest = true;
-
     const userId = authenticateUserForPermission(discordId, PERMISSIONS.CREATE_SERVER);
     if(userId == -1) {
         return `Unable to find any authenticatable user based on your Discord account.\nPlease let <@132675281348460544> know if you believe this is in error.`
@@ -159,7 +158,7 @@ async function createServer(name, nest, egg, memory, discordId) {
         }
     })
 
-    if(testRequest) {
+    if(config['fake-api-requests']) {
         return `Request was marked as test, no real API request was made, check console for details.`;
     }
 
