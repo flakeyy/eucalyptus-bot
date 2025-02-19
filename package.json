@@ -1,6 +1,6 @@
 {
   "name": "pterobot",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "description": "a discord bot that interacts with pterodactyls API",
   "main": "index.js",
   "scripts": {

@@ -1,34 +1,25 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { Client } = require('undici');
 const { api_key } = require('../../config.json');
-const { users } = require('../../users.json');
+const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
 
-async function authenticateUserAndReturnUserId(discordId) {
-    for (const user of users) {
-        if (user.discordId === discordId) {
-            return await getUserIdByName(user.panelUsername);
-        }
-    }
-    return -1;
-}
-
-async function getUserIdByName(username) {
-    const result = await client.request({
-        path: `/api/application/users?filter[username]=${username}`,
-        method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
-    });
-    const jsonString = await result.body.json();
-    const jsonObject = await jsonString.data[0];
-    try {
-        return jsonObject.attributes.id;
-    } catch(error) {
-        console.error(`User '${username}' does not exist`)
-        return -1;
-    }
-}
+// async function getUserIdByName(username) {
+//     const result = await client.request({
+//         path: `/api/application/users?filter[username]=${username}`,
+//         method: 'GET',
+//         headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
+//     });
+//     const jsonString = await result.body.json();
+//     const jsonObject = await jsonString.data[0];
+//     try {
+//         return jsonObject.attributes.id;
+//     } catch(error) {
+//         console.error(`User '${username}' does not exist`)
+//         return -1;
+//     }
+// }
 
 async function getNestIdByName(nest) { 
     const result = await client.request({
@@ -111,26 +102,34 @@ function extractEnvVariables(jsonData) {
 }
 
 async function createServer(name, nest, egg, memory, discordId) {
-    const testRequest = false;
-    if(name == "" || name == null) {
-        return `Server name cannot be blank.`
-    }
-    const userId = await authenticateUserAndReturnUserId(discordId);
+    const testRequest = true;
+
+    const userId = authenticateUserForPermission(discordId, PERMISSIONS.CREATE_SERVER);
     if(userId == -1) {
         return `Unable to find any authenticatable user based on your Discord account.\nPlease let <@132675281348460544> know if you believe this is in error.`
+    }
+    else if(userId == -2) {
+        return `You do not have permission to create a server.\nPlease let <@132675281348460544> know if you believe this is in error.`
+    }
+
+    if(name == "" || name == null) {
+        return `Server name cannot be blank.`
     }
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
         return `Nest ${nest} does not exist.\nPlease try again.`
     }
+
     const eggId = await getEggIdByName(nestId, egg);
     if(eggId == -1) {
         return `Egg ${egg} does not exist.\nPlease try again.`
     }
+
     const defaultAllocation = await getDefaultAllocation();
     if(defaultAllocation == -1) {
         return `Could not find a port to assign to the server.\nPlease let <@132675281348460544> know.`
     }
+
     const eggInfo = await getEggData(nestId, eggId);
     if(eggInfo == -1) {
         return `Egg info could not be returned.\nPlease let <@132675281348460544> know.`
@@ -179,7 +178,7 @@ async function createServer(name, nest, egg, memory, discordId) {
 
     if(result.statusCode == 201) {
         console.log(`A server was created.\n${text}`)
-        return `Server '${jsonText.attributes.name}' successfully created and is currently installing and should be available at https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
+        return `Server '${jsonText.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
     }
     else {
         console.error(`Server creation failed.\n${text}`)
