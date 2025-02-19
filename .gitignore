@@ -1,3 +1,4 @@
 .env
 config.json
+users.json
 node_modules
