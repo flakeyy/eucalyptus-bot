@@ -1,27 +1,17 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { Client } = require('undici');
 const { api_key } = require('../../config.json');
+const { users } = require('../../users.json');
 const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
 
-const discordIds = {
-    "flakey":['132675281348460544'],
-    "death":['929565941958852679']
-}
-
 async function authenticateUserAndReturnUserId(discordId) {
-    var username = "";
-    for (const key in testValues) {
-        if (discordIds[key].includes(discordId)) {
-            username = key;
+    for (const user of users) {
+        if (user.discordId === discordId) {
+            return await getUserIdByName(user.panelUsername);
         }
     }
-    if(username != "") {
-        return await getUserIdByName(username);
-    }
-    else {
-        return -1;
-    }
+    return -1;
 }
 
 async function getUserIdByName(username) {
@@ -173,7 +163,7 @@ async function createServer(name, nest, egg, memory, discordId) {
     if(testRequest) {
         return `Request was marked as test, no real API request was made, check console for details.`;
     }
-    
+
     const result = await client.request({
         path: `/api/application/servers`,
         method: 'POST',
