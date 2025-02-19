@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
 const { Client: httpClient } = require('undici');
-const { discord_token, api_key } = require('./config.json');
+const { discord_token, api_key } = require('./keys.json');
 
 const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
 const hClient = new httpClient('https://dino.flakey.tech/');

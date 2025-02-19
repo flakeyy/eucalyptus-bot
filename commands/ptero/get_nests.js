@@ -1,6 +1,6 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { Client } = require('undici');
-const { api_key } = require('../../config.json');
+const { api_key } = require('../../keys.json');
 const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
 

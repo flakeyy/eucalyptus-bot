@@ -1,4 +1,4 @@
 .env
-config.json
+keys.json
 users.json
 node_modules
