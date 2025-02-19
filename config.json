@@ -1,4 +1,6 @@
 {
+    "developer-mode": false,
+    "fake-api-requests": false,
     "clientId": "",
     "guildId" : ""
 }
