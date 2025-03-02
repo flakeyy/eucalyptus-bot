@@ -2,7 +2,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { users } = require('./users.json');
 
-
+// bitwise integer permisisons
 export const PERMISSIONS = {
     READ_NESTS: 1 << 0, //1
     READ_EGGS: 1 << 1, //2

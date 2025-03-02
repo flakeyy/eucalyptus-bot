@@ -2,6 +2,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
 const { Client: httpClient } = require('undici');
+try {
+    const { discord_token, api_key } = require('./keys.json');
+} catch(error) {
+    console.error("Error loading keys.json. Please make sure you have a keys.json file in the root directory.");
+	process.exit(1);
+}
+
+try {
+	const config = require('./config.json');
+} catch(error) {
+	console.error("Error loading config.json. Please make sure you have a config.json file in the root directory.");
+	process.exit(1);
+}
+
 const { discord_token, api_key } = require('./keys.json');
 
 const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
