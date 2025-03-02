@@ -16,6 +16,13 @@ try {
 	process.exit(1);
 }
 
+try {
+    const { users } = require('./users.json');
+} catch(error) {
+    console.error("Error loading users.json. Please make sure you have a users.json file in the root directory.");
+	process.exit(1);
+}
+
 const { discord_token, api_key } = require('./keys.json');
 
 const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
