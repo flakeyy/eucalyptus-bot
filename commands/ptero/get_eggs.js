@@ -4,6 +4,14 @@ const { api_key } = require('../../keys.json');
 const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
 
+function formatNames(jsonData) {
+    if (!jsonData || !Array.isArray(jsonData.data)) {
+        throw new Error("Invalid input: Expected an object with a 'data' array.");
+    }
+
+    return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
+}
+
 async function getNestIdByName(nest) { 
     const result = await client.request({
         path: `/api/application/nests`,
@@ -20,14 +28,6 @@ async function getNestIdByName(nest) {
     else {
         return filteredData.attributes.id;
     }
-}
-
-function formatNames(jsonData) {
-    if (!jsonData || !Array.isArray(jsonData.data)) {
-        throw new Error("Invalid input: Expected an object with a 'data' array.");
-    }
-
-    return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
 }
 
 async function getEggs(nestId) {

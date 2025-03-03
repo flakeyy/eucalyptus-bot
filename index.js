@@ -1,7 +1,3 @@
-const fs = require('node:fs');
-const path = require('node:path');
-const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
-const { Client: httpClient } = require('undici');
 try {
     const { discord_token, api_key } = require('./keys.json');
 } catch(error) {
@@ -23,6 +19,10 @@ try {
 	process.exit(1);
 }
 
+const fs = require('node:fs');
+const path = require('node:path');
+const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
+const { Client: httpClient } = require('undici');
 const { discord_token, api_key } = require('./keys.json');
 
 const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
