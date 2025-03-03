@@ -9,7 +9,7 @@ function formatNames(jsonData) {
         throw new Error("Invalid input: Expected an object with a 'data' array.");
     }
 
-    return jsonData.data.map(item => `- '${item.attributes.name}', ${item.attributes.description} | MEM: ${item.attributes.allocated_resources.memory}/${item.attributes.memory}MB Allocated`).join("\n");
+    return jsonData.data.map(item => `- ${item.attributes.name} | ${item.attributes.description} | MEM: ${item.attributes.allocated_resources.memory}/${item.attributes.memory}MB Allocated`).join("\n");
 }
 
 async function getNodes() {
