@@ -30,12 +30,12 @@ module.exports = {
         .setName('get-nodes')
         .setDescription('Gets information about available nodes.'),
     async execute(interaction) {
-        const nestData = await getNodes();
+        const nodeData = await getNodes();
 
         await interaction.deferReply();
         await wait(2_000);
-        if(typeof(nestData) === "string") {
-            await interaction.editReply(nestData);
+        if(typeof(nodeData) === "string") {
+            await interaction.editReply(nodeData);
         }
         else {
             await interaction.editReply("Server did not respond in time, it's likely the request timed out.");
