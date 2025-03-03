@@ -22,6 +22,24 @@ const wait = require('node:timers/promises').setTimeout;
 //     }
 // }
 
+async function getNodeIdByName(node) {
+    const result = await client.request({
+        path: `/api/application/nodes`,
+        method: 'GET',
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
+    }); 
+    const jsonString = await result.body.json();
+    const jsonData = await jsonString.data;
+    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(node.toLowerCase()))[0]
+    if(filteredData == undefined) {
+        console.error(`Node '${node}' does not exist`)
+        return -1;
+    }
+    else {
+        return filteredData.attributes.id;
+    }
+}
+
 async function getNestIdByName(nest) { 
     const result = await client.request({
         path: `/api/application/nests`,
@@ -58,9 +76,9 @@ async function getEggIdByName(nestId, egg) {
     }
 }
 
-async function getDefaultAllocation() {
+async function getDefaultAllocation(node) {
     const result = await client.request({
-        path: `/api/application/nodes/1/allocations`,
+        path: `/api/application/nodes/${node}/allocations`,
         method: 'GET',
         headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
     });
@@ -102,7 +120,7 @@ function extractEnvVariables(jsonData) {
     return envVariables;
 }
 
-async function createServer(name, nest, egg, memory, discordId) {
+async function createServer(name, node, nest, egg, memory, discordId) {
     const userId = authenticateUserForPermission(discordId, PERMISSIONS.CREATE_SERVER);
     if(userId == -1) {
         return `Unable to find any authenticatable user based on your Discord account.\nPlease let <@132675281348460544> know if you believe this is in error.`
@@ -114,6 +132,11 @@ async function createServer(name, nest, egg, memory, discordId) {
     if(name == "" || name == null) {
         return `Server name cannot be blank.`
     }
+    const nodeId = await getNodeIdByName(node);
+    if(nodeId == -1) {
+        return `Node ${node} does not exist.\nPlease try again.`
+    }
+
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
         return `Nest ${nest} does not exist.\nPlease try again.`
@@ -124,7 +147,7 @@ async function createServer(name, nest, egg, memory, discordId) {
         return `Egg ${egg} does not exist.\nPlease try again.`
     }
 
-    const defaultAllocation = await getDefaultAllocation();
+    const defaultAllocation = await getDefaultAllocation(nodeId);
     if(defaultAllocation == -1) {
         return `Could not find a port to assign to the server.\nPlease let <@132675281348460544> know.`
     }
@@ -151,15 +174,16 @@ async function createServer(name, nest, egg, memory, discordId) {
         "feature_limits": {
             "databases": 0,
             "backups": 24,
-            "allocations": 2
+            "allocations": 4
         },
         "allocation": {
             "default": defaultAllocation
         }
     })
 
-    if(config['fake-api-requests']) {
-        return `Request was marked as test, no real API request was made, check console for details.`;
+    if(config['developer-mode']) {
+        console.log(requestBody);
+        return `Developer mode enabled, no real API request was made, check console for details.`;
     }
 
     const result = await client.request({
@@ -196,6 +220,11 @@ module.exports = {
                 .setRequired(true)
         )
         .addStringOption(option =>
+            option.setName('node')
+                .setDescription('/get-nodes for details')
+                .setRequired(true)
+        )
+        .addStringOption(option =>
             option.setName('nest')
                 .setDescription('/get-nests for details')
                 .setRequired(true)
@@ -214,10 +243,11 @@ module.exports = {
 	async execute(interaction) {
         const discordId = interaction.user.id;
         const serverName = interaction.options.getString('server-name');
+        const nodeName = interaction.options.getString('node');
         const nestName = interaction.options.getString('nest');
         const eggName = interaction.options.getString('egg');
         const memoryMB = interaction.options.getInteger('memory');
-        const serverResult = await createServer(serverName, nestName, eggName, memoryMB, discordId)
+        const serverResult = await createServer(serverName, nodeName, nestName, eggName, memoryMB, discordId)
 
         await interaction.deferReply();
         await wait(2_500);
