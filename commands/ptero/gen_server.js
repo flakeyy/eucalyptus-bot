@@ -86,7 +86,7 @@ async function getDefaultAllocation(node) {
     const jsonData = await jsonString.data;
 
     for(i=0;i<jsonData.length;i++) {
-        if(!jsonData[i].attributes.assigned && jsonData[i].attributes.alias == null) {
+        if(!jsonData[i].attributes.assigned && (jsonData[i].attributes.alias == null || (jsonData[i].attributes.alias != null && jsonData[i].attributes.ip == "0.0.0.0"))) {
             return jsonData[i].attributes.id;
         }
     }
