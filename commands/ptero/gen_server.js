@@ -169,7 +169,7 @@ async function createServer(name, node, nest, egg, memory, discordId) {
             "swap": 0,
             "disk": 0,
             "io": 500,
-            "cpu": 400
+            "cpu": 800
         },
         "feature_limits": {
             "databases": 0,
