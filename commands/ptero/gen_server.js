@@ -5,6 +5,7 @@ const config = require('../../config.json');
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
+const blacklist = require('../../blacklist.json');
 
 // async function getUserIdByName(username) {
 //     const result = await client.request({
@@ -35,9 +36,10 @@ async function getNodeIdByName(node) {
         console.error(`Node '${node}' does not exist`)
         return -1;
     }
-    else {
-        return filteredData.attributes.id;
+    if (blacklist.nodes[filteredData.attributes.name]) {
+        return `Node '${filteredData.attributes.name}' is currently blacklisted: ${blacklist.nodes[filteredData.attributes.name]}`;
     }
+    return filteredData.attributes.id;
 }
 
 async function getNestIdByName(nest) { 
@@ -136,10 +138,17 @@ async function createServer(name, node, nest, egg, memory, discordId) {
     if(nodeId == -1) {
         return `Node ${node} does not exist.\nPlease try again.`
     }
+    else if(typeof(nodeId) === "string") {
+        return nodeId
+    }
+    console.log(`Node ID: ${nodeId}`)
 
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
         return `Nest ${nest} does not exist.\nPlease try again.`
+    }
+    if(nestId == 1) {
+        memory += 4096; // add java overhead for minecraft servers
     }
 
     const eggId = await getEggIdByName(nestId, egg);
