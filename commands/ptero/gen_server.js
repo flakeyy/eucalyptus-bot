@@ -141,7 +141,6 @@ async function createServer(name, node, nest, egg, memory, discordId) {
     else if(typeof(nodeId) === "string") {
         return nodeId
     }
-    console.log(`Node ID: ${nodeId}`)
 
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
