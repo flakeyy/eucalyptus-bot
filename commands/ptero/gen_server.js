@@ -147,7 +147,7 @@ async function createServer(name, node, nest, egg, memory, discordId) {
         return `Nest ${nest} does not exist.\nPlease try again.`
     }
     if(nestId == 1) {
-        memory += config['javaOverhead']; // add java overhead for minecraft servers
+        memory += config['java-overhead']; // add java overhead for minecraft servers
     }
 
     const eggId = await getEggIdByName(nestId, egg);
