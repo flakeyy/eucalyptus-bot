@@ -189,6 +189,8 @@ async function createServer(name, node, nest, egg, memory, discordId) {
         }
     })
 
+    console.log(requestBody);
+
     if(config['developer-mode']) {
         console.log(requestBody);
         return `Developer mode enabled, no real API request was made, check console for details.`;
