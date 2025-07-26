@@ -213,7 +213,7 @@ async function createServer(name, node, nest, egg, memory, discordId) {
     }
     else {
         console.error(`Server creation failed.\n${text}`)
-        return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${result.statusCode}`
+        return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${result.statusCode}\n<@132675281348460544>`
     }
     
 }
