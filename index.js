@@ -1,5 +1,5 @@
 try {
-    const { discord_token, api_key } = require('./keys.json');
+    const { dev_discord_token, api_key } = require('./keys.json');
 } catch(error) {
     console.error("Error loading keys.json. Please make sure you have a keys.json file in the root directory.");
 	process.exit(1);
@@ -23,7 +23,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
 const { Client: httpClient } = require('undici');
-const { discord_token, api_key } = require('./keys.json');
+const { dev_discord_token, api_key } = require('./keys.json');
 
 const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
 const hClient = new httpClient('https://dino.flakey.tech/');
@@ -94,4 +94,4 @@ dClient.on(Events.InteractionCreate, async interaction => {
 	}
 });
 
-dClient.login(discord_token);
+dClient.login(dev_discord_token);

@@ -2,10 +2,11 @@ const { SlashCommandBuilder } = require('discord.js');
 const { Client } = require('undici');
 const { api_key } = require('../../keys.json');
 const config = require('../../config.json');
-const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
-const client = new Client('https://dino.flakey.tech/');
-const wait = require('node:timers/promises').setTimeout;
 const blacklist = require('../../blacklist.json');
+const wait = require('node:timers/promises').setTimeout;
+const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
+
+const client = new Client('https://dino.flakey.tech/');
 
 // async function getUserIdByName(username) {
 //     const result = await client.request({
