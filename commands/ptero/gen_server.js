@@ -3,16 +3,19 @@ const config = require('../../config.json');
 const users = require('../../users.json');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
-const { apiCall, extractEnvVariables } = require('../../utility/helper_functions.js');
+const { apiCall, extractEnvVariables, getUserId } = require('../../utility/helper_functions.js');
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName } = require('../../utility/server_functions.js');
 const { getErrorMessage } = require('../../error_messages.js');
+const { json } = require('node:stream/consumers');
 
 async function getDefaultAllocation(node) {
     const apiResult = await apiCall(`application/nodes/${node}/allocations`, 'GET');
+    const jsonString = await apiResult.body.json();
+    const jsonData = await jsonString.data;
 
-    for(i=0;i<apiResult.length;i++) {
-        if(!apiResult[i].attributes.assigned && (apiResult[i].attributes.alias == null || (apiResult[i].attributes.alias != null && apiResult[i].attributes.ip == "0.0.0.0"))) {
-            return apiResult[i].attributes.id;
+    for(i=0;i<jsonData.length;i++) {
+        if(!jsonData[i].attributes.assigned && (jsonData[i].attributes.alias == null || (jsonData[i].attributes.alias != null && jsonData[i].attributes.ip == "0.0.0.0"))) {
+            return jsonData[i].attributes.id;
         }
     }
     return -1;
@@ -20,6 +23,7 @@ async function getDefaultAllocation(node) {
 
 async function checkAvailableUserMemory(userId, discordId, memory) {
     const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
+    const jsonData = await apiResult.body.json();
     
     if(apiResult == -1) {
         return apiResult;
@@ -27,8 +31,8 @@ async function checkAvailableUserMemory(userId, discordId, memory) {
     else {
         memoryOverusage = 0;
         totalMemoryUsage = 0;
-        for(i=0;i<jsonData.relationships.servers.data.length;i++) {
-            totalMemoryUsage += jsonData.relationships.servers.data[i].attributes.limits.memory
+        for(i=0;i<jsonData.attributes.relationships.servers.data.length;i++) {
+            totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory
         }
         for(i=0;i<users.users.length;i++) {
             if(users.users[i].discordId == discordId) {
@@ -89,9 +93,9 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
         "name": name,
         "user": userId,
         "egg": eggId,
-        "docker_image": eggInfo.docker_image,
-        "startup": eggInfo.startup,
-        "environment" : extractEnvVariables(eggInfo.relationships.variables),
+        "docker_image": eggInfo.attributes.docker_image,
+        "startup": eggInfo.attributes.startup,
+        "environment" : extractEnvVariables(eggInfo.attributes.relationships.variables),
         "limits": {
             "memory": memory,
             "overhead_memory": overheadMemory,
@@ -117,12 +121,14 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
 
     const apiResult = await apiCall(`application/servers`, 'POST', requestBody);
 
-    const resultBuffer = await apiResult.body.arrayBuffer();
-    const responseJson = JSON.parse(Buffer.from(resultBuffer).toString('utf-8'));
+    const bufferData = await apiResult.body.arrayBuffer();
+    const buffer = Buffer.from(bufferData);
+    const text = buffer.toString('utf-8');
+    const jsonText = JSON.parse(text);
 
     if(apiResult.statusCode == 201) {
         console.log(`A server was created.\n${text}`)
-        return `Server '${responseJson.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
+        return `Server '${jsonText.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
     }
     else {
         console.error(`Server creation failed.\n${text}`)
