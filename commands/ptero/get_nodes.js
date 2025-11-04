@@ -1,6 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
 const wait = require('node:timers/promises').setTimeout;
-const { formatNames } = require('../../utility/helper_functions.js');
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const { getNodes } = require('../../utility/server_functions.js');
 const { getErrorMessage } = require('../../error_messages.js');
@@ -22,7 +21,13 @@ module.exports = {
         
         const nodeData = await getNodes();
 
-        const formattedString = "```List of Nodes:\n\n" + formatNames(nodeData) + "```"
+        if (!nodeData || !Array.isArray(nodeData.data)) {
+            throw new Error("Invalid input: Expected an object with a 'data' array.");
+        }
+
+        formattedString = nodeData.data.map(item => `- ${item.attributes.name} | ${item.attributes.description} | MEM: ${item.attributes.allocated_resources.memory}/${item.attributes.memory}MB Allocated`).join("\n");
+
+        formattedString = "```List of Nodes:\n\n" + formattedString + "```"
 
         await interaction.deferReply();
         await wait(2_000);
