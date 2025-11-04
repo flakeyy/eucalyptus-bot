@@ -25,7 +25,7 @@ module.exports = {
         if (!serverObjects || !Array.isArray(serverObjects.data)) {
             throw new Error("Invalid input: Expected an object with a 'data' array.");
         }
-        
+
         totalMemory = 0;
         serverObjects.data.forEach(item => {
             totalMemory += item.attributes.limits.memory;
@@ -40,9 +40,10 @@ module.exports = {
 
         formattedString = serverObjects.data.map(item => `- ${item.attributes.name} | Memory: ${item.attributes.limits.memory} MB | Suspended: ${item.attributes.suspended} | Server ID: ${item.attributes.id}`).join("\n");
 
-        formattedString = "```Servers owned by " + getPanelUsername(interaction.user.id) +":\n\n" + "- TOTAL | Servers: " + serverObjects.data.length + " | Memory (total): " + totalMemory + " MB | Memory (unsuspended): " + unsuspendedMemory + " MB\n\n" + formattedString + "```"
-
-        console.log(formattedString)
+        formattedString = 
+        "```Servers owned by " + getPanelUsername(interaction.user.id) +":\n\n" + 
+        "- TOTAL | Servers: " + serverObjects.data.length + " | Memory (total): " + totalMemory + " MB | Memory (unsuspended): " + unsuspendedMemory + " MB\n\n"
+         + formattedString + "```"
 
         await interaction.deferReply();
         await wait(2_000);
