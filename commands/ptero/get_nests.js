@@ -22,12 +22,12 @@ module.exports = {
 
         const nestData = await getNests();
 
-        const formattedString = "```List of Nests:\n\n" + formatNames(nestData) + "```";
+        const interactionReply = "```List of Nests:\n\n" + formatNames(nestData) + "```";
 
         await interaction.deferReply();
         await wait(2_000);
         if(nestData) {
-            await interaction.editReply(formattedString);
+            await interaction.editReply(interactionReply);
         }
         else {
             await interaction.editReply(getErrorMessage('SERVER_TIMEOUT'));
