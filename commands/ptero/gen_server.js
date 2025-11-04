@@ -1,137 +1,27 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { Client } = require('undici');
-const { api_key } = require('../../keys.json');
 const config = require('../../config.json');
-const blacklist = require('../../blacklist.json');
 const users = require('../../users.json');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
-
-const client = new Client('https://dino.flakey.tech/');
-
-// async function getUserIdByName(username) {
-//     const result = await client.request({
-//         path: `/api/application/users?filter[username]=${username}`,
-//         method: 'GET',
-//         headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
-//     });
-//     const jsonString = await result.body.json();
-//     const jsonObject = await jsonString.data[0];
-//     try {
-//         return jsonObject.attributes.id;
-//     } catch(error) {
-//         console.error(`User '${username}' does not exist`)
-//         return -1;
-//     }
-// }
-
-async function getNodeIdByName(node) {
-    const result = await client.request({
-        path: `/api/application/nodes`,
-        method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
-    }); 
-    const jsonString = await result.body.json();
-    const jsonData = await jsonString.data;
-    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(node.toLowerCase()))[0]
-    if(filteredData == undefined) {
-        console.error(`Node '${node}' does not exist`)
-        return -1;
-    }
-    if (blacklist.nodes[filteredData.attributes.name]) {
-        return `Node '${filteredData.attributes.name}' is currently blacklisted: ${blacklist.nodes[filteredData.attributes.name]}`;
-    }
-    return filteredData.attributes.id;
-}
-
-async function getNestIdByName(nest) { 
-    const result = await client.request({
-        path: `/api/application/nests`,
-        method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
-    }); 
-    const jsonString = await result.body.json();
-    const jsonData = await jsonString.data;
-    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(nest.toLowerCase()))[0]
-    if(filteredData == undefined) {
-        console.error(`Nest '${nest}' does not exist`)
-        return -1;
-    }
-    else {
-        return filteredData.attributes.id;
-    }
-}
-
-async function getEggIdByName(nestId, egg) {
-    const result = await client.request({
-        path: `/api/application/nests/${nestId}/eggs`,
-        method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
-    });
-    const jsonString = await result.body.json();
-    const jsonData = await jsonString.data;
-    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(egg.toLowerCase()))[0]
-    if(filteredData == undefined) {
-        console.error(`Egg '${egg}' does not exist`)
-        return -1;
-    }
-    else {
-        return filteredData.attributes.id;
-    }
-}
+const { apiCall, extractEnvVariables } = require('../../utility/helper_functions.js');
+const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName } = require('../../utility/server_functions.js');
 
 async function getDefaultAllocation(node) {
-    const result = await client.request({
-        path: `/api/application/nodes/${node}/allocations`,
-        method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
-    });
-    const jsonString = await result.body.json();
-    const jsonData = await jsonString.data;
+    const apiResult = await apiCall(`application/nodes/${node}/allocations`, 'GET');
 
-    for(i=0;i<jsonData.length;i++) {
-        if(!jsonData[i].attributes.assigned && (jsonData[i].attributes.alias == null || (jsonData[i].attributes.alias != null && jsonData[i].attributes.ip == "0.0.0.0"))) {
-            return jsonData[i].attributes.id;
+    for(i=0;i<apiResult.length;i++) {
+        if(!apiResult[i].attributes.assigned && (apiResult[i].attributes.alias == null || (apiResult[i].attributes.alias != null && apiResult[i].attributes.ip == "0.0.0.0"))) {
+            return apiResult[i].attributes.id;
         }
     }
     return -1;
 }
 
-async function getEggData(nestId, eggId) {
-    const result = await client.request({
-        path: `/api/application/nests/${nestId}/eggs/${eggId}?include=variables`,
-        method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
-    });
-    const jsonString = await result.body.json();
-    const jsonData = await jsonString.attributes;
-    
-    if(jsonData == undefined) {
-        return -1;
-    }
-    else {
-        return jsonData;
-    }
-}
-
 async function checkAvailableMemory(userId, discordId, memory) {
-    const result = await client.request({
-        path: `/api/application/users/${userId}?include=servers`,
-        method: 'GET',
-        headers: {
-            'Accept': 'application/json', 
-            'content-type': 'application/json',
-            'Authorization': `Bearer ${api_key}`
-        },
-        params: {
-            include: 'servers'
-        }
-    });
-    const jsonString = await result.body.json();
-    const jsonData = await jsonString.attributes;
+    const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
     
-    if(jsonData == undefined) {
-        return -1;
+    if(apiResult == -1) {
+        return apiResult;
     }
     else {
         memoryOverusage = 0;
@@ -151,16 +41,6 @@ async function checkAvailableMemory(userId, discordId, memory) {
         }
         return memoryOverusage;
     }
-}
-
-function extractEnvVariables(jsonData) {
-    const envVariables = {};
-
-    jsonData.data.forEach(item => {
-        const { env_variable, default_value } = item.attributes;
-        envVariables[env_variable] = default_value;
-    });
-    return envVariables;
 }
 
 async function createServer(name, node, nest, egg, memory, discordId) {
@@ -243,23 +123,18 @@ async function createServer(name, node, nest, egg, memory, discordId) {
         return `Developer mode enabled, no real API request was made, check console for details.`;
     }
 
-    const result = await client.request({
-        path: `/api/application/servers`,
-        method: 'POST',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
-        body: requestBody
-    });
+    const apiResult = await apiCall(`application/servers`, 'POST', requestBody);
 
-    const resultBuffer = await result.body.arrayBuffer();
+    const resultBuffer = await apiResult.body.arrayBuffer();
     const responseJson = JSON.parse(Buffer.from(resultBuffer).toString('utf-8'));
 
-    if(result.statusCode == 201) {
+    if(apiResult.statusCode == 201) {
         console.log(`A server was created.\n${text}`)
         return `Server '${responseJson.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
     }
     else {
         console.error(`Server creation failed.\n${text}`)
-        return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${result.statusCode}\n<@132675281348460544>`
+        return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${apiResult.statusCode}\n<@132675281348460544>`
     }
     
 }
