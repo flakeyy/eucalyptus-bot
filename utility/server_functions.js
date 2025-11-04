@@ -13,6 +13,48 @@ export async function getEggData(nestId, eggId) {
     return jsonData;
 }
 
+export async function getNests() {
+    const apiResult = await apiCall(`application/nests`, 'GET');
+    const jsonString = await apiResult.body.json();
+    return jsonString;
+}
+
+export async function getEggs(nestId) {
+    const apiResult = await apiCall(`application/nests/${nestId}/eggs`, 'GET');
+    const jsonString = await apiResult.body.json();
+    return jsonString;
+}
+
+export async function getNodes() {
+    const apiResult = await apiCall(`application/nodes`, 'GET');
+    const jsonString = await apiResult.body.json();
+    return jsonString;
+}
+
+export async function getServersByUser(userId) {
+    const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
+    const jsonString = await apiResult.body.json();
+    return jsonString.relatiionships.servers;
+}
+
+export async function getEggIdByName(nestId, egg) {
+    const apiResult = await apiCall(`application/nests/${nestId}/eggs`, 'GET');
+    const jsonData = await apiResult.body.json().attributes;
+    
+    if(jsonData == undefined) {
+        return -1;
+    }
+
+    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(egg.toLowerCase()))[0]
+    if(filteredData == undefined) {
+        console.error(`Egg '${egg}' does not exist`)
+        return -1;
+    }
+    else {
+        return filteredData.attributes.id;
+    }
+}
+
 export async function getNodeIdByName(node) {
     const apiResult = await apiCall(`application/nodes`, 'GET');
 
@@ -52,21 +94,8 @@ export async function getNestIdByName(nest) {
     }
 }
 
-export async function getEggIdByName(nestId, egg) {
-    const apiResult = await apiCall(`application/nests/${nestId}/eggs`, 'GET');
-
+export async function getServerInfoById(serverId) {
+    const apiResult = await apiCall(`application/servers/${serverId}`, 'GET');
     const jsonData = await apiResult.body.json().attributes;
-    
-    if(jsonData == undefined) {
-        return -1;
-    }
-
-    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(egg.toLowerCase()))[0]
-    if(filteredData == undefined) {
-        console.error(`Egg '${egg}' does not exist`)
-        return -1;
-    }
-    else {
-        return filteredData.attributes.id;
-    }
+    return jsonData;
 }

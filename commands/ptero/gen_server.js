@@ -5,6 +5,7 @@ const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const { apiCall, extractEnvVariables } = require('../../utility/helper_functions.js');
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName } = require('../../utility/server_functions.js');
+const { getErrorMessage } = require('../../error_messages.js');
 
 async function getDefaultAllocation(node) {
     const apiResult = await apiCall(`application/nodes/${node}/allocations`, 'GET');
@@ -17,7 +18,7 @@ async function getDefaultAllocation(node) {
     return -1;
 }
 
-async function checkAvailableMemory(userId, discordId, memory) {
+async function checkAvailableUserMemory(userId, discordId, memory) {
     const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
     
     if(apiResult == -1) {
@@ -43,22 +44,13 @@ async function checkAvailableMemory(userId, discordId, memory) {
     }
 }
 
-async function createServer(name, node, nest, egg, memory, discordId) {
-    const userId = authenticateUserForPermission(discordId, PERMISSIONS.CREATE_SERVER);
-    
-    if(userId == -1) {
-        return `Unable to find any authenticatable user based on your Discord account.\nPlease let <@132675281348460544> know if you believe this is in error.`
-    }
-    else if(userId == -2) {
-        return `You do not have permission to create a server.\nPlease let <@132675281348460544> know if you believe this is in error.`
-    }
-
+async function createServer(name, node, nest, egg, memory, discordId, userId) {
     if(name == "" || name == null) {
-        return `Server name cannot be blank.`
+        return getErrorMessage('INVALID_SERVER_NAME');
     }
     const nodeId = await getNodeIdByName(node);
     if(nodeId == -1) {
-        return `Node ${node} does not exist.\nPlease try again.`
+        return getErrorMessage('NODE_NOT_FOUND');
     }
     else if(typeof(nodeId) === "string") {
         return nodeId
@@ -67,7 +59,7 @@ async function createServer(name, node, nest, egg, memory, discordId) {
     overheadMemory = 128;
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
-        return `Nest ${nest} does not exist.\nPlease try again.`
+        return getErrorMessage('NEST_NOT_FOUND');
     }
     if(nestId == 1) {
         overheadMemory = config['java_overhead_mb']; // add java overhead for minecraft servers
@@ -75,22 +67,22 @@ async function createServer(name, node, nest, egg, memory, discordId) {
 
     const eggId = await getEggIdByName(nestId, egg);
     if(eggId == -1) {
-        return `Egg ${egg} does not exist.\nPlease try again.`
+        return getErrorMessage('EGG_NOT_FOUND');
     }
 
-    const memoryExceedingUsage = await checkAvailableMemory(userId, discordId, memory);
+    const memoryExceedingUsage = await checkAvailableUserMemory(userId, discordId, memory);
     if(memoryExceedingUsage > 0) {
-        return `Creating this server would put your over your allowed maximum memory usage.\nPlease free up at least ${memoryExceedingUsage} MB of memory by suspending or deleting other active servers before creating a new one.`
+        return getErrorMessage('MEMORY_EXCEEDS_LIMIT', memoryExceedingUsage);
     }
 
     const defaultAllocation = await getDefaultAllocation(nodeId);
     if(defaultAllocation == -1) {
-        return `Could not find a port to assign to the server.\nPlease let <@132675281348460544> know.`
+        return getErrorMessage('ALLOCATION_NOT_FOUND');
     }
 
     const eggInfo = await getEggData(nestId, eggId);
     if(eggInfo == -1) {
-        return `Egg info could not be returned.\nPlease let <@132675281348460544> know.`
+        return getErrorMessage('EGG_INFO_NOT_RETURNED');
     }
 
     const requestBody = JSON.stringify({
@@ -134,7 +126,7 @@ async function createServer(name, node, nest, egg, memory, discordId) {
     }
     else {
         console.error(`Server creation failed.\n${text}`)
-        return `The API responded but returned an error, please check your request or try again later. HTTP Code: ${apiResult.statusCode}\n<@132675281348460544>`
+        return getErrorMessage('API_REQUEST_FAILED', apiResult.statusCode);
     }
     
 }
@@ -170,13 +162,26 @@ module.exports = {
         ),
 
 	async execute(interaction) {
+        const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.CREATE_SERVER);
+        if(authenticated == -1) {
+            interaction.reply(getErrorMessage('USER_NOT_FOUND'));
+            return;
+        }
+        else if(authenticated == false) {
+            interaction.reply(getErrorMessage('INSUFFICIENT_PERMISSIONS'));
+            return;
+        }
+
+        const panelId = getUserId(interaction.user.id);
         const discordId = interaction.user.id;
         const serverName = interaction.options.getString('server-name');
         const nodeName = interaction.options.getString('node');
         const nestName = interaction.options.getString('nest');
         const eggName = interaction.options.getString('egg');
         const memoryMB = interaction.options.getInteger('memory');
-        const serverResult = await createServer(serverName, nodeName, nestName, eggName, memoryMB, discordId)
+        const serverResult = await createServer(serverName, nodeName, nestName, eggName, memoryMB, discordId, panelId)
+
+        interactionReply = serverResult;
 
         await interaction.deferReply();
         await wait(2_500);
@@ -184,7 +189,7 @@ module.exports = {
             await interaction.editReply(serverResult);
         }
         else {
-            await interaction.editReply("Server did not respond in time, it's likely the request timed out.\nPlease check if the server was created before continuing with further requests.");
+            await interaction.editReply(getErrorMessage('SERVER_CREATION_TIMEOUT'));
         }
         
 	},

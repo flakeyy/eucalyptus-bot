@@ -1,6 +1,7 @@
 const { Client } = require('undici');
 const { api_key } = require('../../keys.json');
-const client = new Client('https://dino.flakey.tech/');
+const { client } = new Client('https://dino.flakey.tech/');
+const { users } = require('../users.json');
 
 export async function apiCall(path, method, body) {
     const result = await client.request({
@@ -14,7 +15,7 @@ export async function apiCall(path, method, body) {
         body: body
     });
     
-    return jsonData;
+    return result;
 }
 
 export function extractEnvVariables(jsonData) {
@@ -25,5 +26,22 @@ export function extractEnvVariables(jsonData) {
         envVariables[env_variable] = default_value;
     });
     return envVariables;
+}
+
+export function formatNames(jsonData) {
+    if (!jsonData || !Array.isArray(jsonData.data)) {
+        throw new Error("Invalid input: Expected an object with a 'data' array.");
+    }
+
+    return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
+}
+
+export function getUserId(discordId) {
+    for (const user of users) {
+        if (user.discordId === discordId) {
+            return user.panelId;
+        }
+    }
+    return -1; // no user found
 }
 
