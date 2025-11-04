@@ -1,8 +1,8 @@
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { Client } = require('undici');
+const client = new Client('https://dino.flakey.tech/');
 const { api_key } = require('../keys.json');
-const { client } = new Client('https://dino.flakey.tech/');
 const { users } = require('../users.json');
 
 export async function apiCall(path, method, body) {

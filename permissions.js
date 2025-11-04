@@ -32,7 +32,7 @@ export function authenticateUserForPermission(discordId, permission) {
     if(userId < 0) {
         return userId;
     }
-    if(hasPermission(user, permission) || hasPermission(user, PERMISSIONS.ADMINISTRATOR)) {
+    if(hasPermission(userId, permission) || hasPermission(userId, PERMISSIONS.ADMINISTRATOR)) {
         return true;
     }
     return false;
