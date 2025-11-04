@@ -1,47 +1,9 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { Client } = require('undici');
-const { api_key } = require('../../keys.json');
-const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
-
-function formatNames(jsonData) {
-    if (!jsonData || !Array.isArray(jsonData.data)) {
-        throw new Error("Invalid input: Expected an object with a 'data' array.");
-    }
-
-    return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
-}
-
-async function getNestIdByName(nest) { 
-    const result = await client.request({
-        path: `/api/application/nests`,
-        method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
-    }); 
-    const jsonString = await result.body.json();
-    const jsonData = await jsonString.data;
-    const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(nest.toLowerCase()))[0]
-    if(filteredData == undefined) {
-        console.error(`Nest '${nest}' does not exist`)
-        return -1;
-    }
-    else {
-        return filteredData.attributes.id;
-    }
-}
-
-async function getEggs(nestId) {
-    const result = await client.request({
-            path: `/api/application/nests/${nestId}/eggs`,
-            method: 'GET',
-            headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
-        }); 
-        const jsonString = await result.body.json();
-        const formattedString = formatNames(jsonString)
-
-        return "```List of Eggs:\n\n" + formattedString + "```"
-       
-}
+const { getEggs, getNestIdByName } = require('../../utility/server_functions.js');
+const { formatNames } = require('../../utility/helper_functions.js');
+const { PERMISSIONS, authenticateUserForPermission } = require('../../permissions.js');
+const { getErrorMessage } = require('../../error_messages.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -53,16 +15,28 @@ module.exports = {
                 .setRequired(true)
         ),
     async execute(interaction) {
+        const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_EGGS);
+        if(authenticated == -1) {
+            interaction.reply(getErrorMessage('USER_NOT_FOUND'));
+            return;
+        }
+        else if(authenticated == false) {
+            interaction.reply(getErrorMessage('INSUFFICIENT_PERMISSIONS'));
+            return;
+        }
+
         const nestId = await getNestIdByName(interaction.options.getString('nest'));
         const eggData = await getEggs(nestId);
 
+        const interactionReply = "```List of Eggs:\n\n" + formatNames(eggData) + "```";
+
         await interaction.deferReply();
         await wait(1_500);
-        if(typeof(eggData) === "string") {
-            await interaction.editReply(eggData);
+        if(eggData) {
+            await interaction.editReply(interactionReply);
         }
         else {
-            await interaction.editReply("Server did not respond in time, it's likely the request timed out.");
+            await interaction.editReply(getErrorMessage('SERVER_TIMEOUT'));
         }
         
     },

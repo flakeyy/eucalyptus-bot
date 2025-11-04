@@ -1,44 +1,36 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { Client } = require('undici');
-const { api_key } = require('../../keys.json');
-const client = new Client('https://dino.flakey.tech/');
 const wait = require('node:timers/promises').setTimeout;
-
-function formatNames(jsonData) {
-    if (!jsonData || !Array.isArray(jsonData.data)) {
-        throw new Error("Invalid input: Expected an object with a 'data' array.");
-    }
-
-    return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
-}
-
-async function getNests() {
-    const result = await client.request({
-            path: `/api/application/nests`,
-            method: 'GET',
-            headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`},
-        }); 
-        const jsonString = await result.body.json();
-        const formattedString = formatNames(jsonString)
-
-        return "```List of Nests:\n\n" + formattedString + "```"
-       
-}
+const { getNests } = require('../../utility/server_functions.js');
+const { formatNames } = require('../../utility/helper_functions.js');
+const { getErrorMessage } = require('../../error_messages.js');
+const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('get-nests')
         .setDescription('Gets the names of available nests.'),
     async execute(interaction) {
+        const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_NESTS);
+        if(authenticated == -1) {
+            interaction.reply(getErrorMessage('USER_NOT_FOUND'));
+            return;
+        }
+        else if(authenticated == false) {
+            interaction.reply(getErrorMessage('INSUFFICIENT_PERMISSIONS'));
+            return;
+        }
+
         const nestData = await getNests();
+
+        const interactionReply = "```List of Nests:\n\n" + formatNames(nestData) + "```";
 
         await interaction.deferReply();
         await wait(2_000);
-        if(typeof(nestData) === "string") {
-            await interaction.editReply(nestData);
+        if(nestData) {
+            await interaction.editReply(interactionReply);
         }
         else {
-            await interaction.editReply("Server did not respond in time, it's likely the request timed out.");
+            await interaction.editReply(getErrorMessage('SERVER_TIMEOUT'));
         }
         
     },

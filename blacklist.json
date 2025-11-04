@@ -1,7 +1,0 @@
-{
-    "nodes": {
-        "HIL01": "Deprecated & marked for removal early August 2025, use HMB01 instead.",
-        "BHS01": "Deprecated & marked for removal November 2025, use HMB01 instead.",
-        "SLC01": "Deprecated & marked for removal early August 2025, use HMB01 instead."
-    }
-}
