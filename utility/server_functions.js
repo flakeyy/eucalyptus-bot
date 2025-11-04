@@ -1,5 +1,7 @@
-const blacklist = require('../../blacklist.json');
-const { apiCall } = require('../../utility/helper_functions.js');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const blacklist = require('../blacklist.json');
+const { apiCall } = require('./helper_functions.js');
 
 export async function getEggData(nestId, eggId) {
     const apiResult = await apiCall(`application/nests/${nestId}/eggs/${eggId}?include=variables`, 'GET');
@@ -34,7 +36,8 @@ export async function getNodes() {
 export async function getServersByUser(userId) {
     const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
     const jsonString = await apiResult.body.json();
-    return jsonString.relatiionships.servers;
+    console.log(jsonString.relationships.servers);
+    return //jsonString.relationships.servers;
 }
 
 export async function getEggIdByName(nestId, egg) {

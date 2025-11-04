@@ -1,5 +1,7 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const { Client } = require('undici');
-const { api_key } = require('../../keys.json');
+const { api_key } = require('../keys.json');
 const { client } = new Client('https://dino.flakey.tech/');
 const { users } = require('../users.json');
 

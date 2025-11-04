@@ -1,3 +1,5 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const { administrator_discord_id } = require('./config.json');
 
 export const ERROR_MESSAGES = {

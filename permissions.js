@@ -1,4 +1,6 @@
-const { getUserId } = require('../../utility/helper_functions.js');
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const { getUserId } = require('./utility/helper_functions.js');
 const { users } = require('./users.json');
 
 // bitwise integer permisisons
