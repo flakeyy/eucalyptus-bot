@@ -47,3 +47,12 @@ export function getUserId(discordId) {
     return -1; // no user found
 }
 
+export function getPanelUsername(discordId) {
+    for (const user of users) {
+        if (user.discordId === discordId) {
+            return user.panelUsername;
+        }
+    }
+    return -1; // no user found
+}
+
