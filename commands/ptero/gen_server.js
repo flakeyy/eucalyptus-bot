@@ -3,6 +3,7 @@ const { Client } = require('undici');
 const { api_key } = require('../../keys.json');
 const config = require('../../config.json');
 const blacklist = require('../../blacklist.json');
+const users = require('../../users.json');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 
@@ -113,6 +114,45 @@ async function getEggData(nestId, eggId) {
     }
 }
 
+async function checkAvailableMemory(userId, discordId, memory) {
+    const result = await client.request({
+        path: `/api/application/users/${userId}?include=servers`,
+        method: 'GET',
+        headers: {
+            'Accept': 'application/json', 
+            'content-type': 'application/json',
+            'Authorization': `Bearer ${api_key}`
+        },
+        params: {
+            include: 'servers'
+        }
+    });
+    const jsonString = await result.body.json();
+    const jsonData = await jsonString.attributes;
+    
+    if(jsonData == undefined) {
+        return -1;
+    }
+    else {
+        memoryOverusage = 0;
+        totalMemoryUsage = 0;
+        for(i=0;i<jsonData.relationships.servers.data.length;i++) {
+            totalMemoryUsage += jsonData.relationships.servers.data[i].attributes.limits.memory
+        }
+        for(i=0;i<users.users.length;i++) {
+            if(users.users[i].discordId == discordId) {
+                if(totalMemoryUsage + memory > users.users[i].maximumAllowedMemory && users.users[i].maximumAllowedMemory != -1) {
+                    memoryOverusage = (totalMemoryUsage + memory) - users.users[i].maximumAllowedMemory;
+                }
+                else {
+                    memoryOverusage = -1;
+                }
+            }
+        }
+        return memoryOverusage;
+    }
+}
+
 function extractEnvVariables(jsonData) {
     const envVariables = {};
 
@@ -125,6 +165,7 @@ function extractEnvVariables(jsonData) {
 
 async function createServer(name, node, nest, egg, memory, discordId) {
     const userId = authenticateUserForPermission(discordId, PERMISSIONS.CREATE_SERVER);
+    
     if(userId == -1) {
         return `Unable to find any authenticatable user based on your Discord account.\nPlease let <@132675281348460544> know if you believe this is in error.`
     }
@@ -143,17 +184,23 @@ async function createServer(name, node, nest, egg, memory, discordId) {
         return nodeId
     }
 
+    overheadMemory = 128;
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
         return `Nest ${nest} does not exist.\nPlease try again.`
     }
     if(nestId == 1) {
-        memory += config['java-overhead']; // add java overhead for minecraft servers
+        overheadMemory = config['java_overhead_mb']; // add java overhead for minecraft servers
     }
 
     const eggId = await getEggIdByName(nestId, egg);
     if(eggId == -1) {
         return `Egg ${egg} does not exist.\nPlease try again.`
+    }
+
+    const memoryExceedingUsage = await checkAvailableMemory(userId, discordId, memory);
+    if(memoryExceedingUsage > 0) {
+        return `Creating this server would put your over your allowed maximum memory usage.\nPlease free up at least ${memoryExceedingUsage} MB of memory by suspending or deleting other active servers before creating a new one.`
     }
 
     const defaultAllocation = await getDefaultAllocation(nodeId);
@@ -175,6 +222,7 @@ async function createServer(name, node, nest, egg, memory, discordId) {
         "environment" : extractEnvVariables(eggInfo.relationships.variables),
         "limits": {
             "memory": memory,
+            "overhead_memory": overheadMemory,
             "swap": -1,
             "disk": 0,
             "io": 500,
@@ -190,7 +238,7 @@ async function createServer(name, node, nest, egg, memory, discordId) {
         }
     })
 
-    if(config['developer-mode']) {
+    if(config['developer_mode']) {
         console.log(requestBody);
         return `Developer mode enabled, no real API request was made, check console for details.`;
     }
@@ -202,15 +250,12 @@ async function createServer(name, node, nest, egg, memory, discordId) {
         body: requestBody
     });
 
-    // take buffer data, turn into text, then into a json object
-    const bufferData = await result.body.arrayBuffer();
-    const buffer = Buffer.from(bufferData);
-    const text = buffer.toString('utf-8');
-    const jsonText = JSON.parse(text);
+    const resultBuffer = await result.body.arrayBuffer();
+    const responseJson = JSON.parse(Buffer.from(resultBuffer).toString('utf-8'));
 
     if(result.statusCode == 201) {
         console.log(`A server was created.\n${text}`)
-        return `Server '${jsonText.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
+        return `Server '${responseJson.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
     }
     else {
         console.error(`Server creation failed.\n${text}`)
