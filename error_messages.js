@@ -1,19 +1,19 @@
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-const { administrator_discord_id } = require('./config.json');
+const ADMIN_DISCORD_ID = process.env.ADMIN_DISCORD_ID;
 
 export const ERROR_MESSAGES = {
     USER_NOT_FOUND: {
         id: -1,
-        text: `Unable to find any authenticatable user based on your Discord account.\nPlease let <@${administrator_discord_id}> know if you believe this is in error.`
+        text: `Unable to find any authenticatable user based on your Discord account.\nPlease let <@${ADMIN_DISCORD_ID}> know if you believe this is in error.`
     },
     INSUFFICIENT_PERMISSIONS: {
         id: -2,
-        text: `You do not have permission to perform this action.\nPlease let <@${administrator_discord_id}> know if you believe this is in error.`
+        text: `You do not have permission to perform this action.\nPlease let <@${ADMIN_DISCORD_ID}> know if you believe this is in error.`
     },
     SERVER_TIMEOUT: {
         id: -3,
-        text: `Server did not respond in time, it's likely the request timed out.\n<@${administrator_discord_id}>`
+        text: `Server did not respond in time, it's likely the request timed out.\n<@${ADMIN_DISCORD_ID}>`
     },
     INVALID_SERVER_NAME: {
         id: -4,
@@ -37,15 +37,15 @@ export const ERROR_MESSAGES = {
     },
     ALLOCATION_NOT_FOUND: {
         id: -9,
-        text: `Could not find a port to assign to the server.\nPlease let <@${administrator_discord_id}> know.`
+        text: `Could not find a port to assign to the server.\nPlease let <@${ADMIN_DISCORD_ID}> know.`
     },
     EGG_INFO_NOT_RETURNED: {
         id: -10,
-        text: `Egg info could not be returned.\nPlease let <@${administrator_discord_id}> know.`
+        text: `Egg info could not be returned.\nPlease let <@${ADMIN_DISCORD_ID}> know.`
     },
     API_REQUEST_FAILED: {
         id: -11,
-        format: (statusCode) => `The API responded but returned an error, please check your request or try again later. HTTP Code: ${statusCode}\n<@${administrator_discord_id}>`
+        format: (statusCode) => `The API responded but returned an error, please check your request or try again later. HTTP Code: ${statusCode}\n<@${ADMIN_DISCORD_ID}>`
     },
     SERVER_CREATION_TIMEOUT: {
         id: -12,

@@ -1,7 +1,11 @@
+require('dotenv').config();
 try {
-    const { prod_discord_token, api_key } = require('./keys.json');
+    const PROD_DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
+	const PROD_CLIENT_ID = process.env.PROD_CLIENT_ID;
+	const PROD_GUILD_ID = process.env.PROD_GUILD_ID;
+	const PANEL_API_KEY = process.env.PANEL_API_KEY;
 } catch(error) {
-    console.error("Error loading keys.json. Please make sure you have a keys.json file in the root directory.");
+    console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
 	process.exit(1);
 }
 
@@ -23,8 +27,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
 const { Client: httpClient } = require('undici');
-const { prod_discord_token, api_key } = require('./keys.json');
-
+const PROD_DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
+const PANEL_API_KEY = process.env.PANEL_API_KEY;
 const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
 const hClient = new httpClient('https://dino.flakey.tech/');
 
@@ -32,7 +36,7 @@ async function setPresence(){
 	const result = await hClient.request({
         path: `/api/application/servers`,
         method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${api_key}`}
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${PANEL_API_KEY}`}
     });
 	const jsonString = await result.body.json();
     const jsonData = await jsonString.data;
@@ -94,4 +98,4 @@ dClient.on(Events.InteractionCreate, async interaction => {
 	}
 });
 
-dClient.login(prod_discord_token);
+dClient.login(PROD_DISCORD_TOKEN);

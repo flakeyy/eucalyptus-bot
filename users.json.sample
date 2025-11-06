@@ -1,0 +1,19 @@
+{
+    "users": [
+        {
+            "discordId": "123123123123123",
+            "panelUsername": "user1",
+            "panelId": "1",
+            "maximumAllowedMemory": "-1",
+            "permissions": "65536"
+        },
+        {
+            "discordId": "456456456456456",
+            "panelUsername": "user2",
+            "panelId": "2",
+            "maximumAllowedMemory": "8192",
+            "permissions": "255"
+        }
+    ]
+}
+

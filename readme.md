@@ -27,29 +27,13 @@ npm install
 ```
 
 3. Configuration
-- Create `config.json`*, `keys.json`*, `users.json`*, and `blacklist.json` files
-- Add required information to `config.json`
-- Add Pterodactyl API key and Discord bot token to `keys.json`
+- Create `config.json`*, `.env`*, `users.json`*, and `blacklist.json`* files
+- Add required values to `config.json` and `.env`
 - Add users in the `users.json` file (requires the administrator be added manually, further users can be added by the administrator via /add-user (not available yet!))
 
 4. Start the bot
 ```bash
 node index.js
-```
-
-## Configuration
-
-Example `config.json`:
-```json
-{
-    "developer_mode": false,
-    "java_overhead_mb": 2048,
-    "administrator_discord_id": "{discord_id}",
-    "prod_client_id": "{discord_bot_client_id}",
-    "prod_guild_id": "{discord_server_id}",
-    "dev_client_id": "{dev_env}",
-    "dev_guild_id": "{dev_env}"
-}
 ```
 
 ## Usage

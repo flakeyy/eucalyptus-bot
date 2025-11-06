@@ -1,6 +1,8 @@
+require('dotenv').config();
 const { REST, Routes } = require('discord.js');
-const { dev_client_id, dev_guild_id } = require('./config.json');
-const { dev_discord_token } = require('./keys.json');
+const DEV_CLIENT_ID = process.env.DEV_CLIENT_ID;
+const DEV_GUILD_ID = process.env.DEV_GUILD_ID;
+const DEV_DISCORD_TOKEN = process.env.DEV_DISCORD_TOKEN;
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -26,7 +28,8 @@ for (const folder of commandFolders) {
 }
 
 // Construct and prepare an instance of the REST module
-const rest = new REST().setToken(dev_discord_token);
+console.log(DEV_DISCORD_TOKEN);
+const rest = new REST().setToken(DEV_DISCORD_TOKEN);
 
 // and deploy your commands!
 (async () => {
@@ -35,7 +38,7 @@ const rest = new REST().setToken(dev_discord_token);
 
 		// The put method is used to fully refresh all commands in the guild with the current set
 		const data = await rest.put(
-			Routes.applicationGuildCommands(dev_client_id, dev_guild_id),
+			Routes.applicationGuildCommands(DEV_CLIENT_ID, DEV_GUILD_ID),
 			{ body: commands },
 		);
 

@@ -2,7 +2,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const { Client } = require('undici');
 const client = new Client('https://dino.flakey.tech/');
-const { api_key } = require('../keys.json');
+const { PANEL_API_KEY } = process.env;
 const { users } = require('../users.json');
 
 export async function apiCall(path, method, body) {
@@ -12,7 +12,7 @@ export async function apiCall(path, method, body) {
         headers: {
             'Accept': 'application/json', 
             'content-type': 'application/json',
-            'Authorization': `Bearer ${api_key}`
+            'Authorization': `Bearer ${PANEL_API_KEY}`
         },
         body: body
     });
