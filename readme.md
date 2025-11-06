@@ -8,11 +8,11 @@ A simple discord bot that allows adminsistrators and users to manage their serve
 
 ## Features
 
-- Server status monitoring
-- Start/Stop/Restart servers
-- View server resources
-- Send console commands
-- Manage users and permissions
+- create new servers
+- view available eggs, nests, nodes
+- view owned servers (per user)
+- suspend/unsuspend servers (working on it)
+- more to come..
 
 ## Installation
 
