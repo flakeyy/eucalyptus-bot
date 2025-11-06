@@ -27,7 +27,7 @@ npm install
 ```
 
 3. Configuration
-- Create `config.json`*, `.env`*, `users.json`*, and `blacklist.json`* files
+- Create `config.json`, `.env`, `users.json`, and `blacklist.json` files
 - Add required values to `config.json` and `.env`
 - Add users in the `users.json` file (requires the administrator be added manually, further users can be added by the administrator via /add-user (not available yet!))
 
