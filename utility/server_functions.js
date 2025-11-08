@@ -104,6 +104,14 @@ export async function getNestIdByName(nest) {
 
 export async function getServerInfoById(serverId) {
     const apiResult = await apiCall(`application/servers/${serverId}`, 'GET');
-    const jsonData = await apiResult.body.json().attributes;
-    return jsonData;
+    const jsonData = await apiResult.body.json();
+    const attributes = jsonData.attributes;
+    return attributes;
+}
+
+export async function getServerOwnerId(serverId) {
+    const apiResult = await apiCall(`application/servers/${serverId}`, 'GET');
+    const jsonData = await apiResult.body.json();
+    const ownerId = jsonData.attributes.user;
+    return ownerId;
 }
