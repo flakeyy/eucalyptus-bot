@@ -3,10 +3,10 @@ const { getErrorMessage } = require('../../error_messages.js');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require('../../permissions.js');
 const { apiCall, getUserId } = require('../../utility/helper_functions.js');
-const { getServerOwnerId } = require('../../utility/server_functions.js');
+const { getServerOwnerId, isServerSuspended } = require('../../utility/server_functions.js');
 
-async function suspendServer(serverId) {
-    const apiResult = await apiCall(`application/servers/${serverId}/suspend`, 'POST');
+async function unsuspendServer(serverId) {
+    const apiResult = await apiCall(`application/servers/${serverId}/unsuspend`, 'POST');
 
     const statusCode = await apiResult.statusCode
     
@@ -15,8 +15,8 @@ async function suspendServer(serverId) {
 
 module.exports = {
 	data: new SlashCommandBuilder()
-		.setName('suspend-server')
-		.setDescription('Suspends a server based on a server ID.')
+		.setName('unsuspend-server')
+		.setDescription('Unsuspends a server based on a server ID.')
         .addStringOption(option =>
             option.setName('server-id')
                 .setDescription('/get-owned-servers for server IDs')
@@ -24,15 +24,24 @@ module.exports = {
         ),
 
 	async execute(interaction) {
+        await interaction.deferReply();
         authenticated = -1;
         interactionReply = "";
         const serverOwnerId = await getServerOwnerId(interaction.options.getString('server-id'));
         
         if(serverOwnerId == getUserId(interaction.user.id)) {
-            authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SUSPEND_OWN_SERVER);
+            authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.UNSUSPEND_OWN_SERVER);
         }
         else {
-            authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SUSPEND_ANY_SERVER);
+            authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.UNSUSPEND_ANY_SERVER);
+        }
+
+        const isServerSuspended = await isServerSuspended(interaction.options.getString('server-id'));
+        console.log(isServerSuspended);
+
+        if(!isServerSuspended) {
+            interaction.reply(getErrorMessage('SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE'));
+            return;
         }
 
         if(authenticated == -1) {
@@ -45,16 +54,15 @@ module.exports = {
         }
 
         const serverId = interaction.options.getString('server-id');
-        const suspensionStatusCode = await suspendServer(serverId);
+        const suspensionStatusCode = await unsuspendServer(serverId);
         
         if(suspensionStatusCode == 204) {
-            interactionReply = `Server with ID: ${serverId} has been suspended.`;
+            interactionReply = `Server with ID: ${serverId} has been unsuspended.`;
         }
         else {
-            interactionReply = getErrorMessage('SERVER_SUSPEND_FAILED');
+            interactionReply = getErrorMessage('SERVER_UNSUSPEND_FAILED');
         }
 
-        await interaction.deferReply();
         await wait(2_500);
         if(interactionReply != "") {
             await interaction.editReply(interactionReply);

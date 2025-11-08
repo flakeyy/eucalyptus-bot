@@ -59,6 +59,18 @@ export const ERROR_MESSAGES = {
         id: -14,
         text: `The server is already suspended.\nNo action was taken.`
     },
+    SERVER_UNSUSPEND_FAILED: {
+        id: -15,
+        text: `Failed to unsuspend.\nPlease ensure the server ID is correct and try again.`
+    },
+    SERVER_UNSUSPEND_FAILED_MEMORY: {
+        id: -16,
+        text: `Failed to unsuspend due to your account's memory limit.\nPlease free up some memory by suspending or deleting other active servers before trying again.`
+    },
+    SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE: {
+        id: -17,
+        text: `The server is already active.\nNo action was taken.`
+    }
 };
 
 /**

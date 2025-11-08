@@ -115,3 +115,10 @@ export async function getServerOwnerId(serverId) {
     const ownerId = jsonData.attributes.user;
     return ownerId;
 }
+
+export async function isServerSuspended(serverId) {
+    const apiResult = await apiCall(`application/servers/${serverId}`, 'GET');
+    const jsonData = await apiResult.body.json();
+    const suspended = jsonData.attributes.suspended;
+    return suspended;
+}

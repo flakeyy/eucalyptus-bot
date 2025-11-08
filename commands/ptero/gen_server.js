@@ -6,7 +6,6 @@ const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissio
 const { apiCall, extractEnvVariables, getUserId } = require('../../utility/helper_functions.js');
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName } = require('../../utility/server_functions.js');
 const { getErrorMessage } = require('../../error_messages.js');
-const { json } = require('node:stream/consumers');
 
 async function getDefaultAllocation(node) {
     const apiResult = await apiCall(`application/nodes/${node}/allocations`, 'GET');
