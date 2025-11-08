@@ -28,7 +28,6 @@ for (const folder of commandFolders) {
 }
 
 // Construct and prepare an instance of the REST module
-console.log(DEV_DISCORD_TOKEN);
 const rest = new REST().setToken(DEV_DISCORD_TOKEN);
 
 // and deploy your commands!
