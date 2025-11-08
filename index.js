@@ -1,13 +1,45 @@
 require('dotenv').config();
-try {
-    const PROD_DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
-	const PROD_CLIENT_ID = process.env.PROD_CLIENT_ID;
-	const PROD_GUILD_ID = process.env.PROD_GUILD_ID;
-	const PANEL_API_KEY = process.env.PANEL_API_KEY;
-} catch(error) {
-    console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
-	process.exit(1);
+const fs = require('node:fs');
+const path = require('node:path');
+const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
+const { Client: httpClient } = require('undici');
+const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
+const hClient = new httpClient('https://dino.flakey.tech/');
+
+useDev = false;
+DISCORD_TOKEN = "";
+CLIENT_ID = "";
+GUILD_ID = "";
+API_KEY = "";
+
+if(process.argv[2] == '--dev') {
+	useDev = true;
 }
+
+if(useDev) {
+	try {
+		DISCORD_TOKEN = process.env.DEV_DISCORD_TOKEN;
+		CLIENT_ID = process.env.DEV_CLIENT_ID;
+		GUILD_ID = process.env.DEV_GUILD_ID;
+		API_KEY = process.env.PANEL_API_KEY;
+	} catch(error) {
+		console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
+		process.exit(1);
+	}
+
+}
+else {
+	try {
+		DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
+		CLIENT_ID = process.env.PROD_CLIENT_ID;
+		GUILD_ID = process.env.PROD_GUILD_ID;
+		API_KEY = process.env.PANEL_API_KEY;
+	} catch(error) {
+		console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
+		process.exit(1);
+	}
+}
+
 
 try {
 	const config = require('./config.json');
@@ -23,20 +55,11 @@ try {
 	process.exit(1);
 }
 
-const fs = require('node:fs');
-const path = require('node:path');
-const { Client: discordClient, Collection, Events, GatewayIntentBits, ActivityType } = require('discord.js');
-const { Client: httpClient } = require('undici');
-const PROD_DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
-const PANEL_API_KEY = process.env.PANEL_API_KEY;
-const dClient = new discordClient({ intents: [GatewayIntentBits.Guilds] });
-const hClient = new httpClient('https://dino.flakey.tech/');
-
 async function setPresence(){
 	const result = await hClient.request({
         path: `/api/application/servers`,
         method: 'GET',
-        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${PANEL_API_KEY}`}
+        headers: {'Accept': 'application/json', 'content-type': 'application/json', 'Authorization': `Bearer ${API_KEY}`}
     });
 	const jsonString = await result.body.json();
     const jsonData = await jsonString.data;
@@ -82,7 +105,7 @@ dClient.on(Events.InteractionCreate, async interaction => {
 	const command = interaction.client.commands.get(interaction.commandName);
 
 	if (!command) {
-		console.error(`No command matching ${interaction.commandName} was found.`);
+		console.error(`No such command: ${interaction.commandName}`);
 		return;
 	}
 
@@ -98,4 +121,4 @@ dClient.on(Events.InteractionCreate, async interaction => {
 	}
 });
 
-dClient.login(PROD_DISCORD_TOKEN);
+dClient.login(DISCORD_TOKEN);
