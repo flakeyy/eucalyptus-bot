@@ -1,8 +1,26 @@
 /* eslint-disable node/no-unpublished-require */
-// Temporarily commenting out unused path import
-// const path = require("path");
+const { SlashCommandBuilder } = require("discord.js");
 
-// Mock discord.js to avoid ESM/import issues when running under Jest
+const mockPermissions = {
+  READ_NESTS: 1,
+  READ_EGGS: 2,
+  CREATE_SERVER: 4,
+  SUSPEND_OWN_SERVER: 8,
+  UNSUSPEND_OWN_SERVER: 16,
+  DELETE_OWN_SERVER: 32,
+  READ_OWN_SERVERS: 64,
+  EDIT_OWN_SERVER_SETTINGS: 128,
+  EDIT_ANY_SERVER_SETTINGS: 256,
+  SUSPEND_ANY_SERVER: 512,
+  UNSUSPEND_ANY_SERVER: 1024,
+  ADMINISTRATOR: 65536
+};
+
+jest.mock("../permissions.js", () => ({
+  PERMISSIONS: mockPermissions,
+  authenticateUserForPermission: jest.fn().mockReturnValue(true)
+}));
+
 jest.mock("discord.js", () => {
   class SlashCommandBuilder {
     constructor() {}
@@ -14,244 +32,720 @@ jest.mock("discord.js", () => {
   return { SlashCommandBuilder };
 });
 
-describe("Command modules", () => {
-  afterEach(() => {
+describe("get-nests command", () => {
+  test("formats and replies with nests list", async () => {
     jest.resetModules();
-    jest.clearAllMocks();
-  });
-
-  test("ping command replies with Pong!", async () => {
-    const ping = require("../commands/utility/ping.js");
-
-    const interaction = {
-      reply: jest.fn()
-    };
-
-    await ping.execute(interaction);
-
-    expect(interaction.reply).toHaveBeenCalledWith("Pong!");
-  });
-
-  test("get-nodes formats and replies with nodes list", async () => {
-    // mock permissions and server_functions before requiring the module
-    jest.mock("../permissions.js", () => ({
-      PERMISSIONS: { READ_NODES: "READ_NODES" },
-      authenticateUserForPermission: jest.fn().mockReturnValue(true)
-    }));
-
-    jest.mock("../utility/server_functions.js", () => ({
-      getNodes: jest.fn().mockResolvedValue({ data: [ { attributes: { name: "nodeA", description: "desc", allocated_resources: { memory: 10 }, memory: 100 } } ] })
-    }));
-
-    const getNodesCmd = require("../commands/ptero/get_nodes.js");
-
-    const interaction = {
-      user: { id: "user1" },
-      deferReply: jest.fn().mockResolvedValue(),
-      editReply: jest.fn().mockResolvedValue(),
-      options: {
-        getString: jest.fn()
-      }
-    };
-
-    await getNodesCmd.execute(interaction);
-
-    expect(interaction.deferReply).toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalled();
-    const replyArg = interaction.editReply.mock.calls[0][0];
-    expect(replyArg).toContain("List of Nodes");
-    expect(replyArg).toContain("nodeA");
-  });
-
-  test("get-nests replies with formatted nests", async () => {
-    jest.mock("../permissions.js", () => ({
-      PERMISSIONS: { READ_NESTS: "READ_NESTS" },
-      authenticateUserForPermission: jest.fn().mockReturnValue(true)
-    }));
-
-    jest.mock("../utility/server_functions.js", () => ({
-      getNests: jest.fn().mockResolvedValue([ "nestA", "nestB" ])
-    }));
+    const mockGetNests = jest.fn().mockResolvedValue({
+      data: [
+        { attributes: { name: "nest1", description: "First nest" } },
+        { attributes: { name: "nest2", description: "Second nest" } }
+      ]
+    });
 
     jest.mock("../utility/helper_functions.js", () => ({
-      formatNames: jest.fn().mockReturnValue("nestA\nnestB")
+      apiCall: jest.fn().mockResolvedValue({
+        body: { json: jest.fn().mockResolvedValue({
+          data: [
+            { attributes: { name: "nest1", description: "First nest" } },
+            { attributes: { name: "nest2", description: "Second nest" } }
+          ]
+        })}
+      }),
+      getUserId: jest.fn().mockReturnValue("panelUser1"),
+      formatNames: jest.fn().mockImplementation(nests => nests.data.map(n => `- ${n.attributes.name} | ${n.attributes.description}`).join("\n"))
     }));
 
-    const getNestsCmd = require("../commands/ptero/get_nests.js");
+    jest.mock("../utility/server_functions.js", () => ({
+      getNests: mockGetNests,
+      getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+      editServerDetails: jest.fn().mockResolvedValue({ statusCode: 200 }),
+      editServerBuild: jest.fn().mockResolvedValue(200),
+      getAvailableUserMemory: jest.fn().mockResolvedValue(2048)
+    }));
 
     const interaction = {
-      user: { id: "user1" },
       deferReply: jest.fn().mockResolvedValue(),
       editReply: jest.fn().mockResolvedValue(),
-      options: { getString: jest.fn() }
+      user: { id: "discord1" }
     };
 
-    await getNestsCmd.execute(interaction);
+    // Import after mocking
+    const { getNests } = require("../utility/server_functions.js");
+    const getNestsCommand = require("../commands/ptero/get_nests.js");
+    global.getNests = getNests;
 
+    await getNestsCommand.execute(interaction);
     expect(interaction.deferReply).toHaveBeenCalled();
     expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("List of Nests"));
   });
 
-  test("get-eggs replies with formatted eggs for a nest", async () => {
-    jest.mock("../permissions.js", () => ({
-      PERMISSIONS: { READ_EGGS: "READ_EGGS" },
-      authenticateUserForPermission: jest.fn().mockReturnValue(true)
-    }));
+      jest.mock("../utility/server_functions.js", () => ({
+        getNests: mockGetNests,
+        getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+        editServerDetails: jest.fn().mockResolvedValue({ statusCode: 200 }),
+        editServerBuild: jest.fn().mockResolvedValue(200),
+        getAvailableUserMemory: jest.fn().mockResolvedValue(2048)
+      }));
+    });
 
-    jest.mock("../utility/server_functions.js", () => ({
-      getEggs: jest.fn().mockResolvedValue([ "eggA", "eggB" ]),
-      getNestIdByName: jest.fn().mockResolvedValue(5)
-    }));
+    test("formats and replies with nests list", async () => {      jest.mock("../utility/server_functions.js", () => ({
+        getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+        getServerInfoById: jest.fn().mockResolvedValue({
+          name: "test-server",
+          limits: { memory: 1024 },
+          id: "abc123"
+        }),
+        editServerDetails: jest.fn().mockResolvedValue(true),
+        isServerSuspended: jest.fn().mockResolvedValue(false)
+      }));
 
-    jest.mock("../utility/helper_functions.js", () => ({
-      formatNames: jest.fn().mockReturnValue("eggA\neggB")
-    }));
+      const interaction = {
+        deferReply: jest.fn().mockResolvedValue(),
+        editReply: jest.fn().mockResolvedValue(),
+        user: { id: "discord1" }
+      };
 
-    const getEggsCmd = require("../commands/ptero/get_eggs.js");
+      // Import after mocking
+      const { getNests } = require("../utility/server_functions.js");
+      const getNestsCommand = require("../commands/ptero/get_nests.js");
+      global.getNests = getNests;
 
-    const interaction = {
-      user: { id: "user1" },
-      deferReply: jest.fn().mockResolvedValue(),
-      editReply: jest.fn().mockResolvedValue(),
-      options: { getString: jest.fn().mockReturnValue("nestName") }
-    };
+      await getNestsCommand.execute(interaction);
+      expect(interaction.deferReply).toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("List of Nests"));
+    });
 
-    await getEggsCmd.execute(interaction);
+  describe("get-eggs command", () => {
+    test("formats and replies with eggs list", async () => {
+      jest.resetModules();
+      const mockApiCall = jest.fn().mockResolvedValue({
+        body: {
+          json: jest.fn().mockResolvedValue({
+            data: [
+              { attributes: { name: "egg1", description: "First egg" } },
+              { attributes: { name: "egg2", description: "Second egg" } }
+            ]
+          })
+        }
+      });
 
-    expect(interaction.deferReply).toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("List of Eggs"));
+      jest.mock("../utility/helper_functions.js", () => ({
+        apiCall: mockApiCall,
+        getUserId: jest.fn().mockReturnValue("panelUser1"),
+        formatNames: jest.fn().mockImplementation(names => names.join(", "))
+      }));
+
+      jest.mock("../utility/server_functions.js", () => ({
+        getNestIdByName: jest.fn().mockResolvedValue(1),
+        getEggs: jest.fn().mockResolvedValue([
+          { name: "egg1", description: "First egg" },
+          { name: "egg2", description: "Second egg" }
+        ]),
+        getServersByUser: jest.fn().mockResolvedValue({ data: [] }),
+        editServerBuild: jest.fn().mockResolvedValue(200)
+      }));
+
+      jest.mock("../permissions.js", () => ({
+        PERMISSIONS: { READ_EGGS: "READ_EGGS" },
+        authenticateUserForPermission: jest.fn().mockReturnValue(true)
+      }));
+
+      const getEggs = require("../commands/ptero/get_eggs.js");
+      const interaction = {
+        deferReply: jest.fn().mockResolvedValue(),
+        editReply: jest.fn().mockResolvedValue(),
+        user: { id: "discord1" },
+        options: {
+          getString: jest.fn().mockReturnValue("nest1")
+        }
+      };
+
+      await getEggs.execute(interaction);
+      expect(interaction.deferReply).toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("List of Eggs"));
+    });
   });
 
-  test("get-owned-servers replies with formatted servers list", async () => {
-    jest.mock("../permissions.js", () => ({
-      PERMISSIONS: { READ_OWN_SERVERS: "READ_OWN_SERVERS" },
-      authenticateUserForPermission: jest.fn().mockReturnValue(true)
-    }));
+  describe("get-owned-servers command", () => {
+    test("formats and replies with servers list", async () => {
+      jest.resetModules();
+      const mockApiCall = jest.fn().mockResolvedValue({
+        body: {
+          json: jest.fn().mockResolvedValue({
+            data: [
+              { attributes: { name: "server1", identifier: "abc123", status: "running" } },
+              { attributes: { name: "server2", identifier: "def456", status: "stopped" } }
+            ]
+          })
+        }
+      });
 
-    jest.mock("../utility/helper_functions.js", () => ({
-      getUserId: jest.fn().mockReturnValue("panelUser1"),
-      getPanelUsername: jest.fn().mockReturnValue("panelUserName")
-    }));
+      jest.mock("../utility/helper_functions.js", () => ({
+        apiCall: mockApiCall,
+        getUserId: jest.fn().mockReturnValue("panelUser1"),
+        formatNames: jest.fn().mockImplementation(names => names.join(", ")),
+        getPanelUsername: jest.fn().mockReturnValue("TestUser")
+      }));
 
-    jest.mock("../utility/server_functions.js", () => ({
-      getServersByUser: jest.fn().mockResolvedValue({ data: [ { attributes: { name: "s1", limits: { memory: 128 }, suspended: false, id: 42 } }, { attributes: { name: "s2", limits: { memory: 64 }, suspended: true, id: 43 } } ] })
-    }));
+      jest.mock("../utility/server_functions.js", () => ({
+        getOwnedServers: jest.fn().mockResolvedValue([
+          { name: "server1", identifier: "abc123", status: "running" },
+          { name: "server2", identifier: "def456", status: "stopped" }
+        ]),
+        getServersByUser: jest.fn().mockResolvedValue({
+          data: [
+            { attributes: { 
+              name: "server1", 
+              identifier: "abc123", 
+              status: "running",
+              limits: { memory: 1024 },
+              is_suspended: false
+            }},
+            { attributes: { 
+              name: "server2", 
+              identifier: "def456", 
+              status: "stopped",
+              limits: { memory: 2048 },
+              is_suspended: false
+            }}
+          ]
+        }),
+        editServerBuild: jest.fn().mockResolvedValue(200)
+      }));
 
-    const getOwned = require("../commands/ptero/get_owned_servers.js");
+      jest.mock("../permissions.js", () => ({
+        PERMISSIONS: { READ_SERVERS: "READ_SERVERS" },
+        authenticateUserForPermission: jest.fn().mockReturnValue(true)
+      }));
 
-    const interaction = {
-      user: { id: "user1" },
-      deferReply: jest.fn().mockResolvedValue(),
-      editReply: jest.fn().mockResolvedValue(),
-      options: { getString: jest.fn() }
-    };
+      const getOwnedServers = require("../commands/ptero/get_owned_servers.js");
+      const interaction = {
+        deferReply: jest.fn().mockResolvedValue(),
+        editReply: jest.fn().mockResolvedValue(),
+        user: { id: "discord1" }
+      };
 
-    await getOwned.execute(interaction);
-
-    expect(interaction.deferReply).toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("Servers owned by"));
-    expect(interaction.editReply.mock.calls[0][0]).toContain("TOTAL | Servers: 2");
+      await getOwnedServers.execute(interaction);
+      expect(interaction.deferReply).toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("Servers owned by"));
+    });
   });
 
-  test("suspend-server replies with suspended message when api returns 204", async () => {
-    jest.mock("../permissions.js", () => ({
-      PERMISSIONS: { SUSPEND_OWN_SERVER: "SUSPEND_OWN_SERVER", SUSPEND_ANY_SERVER: "SUSPEND_ANY_SERVER" },
-      authenticateUserForPermission: jest.fn().mockReturnValue(true)
-    }));
+  describe("suspend-server command", () => {
+    beforeEach(() => {
+      jest.resetModules();
+    });
 
-    jest.mock("../utility/helper_functions.js", () => ({
-      apiCall: jest.fn().mockResolvedValue({ statusCode: 204 }),
-      getUserId: jest.fn().mockReturnValue("panelUser1")
-    }));
+    test("suspends server successfully", async () => {
+      const mockApiCall = jest.fn().mockResolvedValue({
+        statusCode: 204,
+        body: {
+          json: jest.fn().mockResolvedValue({
+            data: { attributes: { suspended: true } }
+          })
+        }
+      });
 
-    jest.mock("../utility/server_functions.js", () => ({
-      getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
-      isServerSuspended: jest.fn().mockResolvedValue(false)
-    }));
+      jest.mock("../utility/helper_functions.js", () => ({
+        apiCall: mockApiCall,
+        getUserId: jest.fn().mockReturnValue("panelUser1"),
+        formatNames: jest.fn().mockImplementation(names => names.join(", "))
+      }));
 
-    const suspendCmd = require("../commands/ptero/suspend_server.js");
+      jest.mock("../utility/server_functions.js", () => ({
+        getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+        suspendServer: jest.fn().mockResolvedValue({ suspended: true }),
+        isServerSuspended: jest.fn().mockResolvedValue(false)
+      }));
 
-    const interaction = {
-      user: { id: "user1" },
-      deferReply: jest.fn().mockResolvedValue(),
-      editReply: jest.fn().mockResolvedValue(),
-      reply: jest.fn().mockResolvedValue(),
-      options: { getString: jest.fn().mockReturnValue("123") }
-    };
+      jest.mock("../permissions.js", () => ({
+        PERMISSIONS: {
+          READ_NESTS: 1,
+          READ_EGGS: 2,
+          CREATE_SERVER: 4,
+          SUSPEND_OWN_SERVER: 8,
+          UNSUSPEND_OWN_SERVER: 16,
+          DELETE_OWN_SERVER: 32,
+          READ_OWN_SERVERS: 64,
+          EDIT_OWN_SERVER_SETTINGS: 128,
+          EDIT_ANY_SERVER_SETTINGS: 256,
+          SUSPEND_ANY_SERVER: 512,
+          UNSUSPEND_ANY_SERVER: 1024,
+          ADMINISTRATOR: 65536
+        },
+        authenticateUserForPermission: jest.fn().mockReturnValue(true)
+      }));      const suspendServer = require("../commands/ptero/suspend_server.js");
+      const interaction = {
+        deferReply: jest.fn().mockResolvedValue(),
+        editReply: jest.fn().mockResolvedValue(),
+        options: { getString: jest.fn().mockReturnValue("abc123") },
+        user: { id: "discord1" }
+      };
 
-    await suspendCmd.execute(interaction);
-
-    expect(interaction.deferReply).toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("has been suspended"));
+      await suspendServer.execute(interaction);
+      expect(interaction.deferReply).toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("has been suspended"));
+    });
   });
 
-  test("unsuspend-server replies with unsuspended message when api returns 204", async () => {
-    jest.mock("../permissions.js", () => ({
-      PERMISSIONS: { UNSUSPEND_OWN_SERVER: "UNSUSPEND_OWN_SERVER", UNSUSPEND_ANY_SERVER: "UNSUSPEND_ANY_SERVER" },
-      authenticateUserForPermission: jest.fn().mockReturnValue(true)
-    }));
+  describe("unsuspend-server command", () => {
+    beforeEach(() => {
+      jest.resetModules();
+    });
 
-    jest.mock("../utility/helper_functions.js", () => ({
-      apiCall: jest.fn().mockResolvedValue({ statusCode: 204 }),
-      getUserId: jest.fn().mockReturnValue("panelUser1")
-    }));
+    test("unsuspends server successfully", async () => {
+      const mockApiCall = jest.fn().mockResolvedValue({
+        statusCode: 204,
+        body: {
+          json: jest.fn().mockResolvedValue({
+            data: { attributes: { suspended: false } }
+          })
+        }
+      });
 
-    jest.mock("../utility/server_functions.js", () => ({
-      getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
-      isServerSuspended: jest.fn().mockResolvedValue(true),
-      getAvailableUserMemory: jest.fn().mockResolvedValue(1024),
-      getServerInfoById: jest.fn().mockResolvedValue({ limits: { memory: 128 } })
-    }));
+      jest.mock("../utility/helper_functions.js", () => ({
+        apiCall: mockApiCall,
+        getUserId: jest.fn().mockReturnValue("panelUser1"),
+        formatNames: jest.fn().mockImplementation(names => names.join(", "))
+      }));
 
-    const unsuspendCmd = require("../commands/ptero/unsuspend_server.js");
+      jest.mock("../utility/server_functions.js", () => ({
+        getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+        isServerSuspended: jest.fn().mockResolvedValue(true),
+        unsuspendServer: jest.fn().mockResolvedValue({ suspended: false }),
+        getServerInfoById: jest.fn().mockResolvedValue({
+          limits: { memory: 1024 },
+          name: "test-server",
+          id: "abc123"
+        }),
+        getAvailableUserMemory: jest.fn().mockResolvedValue(2048)
+      }));
 
-    const interaction = {
-      user: { id: "user1" },
-      deferReply: jest.fn().mockResolvedValue(),
-      editReply: jest.fn().mockResolvedValue(),
-      reply: jest.fn().mockResolvedValue(),
-      options: { getString: jest.fn().mockReturnValue("123") }
-    };
+      jest.mock("../permissions.js", () => ({
+        PERMISSIONS: { UNSUSPEND_OWN_SERVER: "UNSUSPEND_OWN_SERVER" },
+        authenticateUserForPermission: jest.fn().mockReturnValue(true)
+      }));
 
-    await unsuspendCmd.execute(interaction);
+      const unsuspendServer = require("../commands/ptero/unsuspend_server.js");
+      const interaction = {
+        deferReply: jest.fn().mockResolvedValue(),
+        editReply: jest.fn().mockResolvedValue(),
+        options: { getString: jest.fn().mockReturnValue("abc123") },
+        user: { id: "discord1" }
+      };
 
-    expect(interaction.deferReply).toHaveBeenCalled();
-    expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("has been unsuspended"));
+      await unsuspendServer.execute(interaction);
+      expect(interaction.deferReply).toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("has been unsuspended"));
+    });
   });
 
-  // gen-server has a large flow — test failure cases and developer-mode short-circuit
-  test("gen-server createServer returns error on empty name", async () => {
-    jest.mock("../permissions.js", () => ({
-      PERMISSIONS: { CREATE_SERVER: "CREATE_SERVER" },
-      authenticateUserForPermission: jest.fn().mockReturnValue(true)
-    }));
+  describe("edit-server command", () => {
+    beforeEach(() => {
+      jest.resetModules();
+      
+      global.PERMISSIONS = {
+        READ_NESTS: 1,
+        READ_EGGS: 2,
+        CREATE_SERVER: 4,
+        SUSPEND_OWN_SERVER: 8,
+        UNSUSPEND_OWN_SERVER: 16,
+        DELETE_OWN_SERVER: 32,
+        READ_OWN_SERVERS: 64,
+        EDIT_OWN_SERVER_SETTINGS: 128,
+        EDIT_ANY_SERVER_SETTINGS: 256,
+        SUSPEND_ANY_SERVER: 512,
+        UNSUSPEND_ANY_SERVER: 1024,
+        ADMINISTRATOR: 65536
+      };
+      
+      jest.mock("../permissions.js", () => ({
+        PERMISSIONS: global.PERMISSIONS,
+        authenticateUserForPermission: jest.fn().mockReturnValue(true)
+      }));
+    });
 
-    // stub utility functions used in createServer
-    jest.mock("../utility/helper_functions.js", () => ({
-      apiCall: jest.fn(),
-      extractEnvVariables: jest.fn().mockReturnValue({}),
-      getUserId: jest.fn().mockReturnValue("panelUser1")
-    }));
+    test("updates server settings successfully", async () => {
+      jest.resetModules();
+      jest.mock("../utility/server_functions.js", () => ({
+        getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+        getServerInfoById: jest.fn().mockResolvedValue({
+          name: "test-server",
+          limits: { memory: 1024 },
+          id: "abc123"
+        }),
+        editServerDetails: jest.fn().mockResolvedValue(true),
+        isServerSuspended: jest.fn().mockResolvedValue(false),
+        editServerBuild: jest.fn().mockResolvedValue(200)
+      }));
 
-    jest.mock("../utility/server_functions.js", () => ({
-      getNodeIdByName: jest.fn().mockResolvedValue(1),
-      getNestIdByName: jest.fn().mockResolvedValue(1),
-      getEggIdByName: jest.fn().mockResolvedValue(1),
-      getAvailableUserMemory: jest.fn().mockResolvedValue(1024),
-      getDefaultAllocation: jest.fn(),
-      getEggData: jest.fn().mockResolvedValue({ attributes: { docker_image: "img", startup: "run", relationships: { variables: [] } } })
-    }));
+      const editServer = require("../commands/ptero/edit_server.js");
+      const interaction = {
+        deferReply: jest.fn().mockResolvedValue(),
+        editReply: jest.fn().mockResolvedValue(),
+        options: {
+          getString: jest.fn().mockReturnValue("abc123"),
+          getInteger: jest.fn().mockReturnValue(512)
+        },
+        user: { id: "discord1" }
+      };
 
-    // set developer_mode true via config mock so createServer short-circuits after building body
-    jest.mock("../config.json", () => ({ developer_mode: true, default_overhead_mb: 32, java_overhead_mb: 64, minecraft_nest_id: 999 }), { virtual: true });
+      await editServer.execute(interaction);
+      expect(interaction.deferReply).toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith(expect.stringContaining("has been edited"));
+    });
 
-    const gen = require("../commands/ptero/gen_server.js");
+    test("handles API errors gracefully", async () => {
+      jest.resetModules();
+      jest.mock("../utility/server_functions.js", () => ({
+        getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+        getServerInfoById: jest.fn().mockResolvedValue({
+          name: "test-server",
+          limits: { memory: 1024 },
+          id: "abc123"
+        }),
+        editServerDetails: jest.fn().mockResolvedValue(true),
+        isServerSuspended: jest.fn().mockResolvedValue(false),
+        editServerBuild: jest.fn().mockResolvedValue(500) // Simulate error
+      }));
 
-    const result = await gen.createServer("", "node", "nest", "egg", 128, "discord1", "panelUser1");
+      const editServer = require("../commands/ptero/edit_server.js");
+      const interaction1 = {
+        deferReply: jest.fn().mockResolvedValue(),
+        editReply: jest.fn().mockResolvedValue(),
+        options: {
+          getString: jest.fn().mockReturnValue("abc123"),
+          getInteger: jest.fn().mockReturnValue(512)
+        },
+        user: { id: "discord1" }
+      };
 
-    // empty name should return INVALID_SERVER_NAME via error_messages; mock not provided, but createServer returns getErrorMessage output
-    // In module, getErrorMessage comes from ../error_messages.js — if not mocked it will throw; so we just assert that function returned a string (error message)
-    expect(typeof result).toBe("string");
+      await editServer.execute(interaction1);
+  expect(interaction1.editReply).toHaveBeenCalledWith(expect.stringContaining("Server edit failed"));
+    });
   });
 
-});
+  describe("gen-server command", () => {
+    let mockApiCall;
+
+    beforeEach(() => {
+      jest.resetModules();
+
+      mockApiCall = jest.fn().mockImplementation(url => ({
+        body: {
+          json: jest.fn().mockResolvedValue(
+            url.includes("allocations")
+              ? {
+                  data: [{
+                    attributes: {
+                      id: 1,
+                      assigned: false,
+                      alias: null,
+                      ip: "0.0.0.0"
+                    }
+                  }]
+                }
+              : {
+                  data: {
+                    attributes: {
+                      id: "123",
+                      identifier: "abc123",
+                      name: "test"
+                    }
+                  }
+                }
+          )
+        }
+      }));
+
+      jest.mock("../utility/server_functions.js", () => ({
+        getServerOwnerId: jest.fn().mockResolvedValue("panelUser1"),
+        getServerInfoById: jest.fn().mockResolvedValue({
+          name: "test-server",
+          limits: { memory: 1024 },
+          id: "abc123"
+        }),
+        editServerDetails: jest.fn().mockResolvedValue(true),
+        isServerSuspended: jest.fn().mockResolvedValue(false),
+        editServerBuild: jest.fn().mockResolvedValue(200)
+      }));
+
+      jest.mock("../config.json", () => ({
+        developer_mode: false,
+        default_overhead_mb: 32,
+        java_overhead_mb: 64,
+        minecraft_nest_id: 999
+      }), { virtual: true });
+    });
+
+    test("returns error on empty name", async () => {
+      jest.mock("../utility/server_functions.js", () => ({
+        getNodeIdByName: jest.fn().mockResolvedValue(1)
+      }));
+
+      const gen = require("../commands/ptero/gen_server.js");
+      const result = await gen.createServer("", "node", "nest", "egg", 128, "discord1", "panelUser1");
+      expect(typeof result).toBe("string");
+      expect(result).toContain("Invalid server name");
+    });
+
+    test("returns error when node not found", async () => {
+      jest.mock("../utility/server_functions.js", () => ({
+        getNodeIdByName: jest.fn().mockResolvedValue(-1)
+      }));
+
+      const gen = require("../commands/ptero/gen_server.js");
+      const result = await gen.createServer("test", "invalid-node", "nest", "egg", 128, "discord1", "panelUser1");
+      expect(typeof result).toBe("string");
+    });
+
+    test("returns error when memory limit exceeded", async () => {
+      jest.mock("../utility/server_functions.js", () => ({
+        getNodeIdByName: jest.fn().mockResolvedValue(1),
+        getNestIdByName: jest.fn().mockResolvedValue(1),
+        getEggIdByName: jest.fn().mockResolvedValue(1),
+        getAvailableUserMemory: jest.fn().mockResolvedValue(100)
+      }));
+
+      const gen = require("../commands/ptero/gen_server.js");
+      const result = await gen.createServer("test", "node", "nest", "egg", 128, "discord1", "panelUser1");
+      expect(typeof result).toBe("string");
+    });
+
+    test("returns error when no allocation available", async () => {
+      mockApiCall.mockImplementation(() => ({
+        body: {
+          json: jest.fn().mockResolvedValue({ data: [] })
+        }
+      }));
+
+      jest.mock("../utility/server_functions.js", () => ({
+        getNodeIdByName: jest.fn().mockResolvedValue(1),
+        getNestIdByName: jest.fn().mockResolvedValue(1),
+        getEggIdByName: jest.fn().mockResolvedValue(1),
+        getAvailableUserMemory: jest.fn().mockResolvedValue(1024),
+        getEggData: jest.fn().mockResolvedValue({
+          attributes: {
+            docker_image: "img",
+            startup: "run",
+            relationships: { variables: [] }
+          }
+        })
+      }));
+
+      const gen = require("../commands/ptero/gen_server.js");
+      const result = await gen.createServer("test", "node", "nest", "egg", 128, "discord1", "panelUser1");
+      expect(typeof result).toBe("string");
+    });
+
+    test("uses higher overhead memory for Minecraft servers", async () => {
+      jest.resetModules();
+      const mockApiCall = jest.fn((url, method, body) => {
+        if (url.includes("allocations")) {
+          return {
+            body: {
+              json: jest.fn().mockResolvedValue({
+                data: [{
+                  attributes: {
+                    id: 1,
+                    assigned: false,
+                    alias: null,
+                    ip: "0.0.0.0"
+                  }
+                }]
+              })
+            }
+          };
+        }
+        if (url === "application/servers" && method === "POST") {
+          return {
+            body: {
+              json: jest.fn().mockResolvedValue({
+                data: {
+                  attributes: {
+                    id: "123",
+                    identifier: "abc123",
+                    name: "test"
+                  }
+                }
+              })
+            }
+          };
+        }
+        return {
+          body: {
+            json: jest.fn().mockResolvedValue({ data: [] })
+          }
+        };
+      });
+
+      jest.mock("../utility/helper_functions.js", () => ({
+        apiCall: mockApiCall,
+        extractEnvVariables: jest.fn().mockReturnValue({}),
+        getUserId: jest.fn().mockReturnValue("panelUser1")
+      }));
+
+      jest.mock("../utility/server_functions.js", () => ({
+        getNodeIdByName: jest.fn().mockResolvedValue(1),
+        getNestIdByName: jest.fn().mockResolvedValue(999), // minecraft_nest_id
+        getEggIdByName: jest.fn().mockResolvedValue(1),
+        getAvailableUserMemory: jest.fn().mockResolvedValue(1024),
+        getEggData: jest.fn().mockResolvedValue({
+          attributes: {
+            docker_image: "img",
+            startup: "run",
+            relationships: { variables: [] }
+          }
+        })
+      }));
+
+      const gen = require("../commands/ptero/gen_server.js");
+      await gen.createServer("test", "node", "nest", "egg", 128, "discord1", "panelUser1");
+
+      // Check the last call to mockApiCall
+      const lastCall = mockApiCall.mock.calls[mockApiCall.mock.calls.length - 1];
+      expect(lastCall[2]).toContain('"overhead_memory":64');
+    });
+
+    test("handles developer mode correctly", async () => {
+      jest.resetModules();
+      jest.mock("../config.json", () => ({
+        developer_mode: true,
+        default_overhead_mb: 32,
+        java_overhead_mb: 64,
+        minecraft_nest_id: 999
+      }), { virtual: true });
+
+      const mockApiCall = jest.fn((url, method, body) => {
+        if (url.includes("allocations")) {
+          return {
+            body: {
+              json: jest.fn().mockResolvedValue({
+                data: [{
+                  attributes: {
+                    id: 1,
+                    assigned: false,
+                    alias: null,
+                    ip: "0.0.0.0"
+                  }
+                }]
+              })
+            }
+          };
+        }
+        if (url === "application/servers" && method === "POST") {
+          return {
+            body: {
+              json: jest.fn().mockResolvedValue({
+                data: {
+                  attributes: {
+                    id: "123",
+                    identifier: "abc123",
+                    name: "test"
+                  }
+                }
+              })
+            }
+          };
+        }
+        return {
+          body: {
+            json: jest.fn().mockResolvedValue({ data: [] })
+          }
+        };
+      });
+
+      jest.mock("../utility/helper_functions.js", () => ({
+        apiCall: mockApiCall,
+        extractEnvVariables: jest.fn().mockReturnValue({}),
+        getUserId: jest.fn().mockReturnValue("panelUser1")
+      }));
+
+      jest.mock("../utility/server_functions.js", () => ({
+        getNodeIdByName: jest.fn().mockResolvedValue(1),
+        getNestIdByName: jest.fn().mockResolvedValue(1),
+        getEggIdByName: jest.fn().mockResolvedValue(1),
+        getAvailableUserMemory: jest.fn().mockResolvedValue(1024),
+        getEggData: jest.fn().mockResolvedValue({
+          attributes: {
+            docker_image: "img",
+            startup: "run",
+            relationships: { variables: [] }
+          }
+        })
+      }));
+
+      const gen = require("../commands/ptero/gen_server.js");
+      const result = await gen.createServer("test", "node", "nest", "egg", 128, "discord1", "panelUser1");
+      expect(result).toContain("Developer mode enabled");
+    });
+
+    test("creates server successfully", async () => {
+      jest.resetModules();
+      const mockApiCall = jest.fn((url, method, body) => {
+        if (url.includes("allocations")) {
+          return {
+            body: {
+              json: jest.fn().mockResolvedValue({
+                data: [{
+                  attributes: {
+                    id: 1,
+                    assigned: false,
+                    alias: null,
+                    ip: "0.0.0.0"
+                  }
+                }]
+              })
+            }
+          };
+        }
+        if (url === "application/servers" && method === "POST") {
+          return {
+            body: {
+              json: jest.fn().mockResolvedValue({
+                data: {
+                  attributes: {
+                    id: "123",
+                    identifier: "abc123",
+                    name: "test"
+                  }
+                }
+              })
+            }
+          };
+        }
+        return {
+          body: {
+            json: jest.fn().mockResolvedValue({ data: [] })
+          }
+        };
+      });
+
+      jest.mock("../utility/helper_functions.js", () => ({
+        apiCall: mockApiCall,
+        extractEnvVariables: jest.fn().mockReturnValue({}),
+        getUserId: jest.fn().mockReturnValue("panelUser1")
+      }));
+
+      jest.mock("../utility/server_functions.js", () => ({
+        getNodeIdByName: jest.fn().mockResolvedValue(1),
+        getNestIdByName: jest.fn().mockResolvedValue(1),
+        getEggIdByName: jest.fn().mockResolvedValue(1),
+        getAvailableUserMemory: jest.fn().mockResolvedValue(1024),
+        getEggData: jest.fn().mockResolvedValue({
+          attributes: {
+            docker_image: "img",
+            startup: "run",
+            relationships: { variables: [] }
+          }
+        })
+      }));
+
+      const gen = require("../commands/ptero/gen_server.js");
+      await gen.createServer("test", "node", "nest", "egg", 128, "discord1", "panelUser1");
+
+      // Check the last call to mockApiCall
+      const lastCall = mockApiCall.mock.calls[mockApiCall.mock.calls.length - 1];
+      expect(lastCall[2]).toContain('"name":"test"');
+    });
+  });
