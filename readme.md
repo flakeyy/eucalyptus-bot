@@ -1,5 +1,8 @@
 # PteroBot
 
+[![Node.js CI - Tests (dev)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml/badge.svg?branch=dev)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml)
+[![Node.js CI - Tests (main)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml/badge.svg?branch=main)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml)
+
 A Discord bot integration for the Pterodactyl/Pyrodactyl Panel.
 
 ## Description
