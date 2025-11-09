@@ -1,8 +1,9 @@
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
+require('dotenv').config();
 const { Client } = require('undici');
 const client = new Client('https://dino.flakey.tech/');
-const { PANEL_API_KEY } = process.env;
+const API_KEY = process.env.PANEL_API_KEY;
 const { users } = require('../users.json');
 
 export async function apiCall(path, method, body) {
@@ -12,7 +13,7 @@ export async function apiCall(path, method, body) {
         headers: {
             'Accept': 'application/json', 
             'content-type': 'application/json',
-            'Authorization': `Bearer ${PANEL_API_KEY}`
+            'Authorization': `Bearer ${API_KEY}`
         },
         body: body
     });

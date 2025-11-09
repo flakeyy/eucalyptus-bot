@@ -1,7 +1,10 @@
 import { createRequire } from 'module';
+import { json } from 'stream/consumers';
 const require = createRequire(import.meta.url);
 const blacklist = require('../blacklist.json');
+const users = require('../users.json');
 const { apiCall } = require('./helper_functions.js');
+
 
 // EGGS
 export async function getEggs(nestId) {
@@ -89,7 +92,6 @@ export async function getNodeIdByName(node) {
 
     const filteredData = jsonData.filter((word) => word.attributes.name.toLowerCase().includes(node.toLowerCase()))[0]
     if(filteredData == undefined) {
-        console.error(`Node '${node}' does not exist`)
         return -1;
     }
     if (blacklist.nodes[filteredData.attributes.name]) {
@@ -101,13 +103,12 @@ export async function getNodeIdByName(node) {
 // SERVERS
 
 export async function getServersByUser(userId) {
-    const apiResult = await apiCall(`application/users/1?include=servers`, 'GET');
+    const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
     const jsonData = await apiResult.body.json();
     const serverObjects = jsonData.attributes.relationships.servers;
 
     return serverObjects;
 }
-
 
 export async function getServerInfoById(serverId) {
     const apiResult = await apiCall(`application/servers/${serverId}`, 'GET');
@@ -132,7 +133,7 @@ export async function isServerSuspended(serverId) {
 
 // MISC
 
-export async function checkAvailableUserMemory(userId, discordId, memory) {
+export async function getAvailableUserMemory(userId, discordId) {
     const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
     const jsonData = await apiResult.body.json();
     
@@ -140,21 +141,22 @@ export async function checkAvailableUserMemory(userId, discordId, memory) {
         return apiResult;
     }
     else {
-        memoryOverusage = 0;
-        totalMemoryUsage = 0;
-        for(i=0;i<jsonData.attributes.relationships.servers.data.length;i++) {
-            totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory
+        let memoryAvailable = 0;
+        let totalMemoryUsage = 0;
+        for(let i=0; i<jsonData.attributes.relationships.servers.data.length; i++) {
+            totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory;
         }
-        for(i=0;i<users.users.length;i++) {
+        for(let i=0; i<users.users.length; i++) {
             if(users.users[i].discordId == discordId) {
-                if(totalMemoryUsage + memory > users.users[i].maximumAllowedMemory && users.users[i].maximumAllowedMemory != -1) {
-                    memoryOverusage = (totalMemoryUsage + memory) - users.users[i].maximumAllowedMemory;
+                if(users.users[i].maximumAllowedMemory == -1) {
+                    memoryAvailable = 100000;
+                    break;
                 }
                 else {
-                    memoryOverusage = -1;
+                    memoryAvailable = users.users[i].maximumAllowedMemory - totalMemoryUsage;
                 }
             }
         }
-        return memoryOverusage;
+        return memoryAvailable;
     }
 }

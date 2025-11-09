@@ -31,10 +31,6 @@ export const ERROR_MESSAGES = {
         id: -7,
         text: `The specified egg does not exist.\nPlease try again.`
     },
-    MEMORY_EXCEEDS_LIMIT: {
-        id: -8,
-        format: (exceedingAmount) => `Creating this server would put you over your allowed maximum memory usage.\nPlease free up at least ${exceedingAmount} MB of memory by suspending or deleting other active servers before creating a new one.`
-    },
     ALLOCATION_NOT_FOUND: {
         id: -9,
         text: `Could not find a port to assign to the server.\nPlease let <@${ADMIN_DISCORD_ID}> know.`
@@ -51,33 +47,32 @@ export const ERROR_MESSAGES = {
         id: -12,
         text: `Server creation timed out.\nPlease check if the server was created before continuing with further requests.`
     },
-    SERVER_SUSPEND_FAILED: {
+    SERVER_CREATION_FAILED_MEMORY: {
         id: -13,
+        format: (amountToFree) => `Creating this server would put you over your allowed maximum memory usage.\nYou will need to create this server with less memory OR free up ${amountToFree} MB by deleting or suspending other active servers.`
+    },
+    SERVER_SUSPEND_FAILED: {
+        id: -14,
         text: `Failed to suspend the server.\nPlease ensure the server ID is correct and try again.`
     },
     SERVER_SUSPEND_FAILED_ALREADY_SUSPENDED: {
-        id: -14,
+        id: -15,
         text: `The server is already suspended.\nNo action was taken.`
     },
     SERVER_UNSUSPEND_FAILED: {
-        id: -15,
+        id: -16,
         text: `Failed to unsuspend.\nPlease ensure the server ID is correct and try again.`
     },
     SERVER_UNSUSPEND_FAILED_MEMORY: {
-        id: -16,
+        id: -17,
         text: `Failed to unsuspend due to your account's memory limit.\nPlease free up some memory by suspending or deleting other active servers before trying again.`
     },
     SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE: {
-        id: -17,
+        id: -18,
         text: `The server is already active.\nNo action was taken.`
     }
 };
 
-/**
- * Retrieve an error message string by key (e.g. 'NODE_NOT_FOUND') or numeric id (e.g. -5).
- * For parameterized messages pass params after the keyOrId.
- * Returns a string.
- */
 export function getErrorMessage(keyOrId, ...params) {
     let entry;
     if (typeof keyOrId === 'string') {
@@ -86,7 +81,7 @@ export function getErrorMessage(keyOrId, ...params) {
         entry = Object.values(ERROR_MESSAGES).find(e => e.id === keyOrId);
     }
 
-    if (!entry) return `Unknown error (${keyOrId})`;
+    if (!entry) return `Unknown error code: "${keyOrId}" <@${ADMIN_DISCORD_ID}>`;
 
     if (typeof entry.format === 'function') return entry.format(...params);
     return entry.text;

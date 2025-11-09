@@ -3,7 +3,7 @@ const { getErrorMessage } = require('../../error_messages.js');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require('../../permissions.js');
 const { apiCall, getUserId } = require('../../utility/helper_functions.js');
-const { getServerOwnerId } = require('../../utility/server_functions.js');
+const { getServerOwnerId, isServerSuspended, testFunction } = require('../../utility/server_functions.js');
 
 async function suspendServer(serverId) {
     const apiResult = await apiCall(`application/servers/${serverId}/suspend`, 'POST');
@@ -24,8 +24,8 @@ module.exports = {
         ),
 
 	async execute(interaction) {
-        authenticated = -1;
-        interactionReply = "";
+        let authenticated = -1;
+        let interactionReply = "";
         const serverOwnerId = await getServerOwnerId(interaction.options.getString('server-id'));
         
         if(serverOwnerId == getUserId(interaction.user.id)) {
@@ -41,6 +41,13 @@ module.exports = {
         }
         else if(authenticated == false) {
             interaction.reply(getErrorMessage('INSUFFICIENT_PERMISSIONS'));
+            return;
+        }
+
+        const serverIsSuspended = await isServerSuspended(interaction.options.getString('server-id'));
+
+        if(serverIsSuspended == true) {
+            interaction.reply(getErrorMessage('SERVER_SUSPEND_FAILED_ALREADY_SUSPENDED'));
             return;
         }
 

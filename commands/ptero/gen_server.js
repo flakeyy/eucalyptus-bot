@@ -4,7 +4,7 @@ const users = require('../../users.json');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const { apiCall, extractEnvVariables, getUserId } = require('../../utility/helper_functions.js');
-const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, checkAvailableUserMemory } = require('../../utility/server_functions.js');
+const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory } = require('../../utility/server_functions.js');
 const { getErrorMessage } = require('../../error_messages.js');
 
 async function getDefaultAllocation(node) {
@@ -12,7 +12,7 @@ async function getDefaultAllocation(node) {
     const jsonString = await apiResult.body.json();
     const jsonData = await jsonString.data;
 
-    for(i=0;i<jsonData.length;i++) {
+    for(let i=0;i<jsonData.length;i++) {
         if(!jsonData[i].attributes.assigned && (jsonData[i].attributes.alias == null || (jsonData[i].attributes.alias != null && jsonData[i].attributes.ip == "0.0.0.0"))) {
             return jsonData[i].attributes.id;
         }
@@ -32,13 +32,13 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
         return nodeId
     }
 
-    overheadMemory = 128;
+    let overheadMemory = config['default_overhead_mb'];
     const nestId = await getNestIdByName(nest);
     if(nestId == -1) {
         return getErrorMessage('NEST_NOT_FOUND');
     }
-    if(nestId == 1) {
-        overheadMemory = config['java_overhead_mb']; // add java overhead for minecraft servers
+    if(nestId == config['minecraft_nest_id']) {
+        overheadMemory = config['java_overhead_mb'];
     }
 
     const eggId = await getEggIdByName(nestId, egg);
@@ -46,9 +46,10 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
         return getErrorMessage('EGG_NOT_FOUND');
     }
 
-    const memoryExceedingUsage = await checkAvailableUserMemory(userId, discordId, memory);
-    if(memoryExceedingUsage > 0) {
-        return getErrorMessage('MEMORY_EXCEEDS_LIMIT', memoryExceedingUsage);
+    const availableMemory = await getAvailableUserMemory(userId, discordId);
+    if(availableMemory - memory < 0) {
+        let memoryToFree = (availableMemory - memory) * -1;
+        return getErrorMessage('SERVER_CREATION_FAILED_MEMORY', memoryToFree);
     }
 
     const defaultAllocation = await getDefaultAllocation(nodeId);
@@ -96,17 +97,11 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
     const bufferData = await apiResult.body.arrayBuffer();
     const buffer = Buffer.from(bufferData);
     const text = buffer.toString('utf-8');
-    const jsonText = JSON.parse(text);
+    let jsonText = JSON.parse(text);
 
-    if(apiResult.statusCode == 201) {
-        console.log(`A server was created.\n${text}`)
-        return `Server '${jsonText.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
-    }
-    else {
-        console.error(`Server creation failed.\n${text}`)
-        return getErrorMessage('API_REQUEST_FAILED', apiResult.statusCode);
-    }
-    
+    jsonText.statusCode = apiResult.statusCode;
+
+    return jsonText;
 }
 
 module.exports = {
@@ -157,14 +152,21 @@ module.exports = {
         const nestName = interaction.options.getString('nest');
         const eggName = interaction.options.getString('egg');
         const memoryMB = interaction.options.getInteger('memory');
-        const serverResult = await createServer(serverName, nodeName, nestName, eggName, memoryMB, discordId, panelId)
+        const apiResult = await createServer(serverName, nodeName, nestName, eggName, memoryMB, discordId, panelId)
 
-        interactionReply = serverResult;
+        let interactionReply = "";
+
+        if(apiResult.statusCode == 201) {
+            interactionReply = `Server '${jsonText.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`
+        }
+        else {
+            return getErrorMessage('API_REQUEST_FAILED', apiResult.statusCode);
+        }
 
         await interaction.deferReply();
         await wait(2_500);
-        if(typeof(serverResult) === "string") {
-            await interaction.editReply(serverResult);
+        if(apiResult.statusCode == 201) {
+            await interaction.editReply(`Server '${jsonText.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${jsonText.attributes.identifier}`);
         }
         else {
             await interaction.editReply(getErrorMessage('SERVER_CREATION_TIMEOUT'));

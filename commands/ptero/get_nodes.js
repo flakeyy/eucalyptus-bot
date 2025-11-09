@@ -25,7 +25,7 @@ module.exports = {
             throw new Error("Invalid input: Expected an object with a 'data' array.");
         }
 
-        formattedString = nodeData.data.map(item => `- ${item.attributes.name} | ${item.attributes.description} | MEM: ${item.attributes.allocated_resources.memory}/${item.attributes.memory}MB Allocated`).join("\n");
+        let formattedString = nodeData.data.map(item => `- ${item.attributes.name} | ${item.attributes.description} | MEM: ${item.attributes.allocated_resources.memory}/${item.attributes.memory}MB Allocated`).join("\n");
 
         formattedString = "```List of Nodes:\n\n" + formattedString + "```"
 

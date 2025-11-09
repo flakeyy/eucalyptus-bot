@@ -26,23 +26,23 @@ module.exports = {
             throw new Error("Invalid input: Expected an object with a 'data' array.");
         }
 
-        totalMemory = 0;
+        let totalMemory = 0;
         serverObjects.data.forEach(item => {
             totalMemory += item.attributes.limits.memory;
         });
         
-        unsuspendedMemory = 0;
+        let unsuspendedMemory = 0;
         serverObjects.data.forEach(item => {
             if(item.attributes.suspended == false) {
                 unsuspendedMemory += item.attributes.limits.memory;
             }
         });
 
-        formattedString = serverObjects.data.map(item => `- ${item.attributes.name} | Memory: ${item.attributes.limits.memory} MB | Suspended: ${item.attributes.suspended} | Server ID: ${item.attributes.id}`).join("\n");
+        let formattedString = serverObjects.data.map(item => `- ${item.attributes.name} | Memory: ${item.attributes.limits.memory} MB | Suspended: ${item.attributes.suspended} | Server ID: ${item.attributes.id}`).join("\n");
 
         formattedString = 
         "```Servers owned by " + getPanelUsername(interaction.user.id) +":\n\n" + 
-        "- TOTAL | Servers: " + serverObjects.data.length + " | Memory (total): " + totalMemory + " MB | Memory (unsuspended): " + unsuspendedMemory + " MB\n\n"
+        "- TOTAL | Servers: " + serverObjects.data.length + " | Memory (unsuspended/total) MB: " + unsuspendedMemory + "/" + totalMemory + "\n\n"
          + formattedString + "```"
 
         await interaction.deferReply();
