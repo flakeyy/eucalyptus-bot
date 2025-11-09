@@ -1,6 +1,7 @@
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
 const { SlashCommandBuilder } = require('discord.js');
 const config = require('../../config.json');
-const users = require('../../users.json');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const { apiCall, extractEnvVariables, getUserId } = require('../../utility/helper_functions.js');

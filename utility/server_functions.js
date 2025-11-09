@@ -1,5 +1,4 @@
 import { createRequire } from 'module';
-import { json } from 'stream/consumers';
 const require = createRequire(import.meta.url);
 const blacklist = require('../blacklist.json');
 const users = require('../users.json');
