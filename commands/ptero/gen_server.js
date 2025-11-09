@@ -92,11 +92,7 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
   }
 
   const apiResult = await apiCall("application/servers", "POST", requestBody);
-
-  const bufferData = await apiResult.body.arrayBuffer();
-  const buffer = Buffer.from(bufferData);
-  const text = buffer.toString("utf-8");
-  const jsonText = JSON.parse(text);
+  const jsonText = await apiResult.body.json();
 
   jsonText.statusCode = apiResult.statusCode;
 

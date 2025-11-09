@@ -129,6 +129,38 @@ export async function isServerSuspended(serverId) {
   return suspended;
 }
 
+export async function editServerBuild(serverId, settingName, value) {
+  const serverInfo = await getServerInfoById(serverId);
+  const requestBody = {
+    allocation: serverInfo.allocation,
+    memory: serverInfo.limits.memory,
+    swap: serverInfo.limits.swap,
+    disk: serverInfo.limits.disk,
+    io: serverInfo.limits.io,
+    cpu: serverInfo.limits.cpu,
+    feature_limits: {
+      databases: serverInfo.feature_limits.databases,
+      allocations: serverInfo.feature_limits.allocations,
+      backups: serverInfo.feature_limits.backups
+    }
+  };
+
+  const validSettings = ["memory"];
+  if(!validSettings.includes(settingName)) {
+    throw new Error(`Invalid setting name. Valid settings are: ${validSettings.join(", ")}`);
+  }
+
+  if(settingName in requestBody) {
+    requestBody[settingName] = value;
+  } else if (settingName in requestBody.feature_limits) {
+    requestBody.feature_limits[settingName] = value;
+  }
+
+  const apiResult = await apiCall(`application/servers/${serverId}/build`, "PATCH", JSON.stringify(requestBody));
+
+  return apiResult.statusCode;
+}
+
 // MISC
 
 export async function getAvailableUserMemory(userId, discordId) {
