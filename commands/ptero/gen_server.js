@@ -4,7 +4,7 @@ const users = require('../../users.json');
 const wait = require('node:timers/promises').setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require ('../../permissions.js');
 const { apiCall, extractEnvVariables, getUserId } = require('../../utility/helper_functions.js');
-const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName } = require('../../utility/server_functions.js');
+const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, checkAvailableUserMemory } = require('../../utility/server_functions.js');
 const { getErrorMessage } = require('../../error_messages.js');
 
 async function getDefaultAllocation(node) {
@@ -18,33 +18,6 @@ async function getDefaultAllocation(node) {
         }
     }
     return -1;
-}
-
-async function checkAvailableUserMemory(userId, discordId, memory) {
-    const apiResult = await apiCall(`application/users/${userId}?include=servers`, 'GET');
-    const jsonData = await apiResult.body.json();
-    
-    if(apiResult == -1) {
-        return apiResult;
-    }
-    else {
-        memoryOverusage = 0;
-        totalMemoryUsage = 0;
-        for(i=0;i<jsonData.attributes.relationships.servers.data.length;i++) {
-            totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory
-        }
-        for(i=0;i<users.users.length;i++) {
-            if(users.users[i].discordId == discordId) {
-                if(totalMemoryUsage + memory > users.users[i].maximumAllowedMemory && users.users[i].maximumAllowedMemory != -1) {
-                    memoryOverusage = (totalMemoryUsage + memory) - users.users[i].maximumAllowedMemory;
-                }
-                else {
-                    memoryOverusage = -1;
-                }
-            }
-        }
-        return memoryOverusage;
-    }
 }
 
 async function createServer(name, node, nest, egg, memory, discordId, userId) {
