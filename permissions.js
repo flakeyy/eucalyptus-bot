@@ -1,22 +1,21 @@
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
 const { getUserId } = require("./utility/helper_functions.js");
 const { users } = require("./users.json");
 
-// bitwise integer permisisons
-export const PERMISSIONS = {
-  READ_NESTS: 1 << 0, //1
-  READ_EGGS: 1 << 1, //2
-  CREATE_SERVER: 1 << 2, //4
-  SUSPEND_OWN_SERVER: 1 << 3, //8
-  UNSUSPEND_OWN_SERVER: 1 << 4, //16
-  DELETE_OWN_SERVER: 1 << 5, //32
-  READ_OWN_SERVERS: 1 << 6, //64
-  EDIT_SERVER_SETTINGS: 1 << 7, //128
-  SUSPEND_ANY_SERVER: 1 << 8, //256
-  UNSUSPEND_ANY_SERVER: 1 << 9, //512
+// bitwise integer permissions
+const PERMISSIONS = {
+  READ_NESTS: 1 << 0, // 1
+  READ_EGGS: 1 << 1, // 2
+  CREATE_SERVER: 1 << 2, // 4
+  SUSPEND_OWN_SERVER: 1 << 3, // 8
+  UNSUSPEND_OWN_SERVER: 1 << 4, // 16
+  DELETE_OWN_SERVER: 1 << 5, // 32
+  READ_OWN_SERVERS: 1 << 6, // 64
+  EDIT_OWN_SERVER_SETTINGS: 1 << 7, // 128
+  EDIT_ANY_SERVER_SETTINGS: 1 << 8, // 256
+  SUSPEND_ANY_SERVER: 1 << 9, // 512
+  UNSUSPEND_ANY_SERVER: 1 << 10, // 1024
 
-  ADMINISTRATOR: 1 << 16 //65536
+  ADMINISTRATOR: 1 << 16 // 65536
 };
 
 function hasPermission(userId, permission) {
@@ -29,7 +28,7 @@ function hasPermission(userId, permission) {
   return false;
 }
 
-export function authenticateUserForPermission(discordId, permission) {
+function authenticateUserForPermission(discordId, permission) {
   const userId = getUserId(discordId);
   if (userId < 0) {
     return userId;
@@ -39,3 +38,8 @@ export function authenticateUserForPermission(discordId, permission) {
   }
   return false;
 }
+
+module.exports = {
+  PERMISSIONS,
+  authenticateUserForPermission
+};
