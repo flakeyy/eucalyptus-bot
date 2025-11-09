@@ -1,7 +1,17 @@
 /* eslint-disable node/no-unpublished-require */
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
 const path = require('path');
+
+// Mock discord.js to avoid ESM/import issues when running under Jest
+jest.mock('discord.js', () => {
+  class SlashCommandBuilder {
+    constructor() {}
+    setName() { return this; }
+    setDescription() { return this; }
+    addStringOption() { return this; }
+    addIntegerOption() { return this; }
+  }
+  return { SlashCommandBuilder };
+});
 
 describe('Command modules', () => {
   afterEach(() => {

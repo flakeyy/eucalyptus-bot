@@ -1,5 +1,3 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
 const { SlashCommandBuilder } = require('discord.js');
 const config = require('../../config.json');
 const wait = require('node:timers/promises').setTimeout;
@@ -175,4 +173,7 @@ module.exports = {
         
 	},
 };
+
+// Export helper for tests
+module.exports.createServer = createServer;
 

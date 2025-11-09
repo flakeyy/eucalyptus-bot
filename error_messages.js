@@ -1,8 +1,6 @@
-import { createRequire } from 'module';
-const require = createRequire(import.meta.url);
 const ADMIN_DISCORD_ID = process.env.ADMIN_DISCORD_ID;
 
-export const ERROR_MESSAGES = {
+const ERROR_MESSAGES = {
     USER_NOT_FOUND: {
         id: -1,
         text: `Unable to find any authenticatable user based on your Discord account.\nPlease let <@${ADMIN_DISCORD_ID}> know if you believe this is in error.`
@@ -73,7 +71,7 @@ export const ERROR_MESSAGES = {
     }
 };
 
-export function getErrorMessage(keyOrId, ...params) {
+function getErrorMessage(keyOrId, ...params) {
     let entry;
     if (typeof keyOrId === 'string') {
         entry = ERROR_MESSAGES[keyOrId];
@@ -86,3 +84,8 @@ export function getErrorMessage(keyOrId, ...params) {
     if (typeof entry.format === 'function') return entry.format(...params);
     return entry.text;
 }
+
+module.exports = {
+    ERROR_MESSAGES,
+    getErrorMessage
+};
