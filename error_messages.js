@@ -68,6 +68,10 @@ const ERROR_MESSAGES = {
   SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE: {
     id: -18,
     text: "The server is already active.\nNo action was taken."
+  },
+  SERVER_EDIT_FAILED: {
+    id: -19,
+    text: "Server edit failed.\nCheck your request and try again."
   }
 };
 
