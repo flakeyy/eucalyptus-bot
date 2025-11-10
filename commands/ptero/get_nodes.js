@@ -3,7 +3,7 @@ const wait = require("node:timers/promises").setTimeout;
 const msgLog = require("../../utility/logger.js")
 const { PERMISSIONS, authenticateUserForPermission } = require ("../../utility/permissions.js");
 const { getNodes } = require("../../utility/server_functions.js");
-const { getErrorMessage } = require("../../error_messages.js");
+const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
   data: new SlashCommandBuilder()
