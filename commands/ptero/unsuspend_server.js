@@ -1,7 +1,8 @@
 const { SlashCommandBuilder } = require("discord.js");
-const { getErrorMessage } = require("../../error_messages.js");
+const { getErrorMessage } = require("../../utility/error_messages.js");
 const wait = require("node:timers/promises").setTimeout;
-const { PERMISSIONS, authenticateUserForPermission } = require("../../permissions.js");
+const msgLog = require("../../utility/logger.js")
+const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { apiCall, getUserId } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, isServerSuspended, getAvailableUserMemory, getServerInfoById } = require("../../utility/server_functions.js");
 
@@ -24,7 +25,6 @@ module.exports = {
     ),
 
   async execute(interaction) {
-    await interaction.deferReply();
     let authenticated = -1;
     let interactionReply = "";
     const serverOwnerId = await getServerOwnerId(interaction.options.getString("server-id"));
@@ -63,6 +63,9 @@ module.exports = {
     const serverId = interaction.options.getString("server-id");
     const suspensionStatusCode = await unsuspendServer(serverId);
 
+    await interaction.deferReply();
+    await wait(1_000);
+
     if (suspensionStatusCode == 204) {
       interactionReply = `Server with ID: ${serverId} has been unsuspended.`;
     }
@@ -70,13 +73,13 @@ module.exports = {
       interactionReply = getErrorMessage("SERVER_UNSUSPEND_FAILED");
     }
 
-    await wait(2_500);
     if (interactionReply != "") {
+      msgLog.log(interaction.user.id, '|', interactionReply)
       await interaction.editReply(interactionReply);
     }
     else {
+      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
-
   }
 };

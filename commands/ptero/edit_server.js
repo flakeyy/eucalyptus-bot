@@ -1,9 +1,10 @@
 const { SlashCommandBuilder } = require("discord.js");
-const { getErrorMessage } = require("../../error_messages.js");
 const wait = require("node:timers/promises").setTimeout;
-const { PERMISSIONS, authenticateUserForPermission } = require("../../permissions.js");
+const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
+const msgLog = require("../../utility/logger.js")
 const { getUserId } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, editServerBuild } = require("../../utility/server_functions.js");
+const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -54,21 +55,23 @@ module.exports = {
 
     const editStatusCode = await editServerBuild(serverId, settingName, settingValue);
 
+    await interaction.deferReply();
+    await wait(1_000);
+
     if (editStatusCode == 200) {
       interactionReply = `Server with ID: ${serverId} has been edited.`;
     }
     else {
       interactionReply = getErrorMessage("SERVER_EDIT_FAILED");
     }
-
-    await interaction.deferReply();
-    await wait(2_500);
+    
     if (interactionReply != "") {
+      msgLog.log(interaction.user.id, '|', interactionReply)
       await interaction.editReply(interactionReply);
     }
     else {
+      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
-
   }
 };

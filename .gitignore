@@ -2,5 +2,6 @@
 keys.json
 config.json
 users.json
-node_modules
 blacklist.json
+node_modules
+logs

@@ -1,10 +1,11 @@
 const { SlashCommandBuilder } = require("discord.js");
 const config = require("../../config.json");
 const wait = require("node:timers/promises").setTimeout;
-const { PERMISSIONS, authenticateUserForPermission } = require ("../../permissions.js");
+const msgLog = require("../../utility/logger.js")
+const { PERMISSIONS, authenticateUserForPermission } = require ("../../utility/permissions.js");
 const { apiCall, extractEnvVariables, getUserId } = require("../../utility/helper_functions.js");
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory } = require("../../utility/server_functions.js");
-const { getErrorMessage } = require("../../error_messages.js");
+const { getErrorMessage } = require("../../utility/error_messages.js");
 
 async function getDefaultAllocation(node) {
   const apiResult = await apiCall(`application/nodes/${node}/allocations`, "GET");
@@ -131,6 +132,7 @@ module.exports = {
 
   async execute(interaction) {
     const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.CREATE_SERVER);
+    let interactionReply = "";
     if (authenticated == -1) {
       interaction.reply(getErrorMessage("USER_NOT_FOUND"));
       return;
@@ -151,16 +153,25 @@ module.exports = {
 
     await interaction.deferReply();
     await wait(2_500);
-
+    
     const text = await apiResult.text();
     const response = JSON.parse(text);
-    if (apiResult.statusCode !== 201) {
-      await interaction.editReply(getErrorMessage("API_REQUEST_FAILED", apiResult.statusCode));
-      return;
-    }
 
-    const responseMessage = `Server '${response.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${response.attributes.identifier}`;
-    await interaction.editReply(responseMessage);
+    if(apiResult.statusCode == 201) {
+      interactionReply = `Server '${response.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${response.attributes.identifier}`
+    }
+    else {
+      interactionReply = getErrorMessage("API_REQUEST_FAILED", apiResult.statusCode)
+    }
+    
+    if (interactionReply != "") {
+      msgLog.log(interaction.user.id, '|', interactionReply)
+      await interaction.editReply(interactionReply);
+    }
+    else {
+      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
+      await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
+    }
   }
 };
 

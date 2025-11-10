@@ -16,7 +16,7 @@ const mockPermissions = {
   ADMINISTRATOR: 65536
 };
 
-jest.mock("../permissions.js", () => ({
+jest.mock("../utility/permissions.js", () => ({
   PERMISSIONS: mockPermissions,
   authenticateUserForPermission: jest.fn().mockReturnValue(true)
 }));
@@ -145,7 +145,7 @@ describe("get-nests command", () => {
         editServerBuild: jest.fn().mockResolvedValue(200)
       }));
 
-      jest.mock("../permissions.js", () => ({
+      jest.mock("../utility/permissions.js", () => ({
         PERMISSIONS: { READ_EGGS: "READ_EGGS" },
         authenticateUserForPermission: jest.fn().mockReturnValue(true)
       }));
@@ -213,7 +213,7 @@ describe("get-nests command", () => {
         editServerBuild: jest.fn().mockResolvedValue(200)
       }));
 
-      jest.mock("../permissions.js", () => ({
+      jest.mock("../utility/permissions.js", () => ({
         PERMISSIONS: { READ_SERVERS: "READ_SERVERS" },
         authenticateUserForPermission: jest.fn().mockReturnValue(true)
       }));
@@ -258,7 +258,7 @@ describe("get-nests command", () => {
         isServerSuspended: jest.fn().mockResolvedValue(false)
       }));
 
-      jest.mock("../permissions.js", () => ({
+      jest.mock("../utility/permissions.js", () => ({
         PERMISSIONS: {
           READ_NESTS: 1,
           READ_EGGS: 2,
@@ -321,7 +321,7 @@ describe("get-nests command", () => {
         getAvailableUserMemory: jest.fn().mockResolvedValue(2048)
       }));
 
-      jest.mock("../permissions.js", () => ({
+      jest.mock("../utility/permissions.js", () => ({
         PERMISSIONS: { UNSUSPEND_OWN_SERVER: "UNSUSPEND_OWN_SERVER" },
         authenticateUserForPermission: jest.fn().mockReturnValue(true)
       }));
@@ -359,7 +359,7 @@ describe("get-nests command", () => {
         ADMINISTRATOR: 65536
       };
       
-      jest.mock("../permissions.js", () => ({
+      jest.mock("../utility/permissions.js", () => ({
         PERMISSIONS: global.PERMISSIONS,
         authenticateUserForPermission: jest.fn().mockReturnValue(true)
       }));
