@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require("discord.js");
 const wait = require("node:timers/promises").setTimeout;
 const { getEggs, getNestIdByName } = require("../../utility/server_functions.js");
 const { formatNames } = require("../../utility/helper_functions.js");
-const { PERMISSIONS, authenticateUserForPermission } = require("../../permissions.js");
+const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
