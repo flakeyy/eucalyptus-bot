@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require("discord.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const wait = require("node:timers/promises").setTimeout;
+const msgLog = require("../../utility/logger.js")
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { apiCall, getUserId } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, isServerSuspended } = require("../../utility/server_functions.js");
@@ -54,6 +55,9 @@ module.exports = {
     const serverId = interaction.options.getString("server-id");
     const suspensionStatusCode = await suspendServer(serverId);
 
+    await interaction.deferReply();
+    await wait(1_000);
+
     if (suspensionStatusCode == 204) {
       interactionReply = `Server with ID: ${serverId} has been suspended.`;
     }
@@ -61,14 +65,13 @@ module.exports = {
       interactionReply = getErrorMessage("SERVER_SUSPEND_FAILED");
     }
 
-    await interaction.deferReply();
-    await wait(2_500);
     if (interactionReply != "") {
+      msgLog.log(interaction.user.id, '|', interactionReply)
       await interaction.editReply(interactionReply);
     }
     else {
+      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
-
   }
 };

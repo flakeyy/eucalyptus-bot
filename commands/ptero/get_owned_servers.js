@@ -1,5 +1,6 @@
 const { SlashCommandBuilder } = require("discord.js");
 const wait = require("node:timers/promises").setTimeout;
+const msgLog = require("../../utility/logger.js")
 const { getUserId, getPanelUsername } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { PERMISSIONS, authenticateUserForPermission } = require ("../../utility/permissions.js");
@@ -11,6 +12,7 @@ module.exports = {
     .setDescription("Gets information about owned servers."),
   async execute(interaction) {
     const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_OWN_SERVERS);
+    let interactionReply = "";
     if (authenticated == -1) {
       interaction.reply(getErrorMessage("USER_NOT_FOUND"));
       return;
@@ -22,9 +24,8 @@ module.exports = {
 
     const serverObjects = await getServersByUser(getUserId(interaction.user.id));
 
-    if (!serverObjects || !Array.isArray(serverObjects.data)) {
-      throw new Error("Invalid input: Expected an object with a 'data' array.");
-    }
+    await interaction.deferReply();
+    await wait(1_000);
 
     let totalMemory = 0;
     serverObjects.data.forEach(item => {
@@ -38,21 +39,22 @@ module.exports = {
       }
     });
 
-    let formattedString = serverObjects.data.map(item => `- ${item.attributes.name} | Memory: ${item.attributes.limits.memory} MB | Suspended: ${item.attributes.suspended} | Server ID: ${item.attributes.id}`).join("\n");
+    const formattedString = serverObjects.data.map(item => `- ${item.attributes.name} | Memory: ${item.attributes.limits.memory} MB | Suspended: ${item.attributes.suspended} | Server ID: ${item.attributes.id}`).join("\n");
 
-    formattedString =
+    if(serverObjects) {
+      interactionReply = 
         "```Servers owned by " + getPanelUsername(interaction.user.id) + ":\n\n" +
         "- TOTAL | Servers: " + serverObjects.data.length + " | Memory (unsuspended/total) MB: " + unsuspendedMemory + "/" + totalMemory + "\n\n"
          + formattedString + "```";
+    }
 
-    await interaction.deferReply();
-    await wait(2_000);
-    if (serverObjects) {
-      await interaction.editReply(formattedString);
+    if (interactionReply != "") {
+      msgLog.log(interaction.user.id, '|', interactionReply)
+      await interaction.editReply(interactionReply);
     }
     else {
+      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
-
   }
 };
