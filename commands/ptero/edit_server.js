@@ -1,5 +1,5 @@
 const { SlashCommandBuilder } = require("discord.js");
-const { getErrorMessage } = require("../../error_messages.js");
+const { getErrorMessage } = require("../../utility/error_messages.js");
 const wait = require("node:timers/promises").setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require("../../permissions.js");
 const { getUserId } = require("../../utility/helper_functions.js");

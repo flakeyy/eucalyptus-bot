@@ -1,5 +1,5 @@
-const { getUserId } = require("./utility/helper_functions.js");
-const { users } = require("./users.json");
+const { getUserId } = require("./helper_functions.js");
+const { users } = require("../users.json");
 
 // bitwise integer permissions
 const PERMISSIONS = {
