@@ -143,12 +143,12 @@ async function editServerBuild(serverId, settingName, value) {
     }
   };
 
-  const validSettings = ["memory"];
-  if(!validSettings.includes(settingName)) {
+  const validSettings = [ "memory" ];
+  if (!validSettings.includes(settingName)) {
     throw new Error(`Invalid setting name. Valid settings are: ${validSettings.join(", ")}`);
   }
 
-  if(settingName in requestBody) {
+  if (settingName in requestBody) {
     requestBody[settingName] = value;
   } else if (settingName in requestBody.feature_limits) {
     requestBody.feature_limits[settingName] = value;

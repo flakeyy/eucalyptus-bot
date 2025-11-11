@@ -1,6 +1,8 @@
 require("dotenv").config();
 const { Client } = require("undici");
 const client = new Client("https://dino.flakey.tech/");
+const config = require("../config.json");
+const msgLog = require("./logger.js");
 const API_KEY = process.env.PANEL_API_KEY;
 const { users } = require("../users.json");
 
@@ -15,6 +17,10 @@ async function apiCall(path, method, body) {
     },
     body: body
   });
+
+  if (config.debug) {
+    msgLog.debug(`API: ${method} /api/${path} | Status Code: ${result.statusCode}`);
+  }
 
   return result;
 }
@@ -57,8 +63,8 @@ function getPanelUsername(discordId) {
 
 function reconstructCommand(interaction) {
   const fullCommand = `/${interaction.commandName} ${interaction.options.data
-  .map(option => `${option.name}:${option.value}`)
-  .join(' ')}`;
+    .map(option => `${option.name}:${option.value}`)
+    .join(" ")}`;
 
   return fullCommand;
 }

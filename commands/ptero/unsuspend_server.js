@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require("discord.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-const wait = require("node:timers/promises").setTimeout;
 const msgLog = require("../../utility/logger.js");
+const config = require("../../config.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { apiCall, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, isServerSuspended, getAvailableUserMemory, getServerInfoById } = require("../../utility/server_functions.js");
@@ -25,6 +25,8 @@ module.exports = {
     ),
 
   async execute(interaction) {
+    await interaction.deferReply();
+    msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
     let authenticated = -1;
     let interactionReply = "";
     const serverOwnerId = await getServerOwnerId(interaction.options.getString("server-id"));
@@ -37,17 +39,20 @@ module.exports = {
     }
 
     if (authenticated == -1) {
-      interaction.reply(getErrorMessage("USER_NOT_FOUND"));
+      await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
       return;
     }
     else if (authenticated == false) {
-      interaction.reply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
       return;
     }
 
     const serverIsSuspended = await isServerSuspended(interaction.options.getString("server-id"));
     if (serverIsSuspended == false) {
-      interaction.reply(getErrorMessage("SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE"));
+      await interaction.editReply(getErrorMessage("SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE"));
+      if (config.debug) {
+        msgLog.debug(getErrorMessage("SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE"));
+      }
       return;
     }
 
@@ -63,9 +68,6 @@ module.exports = {
     const serverId = interaction.options.getString("server-id");
     const suspensionStatusCode = await unsuspendServer(serverId);
 
-    await interaction.deferReply();
-    await wait(1_000);
-
     if (suspensionStatusCode == 204) {
       interactionReply = `Server with ID: ${serverId} has been unsuspended.`;
     }
@@ -74,11 +76,13 @@ module.exports = {
     }
 
     if (interactionReply != "") {
-      msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${interactionReply}`)
+      if (config.debug) {
+        msgLog.debug(`${interactionReply}`);
+      }
       await interaction.editReply(interactionReply);
     }
     else {
-      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("SERVER_TIMEOUT")}`)
+      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("SERVER_TIMEOUT")}`);
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
   }
