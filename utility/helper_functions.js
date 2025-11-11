@@ -1,12 +1,12 @@
-import { createRequire } from "module";
-const require = createRequire(import.meta.url);
 require("dotenv").config();
 const { Client } = require("undici");
 const client = new Client("https://dino.flakey.tech/");
+const config = require("../config.json");
+const msgLog = require("./logger.js");
 const API_KEY = process.env.PANEL_API_KEY;
 const { users } = require("../users.json");
 
-export async function apiCall(path, method, body) {
+async function apiCall(path, method, body) {
   const result = await client.request({
     path: `/api/${path}`,
     method: `${method}`,
@@ -18,10 +18,14 @@ export async function apiCall(path, method, body) {
     body: body
   });
 
+  if (config.debug) {
+    msgLog.debug(`API: ${method} /api/${path} | Status Code: ${result.statusCode}`);
+  }
+
   return result;
 }
 
-export function extractEnvVariables(jsonData) {
+function extractEnvVariables(jsonData) {
   const envVariables = {};
 
   jsonData.data.forEach(item => {
@@ -31,7 +35,7 @@ export function extractEnvVariables(jsonData) {
   return envVariables;
 }
 
-export function formatNames(jsonData) {
+function formatNames(jsonData) {
   if (!jsonData || !Array.isArray(jsonData.data)) {
     throw new Error("Invalid input: Expected an object with a 'data' array.");
   }
@@ -39,7 +43,7 @@ export function formatNames(jsonData) {
   return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
 }
 
-export function getUserId(discordId) {
+function getUserId(discordId) {
   for (const user of users) {
     if (user.discordId === discordId) {
       return user.panelId;
@@ -48,7 +52,7 @@ export function getUserId(discordId) {
   return -1; // no user found
 }
 
-export function getPanelUsername(discordId) {
+function getPanelUsername(discordId) {
   for (const user of users) {
     if (user.discordId === discordId) {
       return user.panelUsername;
@@ -57,3 +61,19 @@ export function getPanelUsername(discordId) {
   return -1; // no user found
 }
 
+function reconstructCommand(interaction) {
+  const fullCommand = `/${interaction.commandName} ${interaction.options.data
+    .map(option => `${option.name}:${option.value}`)
+    .join(" ")}`;
+
+  return fullCommand;
+}
+
+module.exports = {
+  apiCall,
+  extractEnvVariables,
+  formatNames,
+  getUserId,
+  getPanelUsername,
+  reconstructCommand
+};

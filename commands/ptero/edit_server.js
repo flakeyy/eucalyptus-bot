@@ -1,8 +1,8 @@
 const { SlashCommandBuilder } = require("discord.js");
-const wait = require("node:timers/promises").setTimeout;
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const msgLog = require("../../utility/logger.js")
-const { getUserId } = require("../../utility/helper_functions.js");
+const msgLog = require("../../utility/logger.js");
+const config = require("../../config.json");
+const { getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, editServerBuild } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
@@ -18,7 +18,7 @@ module.exports = {
     .addStringOption(option =>
       option.setName("setting")
         .setDescription("Choose from: 'memory'")
-        .setRequired(true),
+        .setRequired(true)
     )
     .addStringOption(option =>
       option.setName("value")
@@ -26,9 +26,10 @@ module.exports = {
         .setRequired(true)
     ),
 
-
   // ADJUSTING MEMORY THIS WAY CAN BE EXPLOITED TO BYPASS THE PER-USER MEMORY CAP. OH WELL.
   async execute(interaction) {
+    await interaction.deferReply();
+    msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
     let authenticated = -1;
     let interactionReply = "";
     const serverOwnerId = await getServerOwnerId(interaction.options.getString("server-id"));
@@ -43,20 +44,16 @@ module.exports = {
     }
 
     if (authenticated == -1) {
-      interaction.reply(getErrorMessage("USER_NOT_FOUND"));
+      await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
       return;
     }
     else if (authenticated == false) {
-      interaction.reply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
       return;
     }
 
     const serverId = interaction.options.getString("server-id");
-
     const editStatusCode = await editServerBuild(serverId, settingName, settingValue);
-
-    await interaction.deferReply();
-    await wait(1_000);
 
     if (editStatusCode == 200) {
       interactionReply = `Server with ID: ${serverId} has been edited.`;
@@ -64,13 +61,15 @@ module.exports = {
     else {
       interactionReply = getErrorMessage("SERVER_EDIT_FAILED");
     }
-    
+
     if (interactionReply != "") {
-      msgLog.log(interaction.user.id, '|', interactionReply)
+      if (config.debug) {
+        msgLog.debug(`${interactionReply}`);
+      }
       await interaction.editReply(interactionReply);
     }
     else {
-      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
+      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("SERVER_TIMEOUT")}`);
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
   }

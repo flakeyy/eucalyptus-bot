@@ -1,9 +1,8 @@
 const { SlashCommandBuilder } = require("discord.js");
 const config = require("../../config.json");
-const wait = require("node:timers/promises").setTimeout;
-const msgLog = require("../../utility/logger.js")
-const { PERMISSIONS, authenticateUserForPermission } = require ("../../utility/permissions.js");
-const { apiCall, extractEnvVariables, getUserId } = require("../../utility/helper_functions.js");
+const msgLog = require("../../utility/logger.js");
+const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
+const { apiCall, extractEnvVariables, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
@@ -87,11 +86,6 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
     }
   });
 
-  if (config["developer_mode"]) {
-    console.log(requestBody);
-    return "Developer mode enabled, no real API request was made, check console for details.";
-  }
-
   const apiResult = await apiCall("application/servers", "POST", requestBody);
   const jsonText = await apiResult.body.json();
 
@@ -131,14 +125,16 @@ module.exports = {
     ),
 
   async execute(interaction) {
+    await interaction.deferReply();
+    msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
     const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.CREATE_SERVER);
     let interactionReply = "";
     if (authenticated == -1) {
-      interaction.reply(getErrorMessage("USER_NOT_FOUND"));
+      await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
       return;
     }
     else if (authenticated == false) {
-      interaction.reply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
       return;
     }
 
@@ -151,25 +147,21 @@ module.exports = {
     const memoryMB = interaction.options.getInteger("memory");
     const apiResult = await createServer(serverName, nodeName, nestName, eggName, memoryMB, discordId, panelId);
 
-    await interaction.deferReply();
-    await wait(2_500);
-    
-    const text = await apiResult.text();
-    const response = JSON.parse(text);
-
-    if(apiResult.statusCode == 201) {
-      interactionReply = `Server '${response.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${response.attributes.identifier}`
+    if (apiResult.statusCode == 201) {
+      interactionReply = `Server '${apiResult.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${apiResult.attributes.identifier}`;
     }
     else {
-      interactionReply = getErrorMessage("API_REQUEST_FAILED", apiResult.statusCode)
+      interactionReply = getErrorMessage("API_REQUEST_FAILED", apiResult.statusCode);
     }
-    
+
     if (interactionReply != "") {
-      msgLog.log(interaction.user.id, '|', interactionReply)
+      if (config.debug) {
+        msgLog.debug(`${interactionReply}`);
+      }
       await interaction.editReply(interactionReply);
     }
     else {
-      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
+      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("SERVER_TIMEOUT")}`);
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
   }
