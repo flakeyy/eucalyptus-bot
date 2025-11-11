@@ -14,7 +14,7 @@ A simple discord bot that allows adminsistrators and users to manage their serve
 - create new servers
 - view available eggs, nests, nodes
 - view owned servers (per user)
-- suspend/unsuspend servers (working on it)
+- suspend/unsuspend servers
 - more to come..
 
 ## Installation
