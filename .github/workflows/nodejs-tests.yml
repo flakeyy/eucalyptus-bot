@@ -19,9 +19,10 @@ jobs:
           node-version: '18'
           cache: 'npm'
 
-      - name: Install dependencies
+      - name: Get dependencies
         run: npm install --no-audit --no-fund
-
+        run: cp config.json.sample config.json
+        
       - name: Run tests
         env:
           CI: true
