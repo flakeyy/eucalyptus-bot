@@ -20,8 +20,7 @@ jobs:
           cache: 'npm'
 
       - name: Get dependencies
-        run: npm install --no-audit --no-fund
-        run: cp config.json.sample config.json
+        run: npm install --no-audit --no-fund; cp config.json.sample config.json
         
       - name: Run tests
         env:
