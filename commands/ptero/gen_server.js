@@ -1,9 +1,9 @@
 const { SlashCommandBuilder } = require("discord.js");
 const config = require("../../config.json");
 const wait = require("node:timers/promises").setTimeout;
-const msgLog = require("../../utility/logger.js")
-const { PERMISSIONS, authenticateUserForPermission } = require ("../../utility/permissions.js");
-const { apiCall, extractEnvVariables, getUserId } = require("../../utility/helper_functions.js");
+const msgLog = require("../../utility/logger.js");
+const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
+const { apiCall, extractEnvVariables, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
@@ -165,11 +165,11 @@ module.exports = {
     }
     
     if (interactionReply != "") {
-      msgLog.log(interaction.user.id, '|', interactionReply)
+      msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${interactionReply}`)
       await interaction.editReply(interactionReply);
     }
     else {
-      msgLog.warn(interaction.user.id, '|', getErrorMessage("SERVER_TIMEOUT"))
+      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("SERVER_TIMEOUT")}`)
       await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
     }
   }

@@ -52,7 +52,9 @@ describe("get-nests command", () => {
         })}
       }),
       getUserId: jest.fn().mockReturnValue("panelUser1"),
-      formatNames: jest.fn().mockImplementation(nests => nests.data.map(n => `- ${n.attributes.name} | ${n.attributes.description}`).join("\n"))
+      getPanelUsername: jest.fn().mockReturnValue("TestUser"),
+      formatNames: jest.fn().mockImplementation(nests => nests.data.map(n => `- ${n.attributes.name} | ${n.attributes.description}`).join("\n")),
+      reconstructCommand: jest.fn().mockReturnValue("/test-command arg1:val1")
     }));
 
     jest.mock("../utility/server_functions.js", () => ({
@@ -132,7 +134,9 @@ describe("get-nests command", () => {
       jest.mock("../utility/helper_functions.js", () => ({
         apiCall: mockApiCall,
         getUserId: jest.fn().mockReturnValue("panelUser1"),
-        formatNames: jest.fn().mockImplementation(names => names.join(", "))
+        getPanelUsername: jest.fn().mockReturnValue("TestUser"),
+        formatNames: jest.fn().mockImplementation(names => names.join(", ")),
+        reconstructCommand: jest.fn().mockReturnValue("/test-command arg1:val1")
       }));
 
       jest.mock("../utility/server_functions.js", () => ({
@@ -184,7 +188,8 @@ describe("get-nests command", () => {
         apiCall: mockApiCall,
         getUserId: jest.fn().mockReturnValue("panelUser1"),
         formatNames: jest.fn().mockImplementation(names => names.join(", ")),
-        getPanelUsername: jest.fn().mockReturnValue("TestUser")
+        getPanelUsername: jest.fn().mockReturnValue("TestUser"),
+        reconstructCommand: jest.fn().mockReturnValue("/test-command arg1:val1")
       }));
 
       jest.mock("../utility/server_functions.js", () => ({
@@ -249,7 +254,8 @@ describe("get-nests command", () => {
       jest.mock("../utility/helper_functions.js", () => ({
         apiCall: mockApiCall,
         getUserId: jest.fn().mockReturnValue("panelUser1"),
-        formatNames: jest.fn().mockImplementation(names => names.join(", "))
+        formatNames: jest.fn().mockImplementation(names => names.join(", ")),
+        reconstructCommand: jest.fn().mockReturnValue("/test-command arg1:val1")
       }));
 
       jest.mock("../utility/server_functions.js", () => ({
@@ -306,7 +312,8 @@ describe("get-nests command", () => {
       jest.mock("../utility/helper_functions.js", () => ({
         apiCall: mockApiCall,
         getUserId: jest.fn().mockReturnValue("panelUser1"),
-        formatNames: jest.fn().mockImplementation(names => names.join(", "))
+        formatNames: jest.fn().mockImplementation(names => names.join(", ")),
+        reconstructCommand: jest.fn().mockReturnValue("/test-command arg1:val1")
       }));
 
       jest.mock("../utility/server_functions.js", () => ({
@@ -582,7 +589,10 @@ describe("get-nests command", () => {
       jest.mock("../utility/helper_functions.js", () => ({
         apiCall: mockApiCall,
         extractEnvVariables: jest.fn().mockReturnValue({}),
-        getUserId: jest.fn().mockReturnValue("panelUser1")
+        getUserId: jest.fn().mockReturnValue("panelUser1"),
+        getPanelUsername: jest.fn().mockReturnValue("TestUser"),
+        formatNames: jest.fn().mockImplementation(names => names.join(", ")),
+        reconstructCommand: jest.fn().mockReturnValue("/test-command arg1:val1")
       }));
 
       jest.mock("../utility/server_functions.js", () => ({
