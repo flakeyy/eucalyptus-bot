@@ -54,6 +54,13 @@ try {
   process.exit(1);
 }
 
+let commitHash = "";
+try {
+  commitHash = require("node:child_process").execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
+} catch {
+  commitHash = "unknown";
+}
+
 async function setPresence() {
   const result = await hClient.request({
     path: "/api/application/servers",
@@ -64,11 +71,11 @@ async function setPresence() {
   const jsonData = await jsonString.data;
 
   dClient.user.setStatus("online");
-  dClient.application.edit({ description: `Watching over ${jsonData.length} servers @ dino.flakey.tech\nhttps://uptime.flakey.tech/status/node\nv${require("./package.json").version}` });
+  dClient.application.edit({ description: `Watching over ${jsonData.length} servers @ dino.flakey.tech\nhttps://uptime.flakey.tech/status/node\nv${require("./package.json").version} \`${commitHash}\`` });
 };
 
 dClient.once(Events.ClientReady, readyClient => {
-  console.log(`${readyClient.user.tag} is live | v${require("./package.json").version}${useDev ? " | developer mode" : ""}`);
+  console.log(`${readyClient.user.tag} is live | v${require("./package.json").version}/${commitHash} ${useDev ? " | developer mode" : ""}`);
   setPresence();
   setInterval(setPresence, 300000);
 });
