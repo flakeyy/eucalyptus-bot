@@ -10,10 +10,8 @@ jest.mock("../utility/permissions.js", () => ({
     EDIT_OWN_SERVER_SETTINGS: 128,
     EDIT_ANY_SERVER_SETTINGS: 256,
     CREATE_SERVER: 4,
-    READ_EGGS: 2,
-    READ_NESTS: 1,
-    READ_NODES: 2048,
-    READ_OWN_SERVERS: 64,
+    GET_SERVICE_INFORMATION: 1,
+    READ_SERVERS: 64,
     SUSPEND_OWN_SERVER: 8,
     SUSPEND_ANY_SERVER: 512,
     UNSUSPEND_OWN_SERVER: 16,
@@ -145,7 +143,7 @@ describe("Ptero Commands", () => {
       expect(interaction.deferReply).toHaveBeenCalled();
     });
 
-    test("should deny creation without CREATE_SERVER permission", async () => {
+    test("should deny access without proper permissions", async () => {
       const permissions = require("../utility/permissions.js");
       const errors = require("../utility/error_messages.js");
 
@@ -195,7 +193,7 @@ describe("Ptero Commands", () => {
       expect(interaction.editReply).toHaveBeenCalled();
     });
 
-    test("should deny access without READ_EGGS permission", async () => {
+    test("should deny access without proper permissions", async () => {
       const permissions = require("../utility/permissions.js");
       const errors = require("../utility/error_messages.js");
 
@@ -241,7 +239,7 @@ describe("Ptero Commands", () => {
       expect(interaction.editReply).toHaveBeenCalled();
     });
 
-    test("should deny access without READ_NESTS permission", async () => {
+    test("should deny access without proper permissions", async () => {
       const permissions = require("../utility/permissions.js");
       const errors = require("../utility/error_messages.js");
 
@@ -290,7 +288,7 @@ describe("Ptero Commands", () => {
       expect(interaction.editReply).toHaveBeenCalled();
     });
 
-    test("should deny access without READ_NODES permission", async () => {
+    test("should deny access without proper permissions", async () => {
       const permissions = require("../utility/permissions.js");
       const errors = require("../utility/error_messages.js");
 
@@ -341,7 +339,7 @@ describe("Ptero Commands", () => {
       expect(interaction.editReply).toHaveBeenCalled();
     });
 
-    test("should deny access without READ_OWN_SERVERS permission", async () => {
+    test("should deny access without proper permissions", async () => {
       const permissions = require("../utility/permissions.js");
       const errors = require("../utility/error_messages.js");
 

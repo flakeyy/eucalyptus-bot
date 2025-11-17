@@ -13,7 +13,7 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
-    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_OWN_SERVERS);
+    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_SERVERS);
     let interactionReply = "";
     if (authenticated == -1) {
       await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));

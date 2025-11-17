@@ -32,10 +32,10 @@ module.exports = {
     const serverOwnerId = await getServerOwnerId(interaction.options.getString("server-id"));
 
     if (serverOwnerId == getUserId(interaction.user.id)) {
-      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.UNSUSPEND_OWN_SERVER);
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.UNSUSPEND_SERVER);
     }
     else {
-      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.UNSUSPEND_ANY_SERVER);
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.ADMINISTRATOR);
     }
 
     if (authenticated == -1) {

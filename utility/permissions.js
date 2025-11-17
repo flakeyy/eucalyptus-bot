@@ -4,17 +4,14 @@ const msgLog = require("./logger.js");
 
 // bitwise integer permissions
 const PERMISSIONS = {
-  READ_NESTS: 1 << 0, // 1
-  READ_EGGS: 1 << 1, // 2
-  CREATE_SERVER: 1 << 2, // 4
-  SUSPEND_OWN_SERVER: 1 << 3, // 8
-  UNSUSPEND_OWN_SERVER: 1 << 4, // 16
-  DELETE_OWN_SERVER: 1 << 5, // 32
-  READ_OWN_SERVERS: 1 << 6, // 64
-  EDIT_OWN_SERVER_SETTINGS: 1 << 7, // 128
-  EDIT_ANY_SERVER_SETTINGS: 1 << 8, // 256
-  SUSPEND_ANY_SERVER: 1 << 9, // 512
-  UNSUSPEND_ANY_SERVER: 1 << 10, // 1024
+  GET_SERVICE_INFORMATION: 1 << 0, // 1
+  CREATE_SERVER: 1 << 1, // 2
+  SUSPEND_SERVER: 1 << 2, // 4
+  UNSUSPEND_SERVER: 1 << 3, // 8
+  DELETE_SERVER: 1 << 4, // 16
+  READ_SERVERS: 1 << 5, // 32
+  EDIT_SERVER_SETTINGS: 1 << 6, // 64
+  SET_CLIENT_KEY: 1 << 7, // 128
 
   ADMINISTRATOR: 1 << 16 // 65536
 };
