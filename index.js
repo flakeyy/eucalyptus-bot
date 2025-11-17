@@ -64,13 +64,8 @@ async function setPresence() {
   const jsonString = await result.body.json();
   const jsonData = await jsonString.data;
 
-  dClient.user.setPresence({
-    activities: [ {
-      name: `over ${jsonData.length} servers.`,
-      type: ActivityType.Watching
-    } ],
-    status: "online"
-  });
+  dClient.user.setStatus("online");
+  dClient.application.edit({ description: `Watching over ${jsonData.length} servers\nv${require("./package.json").version}\nhttps://uptime.flakey.tech/status/node` });
 };
 
 dClient.once(Events.ClientReady, readyClient => {
