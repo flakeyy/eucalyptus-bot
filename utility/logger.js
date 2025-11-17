@@ -19,7 +19,7 @@ function msgLog(level, ...args) {
 }
 
 module.exports = {
-  log: (...args) => msgLog("log", ...args),
+  log: (...args) => msgLog("info", ...args),
   warn: (...args) => msgLog("warn", ...args),
   error: (...args) => msgLog("error", ...args),
   debug: (...args) => msgLog("debug", ...args)

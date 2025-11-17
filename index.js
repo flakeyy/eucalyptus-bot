@@ -6,7 +6,6 @@ const {
   Collection,
   Events,
   GatewayIntentBits,
-  ActivityType,
   MessageFlags
 } = require("discord.js");
 const { Client: httpClient } = require("undici");
@@ -16,7 +15,7 @@ const hClient = new httpClient("https://dino.flakey.tech/");
 // Environment variables with defaults
 let useDev = false;
 let DISCORD_TOKEN = process.env.DISCORD_TOKEN || "";
-let API_KEY = process.env.API_KEY || "";
+let API_KEY = process.env.PANEL_API_KEY || "";
 
 // Check for dev mode
 if (process.argv[2] === "--dev") {
