@@ -57,6 +57,13 @@ jest.mock("../config.json", () => ({
   debug: false
 }));
 
+jest.mock("../users.json", () => ({
+  users: [
+    { panelId: 1, panelAPIKey: "old-key" },
+    { panelId: 2, panelAPIKey: "another-key" }
+  ]
+}), { virtual: true });
+
 // NOW require commands after all mocks are set up
 const { execute: editServer } = require("../commands/ptero/edit_server");
 const { execute: genServer } = require("../commands/ptero/gen_server");
