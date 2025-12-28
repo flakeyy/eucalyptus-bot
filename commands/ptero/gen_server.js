@@ -2,12 +2,12 @@ const { SlashCommandBuilder } = require("discord.js");
 const config = require("../../config.json");
 const msgLog = require("../../utility/logger.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { apiCall, extractEnvVariables, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
+const { applicationApiCall, extractEnvVariables, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 async function getDefaultAllocation(node) {
-  const apiResult = await apiCall(`application/nodes/${node}/allocations`, "GET");
+  const apiResult = await applicationApiCall(`application/nodes/${node}/allocations`, "GET");
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
 
@@ -86,7 +86,7 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
     }
   });
 
-  const apiResult = await apiCall("application/servers", "POST", requestBody);
+  const apiResult = await applicationApiCall("application/servers", "POST", requestBody);
   const jsonText = await apiResult.body.json();
 
   jsonText.statusCode = apiResult.statusCode;

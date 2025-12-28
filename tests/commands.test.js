@@ -37,7 +37,7 @@ jest.mock("../utility/server_functions.js", () => ({
 }));
 
 jest.mock("../utility/helper_functions.js", () => ({
-  apiCall: jest.fn(),
+  applicationApiCall: jest.fn(),
   extractEnvVariables: jest.fn(),
   getUserId: jest.fn(),
   reconstructCommand: jest.fn(),
@@ -367,7 +367,7 @@ describe("Ptero Commands", () => {
       helpers.getUserId.mockReturnValue(1);
       serverFuncs.getServerOwnerId.mockResolvedValue(1);
       serverFuncs.isServerSuspended.mockResolvedValue(false);
-      helpers.apiCall.mockResolvedValue({ statusCode: 204 });
+      helpers.applicationApiCall.mockResolvedValue({ statusCode: 204 });
 
       const interaction = {
         deferReply: jest.fn(),
@@ -423,7 +423,7 @@ describe("Ptero Commands", () => {
         limits: { memory: 1024 }
       });
       serverFuncs.getAvailableUserMemory.mockResolvedValue(2048);
-      helpers.apiCall.mockResolvedValue({ statusCode: 204 });
+      helpers.applicationApiCall.mockResolvedValue({ statusCode: 204 });
 
       const interaction = {
         deferReply: jest.fn(),

@@ -6,7 +6,7 @@ const msgLog = require("./logger.js");
 const API_KEY = process.env.PANEL_API_KEY;
 const { users } = require("../users.json");
 
-async function apiCall(path, method, body) {
+async function applicationApiCall(path, method, body) {
   const result = await client.request({
     path: `/api/${path}`,
     method: `${method}`,
@@ -16,6 +16,31 @@ async function apiCall(path, method, body) {
       "Authorization": `Bearer ${API_KEY}`
     },
     body: body
+  });
+
+  if (config.debug) {
+    msgLog.debug(`API: ${method} /api/${path} | Status Code: ${result.statusCode}`);
+  }
+
+  return result;
+}
+
+async function clientApiCall(path, method, body, userDiscordId) {
+  let API_KEY = "";
+  for (const user of users) {
+    if (user.discordId === userDiscordId) {
+      API_KEY = user.panelAPIKey;
+    }
+  }
+  const result = await client.request({
+    path: `/api/${path}`,
+    method: `${method}`,
+    headers: {
+      "Accept": "application/json",
+      "content-type": "application/json",
+      "Authorization": `Bearer ${API_KEY}`
+    },
+  body: body
   });
 
   if (config.debug) {
@@ -37,7 +62,7 @@ function extractEnvVariables(jsonData) {
 
 function formatNames(jsonData) {
   if (!jsonData || !Array.isArray(jsonData.data)) {
-    throw new Error("Invalid input: Expected an object with a 'data' array.");
+    throw new Error("Invalid input: Expect an object with a 'data' array.");
   }
 
   return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
@@ -63,17 +88,23 @@ function getPanelUsername(discordId) {
 
 function reconstructCommand(interaction) {
   const fullCommand = `/${interaction.commandName} ${interaction.options.data
-    .map(option => `${option.name}:${option.value}`)
+    .map(option => `${option.name}:${(option.name == "api-key") ? "********" : option.value}`)
     .join(" ")}`;
 
   return fullCommand;
 }
 
+function saveUsersFile() {
+  const fs = require("fs");
+  fs.writeFileSync("./users.json", JSON.stringify({ users: users }, null, 2));
+}
+
 module.exports = {
-  apiCall,
+  applicationApiCall: applicationApiCall,
   extractEnvVariables,
   formatNames,
   getUserId,
   getPanelUsername,
+  saveUsersFile,
   reconstructCommand
 };

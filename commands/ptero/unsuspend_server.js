@@ -3,11 +3,11 @@ const { getErrorMessage } = require("../../utility/error_messages.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { apiCall, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
+const { applicationApiCall, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, isServerSuspended, getAvailableUserMemory, getServerInfoById } = require("../../utility/server_functions.js");
 
 async function unsuspendServer(serverId) {
-  const apiResult = await apiCall(`application/servers/${serverId}/unsuspend`, "POST");
+  const apiResult = await applicationApiCall(`application/servers/${serverId}/unsuspend`, "POST");
 
   const statusCode = apiResult.statusCode;
 
