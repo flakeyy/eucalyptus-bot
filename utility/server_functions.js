@@ -1,16 +1,16 @@
 const blacklist = require("../blacklist.json");
 const { users } = require("../users.json");
-const { apiCall } = require("./helper_functions.js");
+const { applicationApiCall: applicationApiCall } = require("./helper_functions.js");
 
 // EGGS
 async function getEggs(nestId) {
-  const apiResult = await apiCall(`application/nests/${nestId}/eggs`, "GET");
+  const apiResult = await applicationApiCall(`application/nests/${nestId}/eggs`, "GET");
   const jsonString = await apiResult.body.json();
   return jsonString;
 }
 
 async function getEggData(nestId, eggId) {
-  const apiResult = await apiCall(`application/nests/${nestId}/eggs/${eggId}?include=variables`, "GET");
+  const apiResult = await applicationApiCall(`application/nests/${nestId}/eggs/${eggId}?include=variables`, "GET");
   const jsonData = await apiResult.body.json();
 
   if (jsonData == undefined) {
@@ -21,7 +21,7 @@ async function getEggData(nestId, eggId) {
 }
 
 async function getEggIdByName(nestId, egg) {
-  const apiResult = await apiCall(`application/nests/${nestId}/eggs`, "GET");
+  const apiResult = await applicationApiCall(`application/nests/${nestId}/eggs`, "GET");
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
 
@@ -42,14 +42,14 @@ async function getEggIdByName(nestId, egg) {
 // NESTS
 
 async function getNests() {
-  const apiResult = await apiCall("application/nests", "GET");
+  const apiResult = await applicationApiCall("application/nests", "GET");
   const jsonString = await apiResult.body.json();
 
   return jsonString;
 }
 
 async function getNestIdByName(nest) {
-  const apiResult = await apiCall("application/nests", "GET");
+  const apiResult = await applicationApiCall("application/nests", "GET");
 
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
@@ -71,13 +71,13 @@ async function getNestIdByName(nest) {
 // NODES
 
 async function getNodes() {
-  const apiResult = await apiCall("application/nodes", "GET");
+  const apiResult = await applicationApiCall("application/nodes", "GET");
   const jsonString = await apiResult.body.json();
   return jsonString;
 }
 
 async function getNodeIdByName(node) {
-  const apiResult = await apiCall("application/nodes", "GET");
+  const apiResult = await applicationApiCall("application/nodes", "GET");
 
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
@@ -99,7 +99,7 @@ async function getNodeIdByName(node) {
 // SERVERS
 
 async function getServersByUser(userId) {
-  const apiResult = await apiCall(`application/users/${userId}?include=servers`, "GET");
+  const apiResult = await applicationApiCall(`application/users/${userId}?include=servers`, "GET");
   const jsonData = await apiResult.body.json();
   const serverObjects = jsonData.attributes.relationships.servers;
 
@@ -107,21 +107,21 @@ async function getServersByUser(userId) {
 }
 
 async function getServerInfoById(serverId) {
-  const apiResult = await apiCall(`application/servers/${serverId}`, "GET");
+  const apiResult = await applicationApiCall(`application/servers/${serverId}`, "GET");
   const jsonData = await apiResult.body.json();
   const attributes = jsonData.attributes;
   return attributes;
 }
 
 async function getServerOwnerId(serverId) {
-  const apiResult = await apiCall(`application/servers/${serverId}`, "GET");
+  const apiResult = await applicationApiCall(`application/servers/${serverId}`, "GET");
   const jsonData = await apiResult.body.json();
   const ownerId = jsonData.attributes.user;
   return ownerId;
 }
 
 async function isServerSuspended(serverId) {
-  const apiResult = await apiCall(`application/servers/${serverId}`, "GET");
+  const apiResult = await applicationApiCall(`application/servers/${serverId}`, "GET");
   const jsonData = await apiResult.body.json();
   const suspended = jsonData.attributes.suspended;
   return suspended;
@@ -154,7 +154,7 @@ async function editServerBuild(serverId, settingName, value) {
     requestBody.feature_limits[settingName] = value;
   }
 
-  const apiResult = await apiCall(`application/servers/${serverId}/build`, "PATCH", JSON.stringify(requestBody));
+  const apiResult = await applicationApiCall(`application/servers/${serverId}/build`, "PATCH", JSON.stringify(requestBody));
 
   return apiResult.statusCode;
 }
@@ -162,7 +162,7 @@ async function editServerBuild(serverId, settingName, value) {
 // MISC
 
 async function getAvailableUserMemory(userId, discordId) {
-  const apiResult = await apiCall(`application/users/${userId}?include=servers`, "GET");
+  const apiResult = await applicationApiCall(`application/users/${userId}?include=servers`, "GET");
   const jsonData = await apiResult.body.json();
 
   if (apiResult == -1) {
