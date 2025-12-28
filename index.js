@@ -9,8 +9,8 @@ const {
   MessageFlags
 } = require("discord.js");
 const { Client: httpClient } = require("undici");
+const { applicationApiCall } = require("./utility/helper_functions");
 const dClient = new discordClient({ intents: [ GatewayIntentBits.Guilds ] });
-const hClient = new httpClient("https://dino.flakey.tech/");
 
 // Environment variables with defaults
 let useDev = false;
@@ -54,28 +54,42 @@ try {
   process.exit(1);
 }
 
-let commitHash = "";
+global.isDev = useDev;
+
+global.version = require("./package.json").version;
+
 try {
-  commitHash = require("node:child_process").execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
+  global.commitHash = require("node:child_process").execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
 } catch {
-  commitHash = "unknown";
+  global.commitHash = "unknown";
 }
 
-async function setPresence() {
-  const result = await hClient.request({
-    path: "/api/application/servers",
-    method: "GET",
-    headers: { "Accept": "application/json", "content-type": "application/json", "Authorization": `Bearer ${API_KEY}` }
-  });
+async function getTotalServers() {
+  const result = await applicationApiCall("application/servers", "GET", null);
   const jsonString = await result.body.json();
   const jsonData = await jsonString.data;
 
+  global.serverCount = jsonData.length;
+}
+
+async function getTotalUsers() {
+  const result = await applicationApiCall("application/users", "GET", null);
+  const jsonString = await result.body.json();
+  const jsonData = await jsonString.data;
+
+  global.userCount = jsonData.length;
+}
+
+async function setPresence() {
+  await getTotalServers();
+  await getTotalUsers();
+
   dClient.user.setStatus("online");
-  dClient.application.edit({ description: `Watching over ${jsonData.length} servers @ dino.flakey.tech\nhttps://uptime.flakey.tech/status/node\nv${require("./package.json").version} \`${commitHash}\`` });
+  dClient.application.edit({description: `Watching over ${global.serverCount} servers\nhttps://dino.flakey.tech\n/info for more details`});
 };
 
 dClient.once(Events.ClientReady, readyClient => {
-  console.log(`${readyClient.user.tag} is live | v${require("./package.json").version}/${commitHash}${useDev ? " | developer mode" : ""}`);
+  console.log(`${readyClient.user.tag} is live | v${global.version}/${global.commitHash}${useDev ? " | dev" : ""}`);
   setPresence();
   setInterval(setPresence, 300000);
 });

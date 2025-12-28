@@ -99,6 +99,32 @@ function saveUsersFile() {
   fs.writeFileSync("./users.json", JSON.stringify({ users: users }, null, 2));
 }
 
+async function getMonitorUptime(type) {
+  const URL = 'https://uptime.flakey.tech';
+  const SLUG = 'node';
+  const MONITOR_ID = (type == 'panel' ? 1 : (type == 'node' ? 7 : null));
+
+  if (MONITOR_ID === null) {
+    throw new Error("Invalid monitor type specified.");
+  }
+
+  try {
+    const response = await fetch(`${URL}/api/status-page/heartbeat/${SLUG}`);
+    if(!response.ok) {
+      throw new Error(`HTTP error: ${response.status}`);
+    }
+    const data = await response.json();
+    const key = `${MONITOR_ID}_24`;
+    if(data.uptimeList && data.uptimeList[key] !== undefined) {
+      const uptime24hr = (data.uptimeList[key] * 100).toFixed(2);
+      return uptime24hr;
+    }
+  } catch(error) {
+    console.error
+  }
+
+}
+
 module.exports = {
   applicationApiCall,
   clientApiCall,
@@ -107,5 +133,6 @@ module.exports = {
   getUserId,
   getPanelUsername,
   saveUsersFile,
-  reconstructCommand
+  reconstructCommand,
+  getMonitorUptime
 };
