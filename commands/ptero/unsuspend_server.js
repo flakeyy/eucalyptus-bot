@@ -3,7 +3,7 @@ const { getErrorMessage } = require("../../utility/error_messages.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { applicationApiCall, getUserId, reconstructCommand, validateString } = require("../../utility/helper_functions.js");
+const { applicationApiCall, getUserId, reconstructCommand, validateString, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, isServerSuspended, getAvailableUserMemory, getServerInfoById } = require("../../utility/server_functions.js");
 
 async function unsuspendServer(serverId) {
@@ -54,6 +54,11 @@ module.exports = {
       return;
     }
 
+    if (!userHasClientApiKey(interaction.user.id)) {
+      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
+      return;
+    }
+
     const serverIsSuspended = await isServerSuspended(serverId);
     if (serverIsSuspended == false) {
       await interaction.editReply(getErrorMessage("SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE"));
@@ -62,9 +67,10 @@ module.exports = {
       }
       return;
     }
-
-    const serverInfo = await getServerInfoById(serverId);
-    const serverMemory = serverInfo.limits.memory;
+    
+    const apiResult = await getServerInfoById(serverId, interaction.user.id);
+    const serverData = await apiResult.body.json();
+    const serverMemory = serverData.attributes.limits.memory;
 
     const availableMemory = await getAvailableUserMemory(getUserId(interaction.user.id), interaction.user.id);
     if (availableMemory - serverMemory < 0) {

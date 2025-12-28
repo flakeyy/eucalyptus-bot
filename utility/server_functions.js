@@ -1,7 +1,7 @@
 const blacklist = require("../blacklist.json");
 const msgLog = require("./logger.js");
 const { users } = require("../users.json");
-const { applicationApiCall: applicationApiCall } = require("./helper_functions.js");
+const { applicationApiCall, clientApiCall, validateString } = require("./helper_functions.js");
 
 // EGGS
 async function getEggs(nestId) {
@@ -124,15 +124,18 @@ async function getServersByUser(userId) {
   return serverObjects;
 }
 
-async function getServerInfoById(serverId) {
-  const parsedId = parseInt(serverId, 10);
-  if (isNaN(parsedId)) {
-    return -1;
-  }
-  const apiResult = await applicationApiCall(`application/servers/${parsedId}`, "GET");
-  const jsonData = await apiResult.body.json();
-  const attributes = jsonData.attributes;
-  return attributes;
+async function getServerInfoById(serverId, userId) {
+  const validatedId = validateString(serverId);
+  const apiResult = await clientApiCall(`client/servers/${validatedId}`, "GET", null, userId);
+
+  return apiResult;
+}
+
+async function getServerResourceInfoById(serverId, userId) {
+  const validatedId = validateString(serverId);
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/resources`, "GET", null, userId);
+
+  return apiResult;
 }
 
 async function getServerOwnerId(serverId) {
@@ -242,6 +245,7 @@ module.exports = {
   getNodeIdByName,
   getServersByUser,
   getServerInfoById,
+  getServerResourceInfoById,
   getServerOwnerId,
   isServerSuspended,
   editServerBuild,

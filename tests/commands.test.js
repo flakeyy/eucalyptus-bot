@@ -46,7 +46,8 @@ jest.mock("../utility/helper_functions.js", () => ({
   getMonitorUptime: jest.fn(),
   clientApiCall: jest.fn(),
   saveUsersFile: jest.fn(),
-  validateString: jest.fn((str) => str) // Mock validateString to return the input string
+  validateString: jest.fn((str) => str), // Mock validateString to return the input string
+  userHasClientApiKey: jest.fn()
 }));
 
 jest.mock("../utility/error_messages.js", () => ({
@@ -90,6 +91,7 @@ describe("Ptero Commands", () => {
       permissions.authenticateUserForPermission.mockReturnValue(true);
       serverFuncs.getServerOwnerId.mockResolvedValue(1);
       helpers.getUserId.mockReturnValue(1);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       helpers.reconstructCommand.mockReturnValue("/edit-server server-id:123 setting:memory value:1024");
       serverFuncs.editServerBuild.mockResolvedValue(200);
 
@@ -132,8 +134,10 @@ describe("Ptero Commands", () => {
   describe("gen-server command", () => {
     test("should defer and reply when permission granted", async () => {
       const permissions = require("../utility/permissions.js");
+      const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
 
       const interaction = {
         deferReply: jest.fn(),
@@ -189,6 +193,7 @@ describe("Ptero Commands", () => {
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       serverFuncs.getNestIdByName.mockResolvedValue(1);
       serverFuncs.getEggs.mockResolvedValue({
         data: [
@@ -236,6 +241,7 @@ describe("Ptero Commands", () => {
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       serverFuncs.getNests.mockResolvedValue({
         data: [
           { attributes: { name: "Minecraft" } },
@@ -279,8 +285,10 @@ describe("Ptero Commands", () => {
     test("should retrieve all available nodes", async () => {
       const permissions = require("../utility/permissions.js");
       const serverFuncs = require("../utility/server_functions.js");
+      const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       serverFuncs.getNodes.mockResolvedValue({
         data: [
           {
@@ -330,6 +338,7 @@ describe("Ptero Commands", () => {
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
       helpers.getPanelUsername.mockReturnValue("testuser");
       serverFuncs.getServersByUser.mockResolvedValue({
@@ -381,6 +390,7 @@ describe("Ptero Commands", () => {
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
       serverFuncs.getServerOwnerId.mockResolvedValue(1);
       serverFuncs.isServerSuspended.mockResolvedValue(false);
@@ -405,6 +415,7 @@ describe("Ptero Commands", () => {
       const errors = require("../utility/error_messages.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
       serverFuncs.getServerOwnerId.mockResolvedValue(1);
       serverFuncs.isServerSuspended.mockResolvedValue(true);
@@ -433,11 +444,18 @@ describe("Ptero Commands", () => {
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
       serverFuncs.getServerOwnerId.mockResolvedValue(1);
       serverFuncs.isServerSuspended.mockResolvedValue(true);
       serverFuncs.getServerInfoById.mockResolvedValue({
-        limits: { memory: 1024 }
+        body: {
+          json: async () => ({
+            attributes: {
+              limits: { memory: 1024 }
+            }
+          })
+        }
       });
       serverFuncs.getAvailableUserMemory.mockResolvedValue(2048);
       helpers.applicationApiCall.mockResolvedValue({ statusCode: 204 });
@@ -461,6 +479,7 @@ describe("Ptero Commands", () => {
       const errors = require("../utility/error_messages.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
       serverFuncs.getServerOwnerId.mockResolvedValue(1);
       serverFuncs.isServerSuspended.mockResolvedValue(false);
@@ -485,11 +504,18 @@ describe("Ptero Commands", () => {
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.userHasClientApiKey.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
       serverFuncs.getServerOwnerId.mockResolvedValue(1);
       serverFuncs.isServerSuspended.mockResolvedValue(true);
       serverFuncs.getServerInfoById.mockResolvedValue({
-        limits: { memory: 2048 }
+        body: {
+          json: async () => ({
+            attributes: {
+              limits: { memory: 2048 }
+            }
+          })
+        }
       });
       serverFuncs.getAvailableUserMemory.mockResolvedValue(1024);
 
@@ -501,6 +527,7 @@ describe("Ptero Commands", () => {
       };
 
       const result = await unsuspendServer(interaction);
+
       // Function returns the error message instead of calling editReply in this case
       expect(result).toBeDefined();
     });

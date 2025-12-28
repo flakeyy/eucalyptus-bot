@@ -146,6 +146,15 @@ function validateString(str, minLength = 1, maxLength = 32) {
   return trimmed;
 }
 
+function userHasClientApiKey(discordId) {
+  for (const user of users) {
+    if (user.discordId === discordId) {
+      return user.panelAPIKey && user.panelAPIKey !== "";
+    }
+  }
+  return false;
+}
+
 module.exports = {
   applicationApiCall,
   clientApiCall,
@@ -156,5 +165,6 @@ module.exports = {
   saveUsersFile,
   reconstructCommand,
   getMonitorUptime,
-  validateString
+  validateString,
+  userHasClientApiKey
 };
