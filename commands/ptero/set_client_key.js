@@ -1,10 +1,9 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { users } = require("../../users.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { getNodes } = require("../../utility/server_functions.js");
-const { reconstructCommand, getUserId } = require("../../utility/helper_functions.js");
+const { reconstructCommand, getUserId, saveUsersFile, clientApiCall } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
@@ -17,10 +16,9 @@ module.exports = {
         .setRequired(true)
     ),
   async execute(interaction) {
-    await interaction.deferReply();
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
     const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SET_CLIENT_KEY);
-    let interactionReply = "";
     if (authenticated == -1) {
       await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
       return;
@@ -30,26 +28,28 @@ module.exports = {
       return;
     }
 
-
-
     const userId = getUserId(interaction.user.id);
+    let success = false;
     for (const user of users) {
       if (user.panelId === userId) {
         user.panelAPIKey = interaction.options.getString("api-key");
+        const result = await clientApiCall("client/account", "GET", null, interaction.user.id);
+        if (result.statusCode === 200) {
+          saveUsersFile();
+          success = true;
+        }
       }
     }
 
-    const nodeData = await getNodes();
-
-    if (interactionReply != "") {
+    if(success) {
       if (config.debug) {
-        msgLog.debug(`${interactionReply}`);
+        msgLog.debug(`Successfully set client API key for user: ${interaction.user.username}/${interaction.user.id}`);
       }
-      await interaction.editReply(interactionReply);
+      await interaction.editReply({content: "Successfully set client API key.", flags: MessageFlags.Ephemeral});
     }
     else {
-      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("SERVER_TIMEOUT")}`);
-      await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
+      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("API_KEY_INVALID")}`);
+      await interaction.editReply(getErrorMessage("API_KEY_INVALID"));
     }
   }
 };

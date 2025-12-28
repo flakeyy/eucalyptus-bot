@@ -72,6 +72,10 @@ const ERROR_MESSAGES = {
   SERVER_EDIT_FAILED: {
     id: -19,
     text: "Server edit failed.\nCheck your request and try again."
+  },
+  API_KEY_INVALID: {
+    id: -20,
+    text: "The provided client API key is invalid.\nCheck your request and try again."
   }
 };
 
