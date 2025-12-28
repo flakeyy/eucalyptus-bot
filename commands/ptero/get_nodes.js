@@ -3,7 +3,7 @@ const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getNodes } = require("../../utility/server_functions.js");
-const { reconstructCommand } = require("../../utility/helper_functions.js");
+const { reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
@@ -13,7 +13,7 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
-    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_NODES);
+    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.GET_SERVICE_INFORMATION);
     let interactionReply = "";
     if (authenticated == -1) {
       await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
@@ -21,6 +21,11 @@ module.exports = {
     }
     else if (authenticated == false) {
       await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      return;
+    }
+
+    if (!userHasClientApiKey(interaction.user.id)) {
+      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
       return;
     }
 

@@ -1,15 +1,14 @@
 const { SlashCommandBuilder } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
-const { getNests } = require("../../utility/server_functions.js");
-const { formatNames, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
-const { getErrorMessage } = require("../../utility/error_messages.js");
+const { reconstructCommand, getMonitorUptime } = require("../../utility/helper_functions.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
+const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("get-nests")
-    .setDescription("Gets the names of available nests."),
+    .setName("info")
+    .setDescription("Retrieves current service information."),
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
@@ -24,16 +23,21 @@ module.exports = {
       return;
     }
 
-    if (!userHasClientApiKey(interaction.user.id)) {
-      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
-      return;
-    }
+    const panelUptime = await getMonitorUptime('panel');
+    const nodeUptime = await getMonitorUptime('node');
 
-    const nestData = await getNests();
-
-    if (nestData) {
-      interactionReply = "```List of Nests:\n\n" + formatNames(nestData) + "```";
-    }
+    interactionReply = `\`\`\`\n`+
+        `cathost/pyrodactyl bot\n`+
+        `v${global.version}/${global.commitHash}${(global.isDev ? " | dev" : " | prod")}\n`+
+        `\n`+
+        `Hosting ${global.serverCount} servers for ${global.userCount} users\n`+ 
+        `Panel:  https://dino.flakey.tech\n`+
+        `Uptime: https://uptime.flakey.tech/status/node\n`+
+        `  - Panel: ${panelUptime != null ? panelUptime + "%" : "Unavailable"} (24 hrs)\n`+
+        `  - HMB01 Node: ${nodeUptime != null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n`+
+        `\n`+
+        `developed by flakey \n`+
+        `\`\`\``;
 
     if (interactionReply != "") {
       if (config.debug) {

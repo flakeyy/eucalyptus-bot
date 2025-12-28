@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { getEggs, getNestIdByName } = require("../../utility/server_functions.js");
-const { formatNames, reconstructCommand } = require("../../utility/helper_functions.js");
+const { formatNames, reconstructCommand, validateString, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
@@ -18,7 +18,7 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
-    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_EGGS);
+    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.GET_SERVICE_INFORMATION);
     let interactionReply = "";
     if (authenticated == -1) {
       await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
@@ -29,7 +29,18 @@ module.exports = {
       return;
     }
 
-    const nestId = await getNestIdByName(interaction.options.getString("nest"));
+    if (!userHasClientApiKey(interaction.user.id)) {
+      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
+      return;
+    }
+
+    const nestName = validateString(interaction.options.getString("nest"));
+    if (!nestName) {
+      await interaction.editReply(getErrorMessage("INVALID_INPUT"));
+      return;
+    }
+
+    const nestId = await getNestIdByName(nestName);
     const eggData = await getEggs(nestId);
 
     if (eggData) {

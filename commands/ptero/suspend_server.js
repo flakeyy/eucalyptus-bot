@@ -3,11 +3,11 @@ const { getErrorMessage } = require("../../utility/error_messages.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { apiCall, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
+const { applicationApiCall, getUserId, reconstructCommand, validateString, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, isServerSuspended } = require("../../utility/server_functions.js");
 
 async function suspendServer(serverId) {
-  const apiResult = await apiCall(`application/servers/${serverId}/suspend`, "POST");
+  const apiResult = await applicationApiCall(`application/servers/${serverId}/suspend`, "POST");
 
   const statusCode = await apiResult.statusCode;
 
@@ -29,13 +29,20 @@ module.exports = {
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
     let authenticated = -1;
     let interactionReply = "";
-    const serverOwnerId = await getServerOwnerId(interaction.options.getString("server-id"));
+
+    const serverId = validateString(interaction.options.getString("server-id"));
+    if (!serverId) {
+      await interaction.editReply(getErrorMessage("INVALID_INPUT"));
+      return;
+    }
+
+    const serverOwnerId = await getServerOwnerId(serverId);
 
     if (serverOwnerId == getUserId(interaction.user.id)) {
-      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SUSPEND_OWN_SERVER);
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SUSPEND_SERVER);
     }
     else {
-      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SUSPEND_ANY_SERVER);
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.ADMINISTRATOR);
     }
 
     if (authenticated == -1) {
@@ -47,7 +54,12 @@ module.exports = {
       return;
     }
 
-    const serverIsSuspended = await isServerSuspended(interaction.options.getString("server-id"));
+    if (!userHasClientApiKey(interaction.user.id)) {
+      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
+      return;
+    }
+
+    const serverIsSuspended = await isServerSuspended(serverId);
 
     if (serverIsSuspended == true) {
       await interaction.editReply(getErrorMessage("SERVER_SUSPEND_FAILED_ALREADY_SUSPENDED"));
@@ -57,7 +69,6 @@ module.exports = {
       return;
     }
 
-    const serverId = interaction.options.getString("server-id");
     const suspensionStatusCode = await suspendServer(serverId);
 
     if (suspensionStatusCode == 204) {
