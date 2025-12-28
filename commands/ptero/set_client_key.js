@@ -32,11 +32,15 @@ module.exports = {
     let success = false;
     for (const user of users) {
       if (user.panelId === userId) {
+        const oldApiKey = (user.panelAPIKey) ? user.panelAPIKey : "";
         user.panelAPIKey = interaction.options.getString("api-key");
         const result = await clientApiCall("client/account", "GET", null, interaction.user.id);
         if (result.statusCode === 200) {
           saveUsersFile();
           success = true;
+        }
+        else {
+          user.panelAPIKey = oldApiKey;
         }
       }
     }
