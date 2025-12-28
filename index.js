@@ -75,7 +75,7 @@ async function setPresence() {
 };
 
 dClient.once(Events.ClientReady, readyClient => {
-  console.log(`${readyClient.user.tag} is live | v${require("./package.json").version}/${commitHash} ${useDev ? " | developer mode" : ""}`);
+  console.log(`${readyClient.user.tag} is live | v${require("./package.json").version}/${commitHash}${useDev ? " | developer mode" : ""}`);
   setPresence();
   setInterval(setPresence, 300000);
 });
