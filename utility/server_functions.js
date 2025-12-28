@@ -1,16 +1,26 @@
 const blacklist = require("../blacklist.json");
+const msgLog = require("./logger.js");
 const { users } = require("../users.json");
 const { applicationApiCall: applicationApiCall } = require("./helper_functions.js");
 
 // EGGS
 async function getEggs(nestId) {
-  const apiResult = await applicationApiCall(`application/nests/${nestId}/eggs`, "GET");
+  const parsedId = parseInt(nestId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/nests/${parsedId}/eggs`, "GET");
   const jsonString = await apiResult.body.json();
   return jsonString;
 }
 
 async function getEggData(nestId, eggId) {
-  const apiResult = await applicationApiCall(`application/nests/${nestId}/eggs/${eggId}?include=variables`, "GET");
+  const parsedNestId = parseInt(nestId, 10);
+  const parsedEggId = parseInt(eggId, 10);
+  if (isNaN(parsedNestId) || isNaN(parsedEggId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/nests/${parsedNestId}/eggs/${parsedEggId}?include=variables`, "GET");
   const jsonData = await apiResult.body.json();
 
   if (jsonData == undefined) {
@@ -21,7 +31,11 @@ async function getEggData(nestId, eggId) {
 }
 
 async function getEggIdByName(nestId, egg) {
-  const apiResult = await applicationApiCall(`application/nests/${nestId}/eggs`, "GET");
+  const parsedId = parseInt(nestId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/nests/${parsedId}/eggs`, "GET");
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
 
@@ -99,7 +113,11 @@ async function getNodeIdByName(node) {
 // SERVERS
 
 async function getServersByUser(userId) {
-  const apiResult = await applicationApiCall(`application/users/${userId}?include=servers`, "GET");
+  const parsedId = parseInt(userId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/users/${parsedId}?include=servers`, "GET");
   const jsonData = await apiResult.body.json();
   const serverObjects = jsonData.attributes.relationships.servers;
 
@@ -107,28 +125,44 @@ async function getServersByUser(userId) {
 }
 
 async function getServerInfoById(serverId) {
-  const apiResult = await applicationApiCall(`application/servers/${serverId}`, "GET");
+  const parsedId = parseInt(serverId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/servers/${parsedId}`, "GET");
   const jsonData = await apiResult.body.json();
   const attributes = jsonData.attributes;
   return attributes;
 }
 
 async function getServerOwnerId(serverId) {
-  const apiResult = await applicationApiCall(`application/servers/${serverId}`, "GET");
+  const parsedId = parseInt(serverId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/servers/${parsedId}`, "GET");
   const jsonData = await apiResult.body.json();
   const ownerId = jsonData.attributes.user;
   return ownerId;
 }
 
 async function isServerSuspended(serverId) {
-  const apiResult = await applicationApiCall(`application/servers/${serverId}`, "GET");
+  const parsedId = parseInt(serverId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/servers/${parsedId}`, "GET");
   const jsonData = await apiResult.body.json();
   const suspended = jsonData.attributes.suspended;
   return suspended;
 }
 
 async function editServerBuild(serverId, settingName, value) {
-  const serverInfo = await getServerInfoById(serverId);
+  const parsedId = parseInt(serverId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const serverInfo = await getServerInfoById(parsedId);
   const requestBody = {
     allocation: serverInfo.allocation,
     memory: serverInfo.limits.memory,
@@ -145,7 +179,12 @@ async function editServerBuild(serverId, settingName, value) {
 
   const validSettings = [ "memory" ];
   if (!validSettings.includes(settingName)) {
+    msgLog.error(`Invalid setting name: ${settingName}`);
     throw new Error(`Invalid setting name. Valid settings are: ${validSettings.join(", ")}`);
+  }
+  if (isNaN(value) || value < 0) {
+    msgLog.error(`Invalid value for ${settingName}: ${value}`);
+    throw new Error("Value must be a non-negative number.");
   }
 
   if (settingName in requestBody) {
@@ -154,7 +193,7 @@ async function editServerBuild(serverId, settingName, value) {
     requestBody.feature_limits[settingName] = value;
   }
 
-  const apiResult = await applicationApiCall(`application/servers/${serverId}/build`, "PATCH", JSON.stringify(requestBody));
+  const apiResult = await applicationApiCall(`application/servers/${parsedId}/build`, "PATCH", JSON.stringify(requestBody));
 
   return apiResult.statusCode;
 }
@@ -162,7 +201,11 @@ async function editServerBuild(serverId, settingName, value) {
 // MISC
 
 async function getAvailableUserMemory(userId, discordId) {
-  const apiResult = await applicationApiCall(`application/users/${userId}?include=servers`, "GET");
+  const parsedId = parseInt(userId, 10);
+  if (isNaN(parsedId)) {
+    return -1;
+  }
+  const apiResult = await applicationApiCall(`application/users/${parsedId}?include=servers`, "GET");
   const jsonData = await apiResult.body.json();
 
   if (apiResult == -1) {
@@ -177,7 +220,7 @@ async function getAvailableUserMemory(userId, discordId) {
     for (let i = 0; i < users.length; i++) {
       if (users[i].discordId == discordId) {
         if (users[i].maximumAllowedMemory == -1) {
-          memoryAvailable = 100000;
+          memoryAvailable = 128000;
           break;
         }
         else {

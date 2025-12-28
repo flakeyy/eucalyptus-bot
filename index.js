@@ -8,9 +8,9 @@ const {
   GatewayIntentBits,
   MessageFlags
 } = require("discord.js");
-const { Client: httpClient } = require("undici");
 const { applicationApiCall } = require("./utility/helper_functions");
 const dClient = new discordClient({ intents: [ GatewayIntentBits.Guilds ] });
+const msgLog = require("./utility/logger.js");
 
 // Environment variables with defaults
 let useDev = false;
@@ -26,6 +26,7 @@ if (useDev) {
   try {
     DISCORD_TOKEN = process.env.DEV_DISCORD_TOKEN;
     API_KEY = process.env.PANEL_API_KEY;
+    PANEL_URL = process.env.PANEL_URL;
   } catch {
     console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
     process.exit(1);
@@ -34,6 +35,7 @@ if (useDev) {
   try {
     DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
     API_KEY = process.env.PANEL_API_KEY;
+    PANEL_URL = process.env.PANEL_URL;
   } catch {
     console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
     process.exit(1);
@@ -85,7 +87,7 @@ async function setPresence() {
   await getTotalUsers();
 
   dClient.user.setStatus("online");
-  dClient.application.edit({description: `Watching over ${global.serverCount} servers\nhttps://dino.flakey.tech\n/info for more details`});
+  dClient.application.edit({description: `Watching over ${global.serverCount} servers\n${process.env.PANEL_URL}\n/info for more details`});
 };
 
 dClient.once(Events.ClientReady, readyClient => {
@@ -96,23 +98,29 @@ dClient.once(Events.ClientReady, readyClient => {
 
 dClient.commands = new Collection();
 
-const foldersPath = path.join(__dirname, "commands");
-const commandFolders = fs.readdirSync(foldersPath);
+// Load commands asynchronously
+(async () => {
+  const foldersPath = path.join(__dirname, "commands");
+  const commandFolders = await fs.promises.readdir(foldersPath);
 
-for (const folder of commandFolders) {
-  const commandsPath = path.join(foldersPath, folder);
-  const commandFiles = fs.readdirSync(commandsPath).filter(file => file.endsWith(".js"));
-  for (const file of commandFiles) {
-    const filePath = path.join(commandsPath, file);
-    const command = require(filePath);
-    // Set a new item in the Collection with the key as the command name and the value as the exported module
-    if ("data" in command && "execute" in command) {
-      dClient.commands.set(command.data.name, command);
-    } else {
-      console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+  for (const folder of commandFolders) {
+    const commandsPath = path.join(foldersPath, folder);
+    const commandFiles = (await fs.promises.readdir(commandsPath)).filter(file => file.endsWith(".js"));
+    for (const file of commandFiles) {
+      const filePath = path.join(commandsPath, file);
+      const command = require(filePath);
+      // Set a new item in the Collection with the key as the command name and the value as the exported module
+      if ("data" in command && "execute" in command) {
+        dClient.commands.set(command.data.name, command);
+      } else {
+        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+      }
     }
   }
-}
+})().catch(err => {
+  console.error("Error loading commands:", err);
+  process.exit(1);
+});
 
 dClient.on(Events.InteractionCreate, async interaction => {
   if (!interaction.isChatInputCommand()) return;
@@ -127,7 +135,7 @@ dClient.on(Events.InteractionCreate, async interaction => {
   try {
     await command.execute(interaction);
   } catch (error) {
-    console.error(error);
+    msgLog.error(`Error executing ${interaction.commandName}`);
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp({ content: "There was an error while executing this command!", flags: MessageFlags.Ephemeral });
     } else {

@@ -3,7 +3,7 @@ const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { users } = require("../../users.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { reconstructCommand, getUserId, saveUsersFile, clientApiCall } = require("../../utility/helper_functions.js");
+const { reconstructCommand, getUserId, saveUsersFile, clientApiCall, validateString } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
@@ -12,7 +12,7 @@ module.exports = {
     .setDescription("Sets your client API key required for certain commands.")
     .addStringOption(option =>
       option.setName("api-key")
-        .setDescription("A valid client API key, generated from https://dino.flakey.tech/account/api")
+        .setDescription(`A valid client API key, generated from ${process.env.PANEL_URL}account/api`)
         .setRequired(true)
     ),
   async execute(interaction) {
@@ -28,19 +28,21 @@ module.exports = {
       return;
     }
 
+    const newApiKey = interaction.options.getString("api-key");
+    if (!newApiKey) {
+      await interaction.editReply(getErrorMessage("INVALID_INPUT"));
+      return;
+    }
+
     const userId = getUserId(interaction.user.id);
     let success = false;
     for (const user of users) {
       if (user.panelId === userId) {
-        const oldApiKey = (user.panelAPIKey) ? user.panelAPIKey : "";
-        user.panelAPIKey = interaction.options.getString("api-key");
-        const result = await clientApiCall("client/account", "GET", null, interaction.user.id);
+        const result = await clientApiCall("client/account", "GET", null, interaction.user.id, newApiKey);
         if (result.statusCode === 200) {
+          user.panelAPIKey = newApiKey;
           saveUsersFile();
           success = true;
-        }
-        else {
-          user.panelAPIKey = oldApiKey;
         }
       }
     }
@@ -52,8 +54,7 @@ module.exports = {
       await interaction.editReply({content: "Successfully set client API key.", flags: MessageFlags.Ephemeral});
     }
     else {
-      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("API_KEY_INVALID")}`);
       await interaction.editReply(getErrorMessage("API_KEY_INVALID"));
     }
   }
-};
+}

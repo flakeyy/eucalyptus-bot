@@ -1,6 +1,6 @@
 require("dotenv").config();
 const { Client } = require("undici");
-const client = new Client("https://dino.flakey.tech/");
+const client = new Client(process.env.PANEL_URL);
 const config = require("../config.json");
 const msgLog = require("./logger.js");
 const API_KEY = process.env.PANEL_API_KEY;
@@ -25,11 +25,13 @@ async function applicationApiCall(path, method, body) {
   return result;
 }
 
-async function clientApiCall(path, method, body, userDiscordId) {
-  let API_KEY = "";
-  for (const user of users) {
-    if (user.discordId === userDiscordId) {
-      API_KEY = user.panelAPIKey;
+async function clientApiCall(path, method, body, userDiscordId, customAPIKey) {
+  let API_KEY = customAPIKey || "";
+  if (API_KEY === "") {
+    for (const user of users) {
+      if (user.discordId === userDiscordId) {
+        API_KEY = user.panelAPIKey;
+      }
     }
   }
   const result = await client.request({
@@ -88,7 +90,7 @@ function getPanelUsername(discordId) {
 
 function reconstructCommand(interaction) {
   const fullCommand = `/${interaction.commandName} ${interaction.options.data
-    .map(option => `${option.name}:${(option.name == "api-key") ? "********" : option.value}`)
+    .map(option => `${option.name}:${(option.name === "api-key") ? "********" : option.value}`)
     .join(" ")}`;
 
   return fullCommand;
@@ -96,7 +98,11 @@ function reconstructCommand(interaction) {
 
 function saveUsersFile() {
   const fs = require("fs");
-  fs.writeFileSync("./users.json", JSON.stringify({ users: users }, null, 2));
+  fs.writeFile("./users.json", JSON.stringify({ users: users }, null, 2), (err) => {
+    if (err) {
+      msgLog.error("Error writing users.json:");
+    }
+  });
 }
 
 async function getMonitorUptime(type) {
@@ -120,9 +126,24 @@ async function getMonitorUptime(type) {
       return uptime24hr;
     }
   } catch(error) {
-    console.error
+    console.error(error);
+    return null;
   }
 
+}
+
+function validateString(str, minLength = 1, maxLength = 32) {
+  if (typeof str !== 'string') {
+    return false;
+  }
+  
+  const trimmed = str.trim();
+  
+  if (trimmed.length < minLength || trimmed.length > maxLength) {
+    return false;
+  }
+  
+  return trimmed;
 }
 
 module.exports = {
@@ -134,5 +155,6 @@ module.exports = {
   getPanelUsername,
   saveUsersFile,
   reconstructCommand,
-  getMonitorUptime
+  getMonitorUptime,
+  validateString
 };

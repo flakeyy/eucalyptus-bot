@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { getEggs, getNestIdByName } = require("../../utility/server_functions.js");
-const { formatNames, reconstructCommand } = require("../../utility/helper_functions.js");
+const { formatNames, reconstructCommand, validateString } = require("../../utility/helper_functions.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
@@ -29,7 +29,13 @@ module.exports = {
       return;
     }
 
-    const nestId = await getNestIdByName(interaction.options.getString("nest"));
+    const nestName = validateString(interaction.options.getString("nest"));
+    if (!nestName) {
+      await interaction.editReply(getErrorMessage("INVALID_INPUT"));
+      return;
+    }
+
+    const nestId = await getNestIdByName(nestName);
     const eggData = await getEggs(nestId);
 
     if (eggData) {

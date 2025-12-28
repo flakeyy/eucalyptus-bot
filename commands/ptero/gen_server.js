@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require("discord.js");
 const config = require("../../config.json");
 const msgLog = require("../../utility/logger.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { applicationApiCall, extractEnvVariables, getUserId, reconstructCommand } = require("../../utility/helper_functions.js");
+const { applicationApiCall, extractEnvVariables, getUserId, reconstructCommand, validateString } = require("../../utility/helper_functions.js");
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
@@ -97,7 +97,7 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("gen-server")
-    .setDescription("Generates a server on https://dino.flakey.tech/")
+    .setDescription(`Generates a server on ${process.env.PANEL_URL}`)
     .addStringOption(option =>
       option.setName("server-name")
         .setDescription("Server Name")
@@ -140,15 +140,15 @@ module.exports = {
 
     const panelId = getUserId(interaction.user.id);
     const discordId = interaction.user.id;
-    const serverName = interaction.options.getString("server-name");
-    const nodeName = interaction.options.getString("node");
-    const nestName = interaction.options.getString("nest");
-    const eggName = interaction.options.getString("egg");
-    const memoryMB = interaction.options.getInteger("memory");
+    const serverName = validateString(interaction.options.getString("server-name"));
+    const nodeName = validateString(interaction.options.getString("node"));
+    const nestName = validateString(interaction.options.getString("nest"));
+    const eggName = validateString(interaction.options.getString("egg"));
+    const memoryMB = parseInt(interaction.options.getInteger("memory"), 10);
     const apiResult = await createServer(serverName, nodeName, nestName, eggName, memoryMB, discordId, panelId);
 
     if (apiResult.statusCode == 201) {
-      interactionReply = `Server '${apiResult.attributes.name}' was successfully created and is currently installing at: https://dino.flakey.tech/server/${apiResult.attributes.identifier}`;
+      interactionReply = `Server '${apiResult.attributes.name}' was successfully created and is currently installing at: ${process.env.PANEL_URL}server/${apiResult.attributes.identifier}`;
     }
     else {
       interactionReply = getErrorMessage("API_REQUEST_FAILED", apiResult.statusCode);
