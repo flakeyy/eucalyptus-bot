@@ -1,7 +1,7 @@
 const { SlashCommandBuilder } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
-const { getUserId, getPanelUsername, reconstructCommand } = require("../../utility/helper_functions.js");
+const { getUserId, getPanelUsername, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getServersByUser } = require("../../utility/server_functions.js");
@@ -24,6 +24,11 @@ module.exports = {
       return;
     }
 
+    if (!userHasClientApiKey(interaction.user.id)) {
+      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
+      return;
+    }
+
     const serverObjects = await getServersByUser(getUserId(interaction.user.id));
 
     let totalMemory = 0;
@@ -38,13 +43,13 @@ module.exports = {
       }
     });
 
-    const formattedString = serverObjects.data.map(item => `- ${item.attributes.name} | Memory: ${item.attributes.limits.memory} MB | Suspended: ${item.attributes.suspended} | Server ID: ${item.attributes.id}`).join("\n");
+    const formattedString = serverObjects.data.map(item => `${item.attributes.name.padEnd(16)} | ${String(item.attributes.limits.memory).padEnd(5)} MB | ID:${item.attributes.identifier} ${(item.attributes.suspended ? `| SUSPENDED` : `| Available`)}`).join("\n");
 
     if (serverObjects) {
       interactionReply =
-        "```Servers owned by " + getPanelUsername(interaction.user.id) + ":\n\n" +
-        "- TOTAL | Servers: " + serverObjects.data.length + " | Memory (unsuspended/total) MB: " + unsuspendedMemory + "/" + totalMemory + "\n\n"
-         + formattedString + "```";
+        `\`\`\`Servers owned by ${getPanelUsername(interaction.user.id)}:\n\n` +
+        `Servers: ${serverObjects.data.length} | Memory (unsuspended/total) MB: ${unsuspendedMemory}/${totalMemory}\n\n` +
+        `${formattedString}\`\`\``;
     }
 
     if (interactionReply != "") {

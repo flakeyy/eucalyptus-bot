@@ -136,6 +136,7 @@ dClient.on(Events.InteractionCreate, async interaction => {
     await command.execute(interaction);
   } catch (error) {
     msgLog.error(`Error executing ${interaction.commandName}`);
+    msgLog.debug(error);
     if (interaction.replied || interaction.deferred) {
       await interaction.followUp({ content: "There was an error while executing this command!", flags: MessageFlags.Ephemeral });
     } else {

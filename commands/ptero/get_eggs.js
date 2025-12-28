@@ -2,7 +2,7 @@ const { SlashCommandBuilder } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { getEggs, getNestIdByName } = require("../../utility/server_functions.js");
-const { formatNames, reconstructCommand, validateString } = require("../../utility/helper_functions.js");
+const { formatNames, reconstructCommand, validateString, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
@@ -26,6 +26,11 @@ module.exports = {
     }
     else if (authenticated == false) {
       await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      return;
+    }
+
+    if (!userHasClientApiKey(interaction.user.id)) {
+      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
       return;
     }
 

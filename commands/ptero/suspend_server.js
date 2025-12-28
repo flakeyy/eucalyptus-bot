@@ -3,7 +3,7 @@ const { getErrorMessage } = require("../../utility/error_messages.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { applicationApiCall, getUserId, reconstructCommand, validateString } = require("../../utility/helper_functions.js");
+const { applicationApiCall, getUserId, reconstructCommand, validateString, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getServerOwnerId, isServerSuspended } = require("../../utility/server_functions.js");
 
 async function suspendServer(serverId) {
@@ -51,6 +51,11 @@ module.exports = {
     }
     else if (authenticated == false) {
       await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      return;
+    }
+
+    if (!userHasClientApiKey(interaction.user.id)) {
+      await interaction.editReply(getErrorMessage("API_KEY_NOT_SET"));
       return;
     }
 

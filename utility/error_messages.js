@@ -76,6 +76,18 @@ const ERROR_MESSAGES = {
   API_KEY_INVALID: {
     id: -20,
     text: "The provided client API key is invalid.\nCheck your request and try again."
+  },
+  CLIENT_API_FAILURE: {
+    id: -21,
+    text: `The API request could not be completed.\nYour provided API key may be invalid or you may not have access to this resource.`
+  },
+  API_KEY_NOT_SET: {
+    id: -22,
+    text: `You must set your client API key before using this command.\nPlease use /set-client-key to set your API key.`
+  },
+  SERVER_NOT_FOUND: {
+    id: -23,
+    text: "The specified server could not be found.\nPlease ensure the server ID is correct and try again."
   }
 };
 
