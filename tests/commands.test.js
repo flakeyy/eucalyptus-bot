@@ -595,7 +595,6 @@ describe("Ptero Commands", () => {
     test("should successfully set API key with valid key", async () => {
       const permissions = require("../utility/permissions.js");
       const helpers = require("../utility/helper_functions.js");
-      const { users } = require("../users.json");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
