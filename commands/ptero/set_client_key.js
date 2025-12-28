@@ -1,19 +1,25 @@
 const { SlashCommandBuilder } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
+const { users } = require("../../users.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getNodes } = require("../../utility/server_functions.js");
-const { reconstructCommand } = require("../../utility/helper_functions.js");
+const { reconstructCommand, getUserId } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("get-nodes")
-    .setDescription("Gets information about available nodes."),
+    .setName("set-client-key")
+    .setDescription("Sets your client API key required for certain commands.")
+    .addStringOption(option =>
+      option.setName("api-key")
+        .setDescription("A valid client API key, generated from https://dino.flakey.tech/account/api")
+        .setRequired(true)
+    ),
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
-    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.GET_SERVICE_INFORMATION);
+    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SET_CLIENT_KEY);
     let interactionReply = "";
     if (authenticated == -1) {
       await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
@@ -24,17 +30,16 @@ module.exports = {
       return;
     }
 
+
+
+    const userId = getUserId(interaction.user.id);
+    for (const user of users) {
+      if (user.panelId === userId) {
+        user.panelAPIKey = interaction.options.getString("api-key");
+      }
+    }
+
     const nodeData = await getNodes();
-
-    if (!nodeData || !Array.isArray(nodeData.data)) {
-      throw new Error("Invalid input: Expected an object with a 'data' array.");
-    }
-
-    const formattedString = nodeData.data.map(item => `- ${item.attributes.name} | ${item.attributes.description} | MEM: ${item.attributes.allocated_resources.memory}/${item.attributes.memory}MB Allocated`).join("\n");
-
-    if (formattedString) {
-      interactionReply = "```List of Nodes:\n\n" + formattedString + "```";
-    }
 
     if (interactionReply != "") {
       if (config.debug) {

@@ -6,7 +6,6 @@ const {
   Collection,
   Events,
   GatewayIntentBits,
-  ActivityType,
   MessageFlags
 } = require("discord.js");
 const { Client: httpClient } = require("undici");
@@ -16,7 +15,7 @@ const hClient = new httpClient("https://dino.flakey.tech/");
 // Environment variables with defaults
 let useDev = false;
 let DISCORD_TOKEN = process.env.DISCORD_TOKEN || "";
-let API_KEY = process.env.API_KEY || "";
+let API_KEY = process.env.PANEL_API_KEY || "";
 
 // Check for dev mode
 if (process.argv[2] === "--dev") {
@@ -55,6 +54,13 @@ try {
   process.exit(1);
 }
 
+let commitHash = "";
+try {
+  commitHash = require("node:child_process").execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
+} catch {
+  commitHash = "unknown";
+}
+
 async function setPresence() {
   const result = await hClient.request({
     path: "/api/application/servers",
@@ -65,11 +71,11 @@ async function setPresence() {
   const jsonData = await jsonString.data;
 
   dClient.user.setStatus("online");
-  dClient.application.edit({ description: `Watching over ${jsonData.length} servers\nv${require("./package.json").version}\nhttps://uptime.flakey.tech/status/node` });
+  dClient.application.edit({ description: `Watching over ${jsonData.length} servers @ dino.flakey.tech\nhttps://uptime.flakey.tech/status/node\nv${require("./package.json").version} \`${commitHash}\`` });
 };
 
 dClient.once(Events.ClientReady, readyClient => {
-  console.log(`${readyClient.user.tag} is live | v${require("./package.json").version}${useDev ? " | developer mode" : ""}`);
+  console.log(`${readyClient.user.tag} is live | v${require("./package.json").version}/${commitHash} ${useDev ? " | developer mode" : ""}`);
   setPresence();
   setInterval(setPresence, 300000);
 });

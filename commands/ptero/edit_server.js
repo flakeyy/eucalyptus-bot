@@ -37,10 +37,10 @@ module.exports = {
     const settingValue = interaction.options.getString("value");
 
     if (serverOwnerId == getUserId(interaction.user.id)) {
-      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.EDIT_OWN_SERVER_SETTINGS);
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.EDIT_SERVER_SETTINGS);
     }
     else {
-      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.EDIT_ANY_SERVER_SETTINGS);
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.ADMINISTRATOR);
     }
 
     if (authenticated == -1) {
