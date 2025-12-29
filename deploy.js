@@ -19,9 +19,9 @@ const rest = new REST().setToken(PROD_DISCORD_TOKEN);
     }
 
     // refresh commands
-    const data = await rest.put(Routes.applicationGuildCommands(PROD_CLIENT_ID, PROD_GUILD_ID),{ body: commands });
+    const data = await rest.put(Routes.applicationCommands(PROD_CLIENT_ID),{ body: commands });
 
-    console.log(`Successfully reloaded ${data.length} application (/) commands.`);
+    console.log(`Successfully reloaded ${data.length} application (/) commands. This may take up to an hour to propagate.`);
   } catch (error) {
     console.error(error);
   }
