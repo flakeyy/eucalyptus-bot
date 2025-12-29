@@ -1,31 +1,23 @@
 const { SlashCommandBuilder } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
-const { reconstructCommand, getMonitorUptime } = require("../../utility/helper_functions.js");
+const { reconstructCommand, getCommands } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("info")
-    .setDescription("Retrieves current service information."),
+    .setName("help")
+    .setDescription("Displays available commands."),
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
 
-    const panelUptime = await getMonitorUptime('panel');
-    const nodeUptime = await getMonitorUptime('node');
+    const commands = await getCommands();
 
     interactionReply = `\`\`\`\n`+
-        `cathost/pyrodactyl bot\n`+
-        `v${global.version}/${global.commitHash}${(global.isDev ? " | dev" : " | prod")}\n`+
-        `\n`+
-        `Hosting ${global.serverCount} servers for ${global.userCount} users\n`+ 
-        `Panel:  https://dino.flakey.tech\n`+
-        `Uptime: https://uptime.flakey.tech/status/node\n`+
-        `  - Panel: ${panelUptime != null ? panelUptime + "%" : "Unavailable"} (24 hrs)\n`+
-        `  - HMB01 Node: ${nodeUptime != null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n`+
-        `\n`+
-        `developed by flakey \n`+
+        `Available Commands:\n`+
+        `Client API key must be set before using most commands!\n\n`+
+        `${commands.map(cmd => `/${cmd.name} - ${cmd.description}`).join("\n")}` +
         `\`\`\``;
 
     if (interactionReply != "") {

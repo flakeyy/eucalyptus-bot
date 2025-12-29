@@ -13,9 +13,9 @@ const ERROR_MESSAGES = {
     id: -3,
     text: `Server did not respond in time, it's likely the request timed out.\n<@${ADMIN_DISCORD_ID}>`
   },
-  INVALID_SERVER_NAME: {
+  INVALID_INPUT: {
     id: -4,
-    text: "Invalid server name.\nPlease try again."
+    text: "Invalid input.\nPlease try again."
   },
   NODE_NOT_FOUND: {
     id: -5,

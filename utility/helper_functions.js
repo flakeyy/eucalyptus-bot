@@ -5,6 +5,9 @@ const config = require("../config.json");
 const msgLog = require("./logger.js");
 const API_KEY = process.env.PANEL_API_KEY;
 const { users } = require("../users.json");
+const fs = require("node:fs");
+const path = require("node:path");
+
 
 async function applicationApiCall(path, method, body) {
   const result = await client.request({
@@ -70,21 +73,41 @@ function formatNames(jsonData) {
   return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
 }
 
-function getUserId(discordId) {
-  for (const user of users) {
-    if (user.discordId === discordId) {
-      return user.panelId;
+function getUserId(val) {
+  if(typeof val == 'number') {
+    for (const user of users) {
+      if (user.discordId == val) {
+        return user.panelId;
+      }
     }
   }
+  else if(typeof val == 'string') {
+    for (const user of users) {
+      if (user.panelUsername == val || user.discordId.toString() == val) {
+        return user.panelId;
+      }
+    }
+  }
+
   return -1; // no user found
 }
 
-function getPanelUsername(discordId) {
-  for (const user of users) {
-    if (user.discordId === discordId) {
-      return user.panelUsername;
+function getPanelUsername(val) {
+  if(typeof val == 'number') {
+    for (const user of users) {
+      if (user.discordId == val) {
+        return user.panelUsername;
+      }
     }
   }
+  else if(typeof val == 'string') {
+    for (const user of users) {
+      if (user.panelUsername == val || user.discordId.toString() == val) {
+        return user.panelUsername;
+      }
+    }
+  }
+  
   return -1; // no user found
 }
 
@@ -155,6 +178,34 @@ function userHasClientApiKey(discordId) {
   return false;
 }
 
+async function getCommands() {
+  let commands = [];
+  const foldersPath = path.join(__dirname, "../commands");
+  try {
+    const commandFolders = await fs.promises.readdir(foldersPath);
+  
+    for (const folder of commandFolders) {
+      const commandsPath = path.join(foldersPath, folder);
+      const commandFiles = (await fs.promises.readdir(commandsPath)).filter(file => file.endsWith(".js"));
+
+      for (const file of commandFiles) {
+        const filePath = path.join(commandsPath, file);
+        const command = require(filePath);
+        if ("data" in command && "execute" in command) {
+          commands.push(command.data.toJSON());
+        } else {
+          console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        }
+      }
+    }
+    return commands;
+  }
+  catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
 module.exports = {
   applicationApiCall,
   clientApiCall,
@@ -166,5 +217,6 @@ module.exports = {
   reconstructCommand,
   getMonitorUptime,
   validateString,
-  userHasClientApiKey
+  userHasClientApiKey,
+  getCommands
 };

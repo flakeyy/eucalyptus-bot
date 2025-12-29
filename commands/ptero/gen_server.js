@@ -21,7 +21,7 @@ async function getDefaultAllocation(node) {
 
 async function createServer(name, node, nest, egg, memory, discordId, userId) {
   if (name == "" || name == null) {
-    return getErrorMessage("INVALID_SERVER_NAME");
+    return getErrorMessage("INVALID_INPUT");
   }
   const nodeId = await getNodeIdByName(node);
   if (nodeId == -1) {

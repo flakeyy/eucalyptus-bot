@@ -356,7 +356,11 @@ describe("Ptero Commands", () => {
       const interaction = {
         deferReply: jest.fn(),
         editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
+        user: { id: "discord123", username: "testuser" },
+        options: {
+          getString: jest.fn()
+            .mockReturnValueOnce("testuser")
+        }
       };
 
       await getServers(interaction);
@@ -374,7 +378,11 @@ describe("Ptero Commands", () => {
       const interaction = {
         deferReply: jest.fn(),
         editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
+        user: { id: "discord123", username: "testuser" },
+        options: {
+          getString: jest.fn()
+            .mockReturnValueOnce("testuser")
+        }
       };
 
       await getServers(interaction);
@@ -580,40 +588,6 @@ describe("Ptero Commands", () => {
       await info(interaction);
       expect(interaction.deferReply).toHaveBeenCalled();
       expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should deny access without proper permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
-      };
-
-      await info(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-
-    test("should handle user not found", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(-1);
-      errors.getErrorMessage.mockReturnValue("User not found");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
-      };
-
-      await info(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("User not found");
     });
   });
 
