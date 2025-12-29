@@ -42,12 +42,18 @@ node index.js
 ## Usage
 
 - `/gen-server` - Generate a new server
+- `/edit-server` - Edit server variables
+- `/get-servers` - Get user-owned servers
+- `/get-server-details` - Get the details of a specific server
+- `/suspend-server` - Suspends a server
+- `/unsuspend-server` - Unsuspends a server
+
 - `/get-eggs` - Get available eggs on the node
 - `/get-nests` - Get available nests on the node
 - `/get-nodes` - Get availabe nodes to deploy onto
-- `/get-owned-servers` - Get servers that are owned by the user executing the command
-- `/suspend-server` - Suspends a server (must be owned by the user executing the command)
-- `/unsuspend-server` - Unsuspends a server (must be owned by the user executing the command)
+
+- `/info` - Retrieves current service information
+- `/set-client-key` - Sets client API key (required to run almost any commands)
 
 ## Contributing
 

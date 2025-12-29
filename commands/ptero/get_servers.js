@@ -5,11 +5,12 @@ const { getUserId, getPanelUsername, reconstructCommand, userHasClientApiKey } =
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { getServersByUser } = require("../../utility/server_functions.js");
+const { users } = require("../../users.json");
 
 module.exports = {
   data: new SlashCommandBuilder()
-    .setName("get-owned-servers")
-    .setDescription("Gets information about owned servers."),
+    .setName("get-servers")
+    .setDescription("Gets information about user-owned servers."),
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
@@ -31,24 +32,23 @@ module.exports = {
 
     const serverObjects = await getServersByUser(getUserId(interaction.user.id));
 
-    let totalMemory = 0;
-    serverObjects.data.forEach(item => {
-      totalMemory += item.attributes.limits.memory;
-    });
-
     let unsuspendedMemory = 0;
     serverObjects.data.forEach(item => {
       if (item.attributes.suspended == false) {
         unsuspendedMemory += item.attributes.limits.memory;
       }
     });
+    
+    const user = users.find(u => u.discordId === interaction.user.id);
+    let allowedTotalMemory = user.maximumAllowedMemory >= 0 ? user.maximumAllowedMemory : "Unlimited";
 
     const formattedString = serverObjects.data.map(item => `${item.attributes.name.padEnd(16)} | ${String(item.attributes.limits.memory).padEnd(5)} MB | ID:${item.attributes.identifier} ${(item.attributes.suspended ? `| SUSPENDED` : `| Available`)}`).join("\n");
 
     if (serverObjects) {
       interactionReply =
-        `\`\`\`Servers owned by ${getPanelUsername(interaction.user.id)}:\n\n` +
-        `Servers: ${serverObjects.data.length} | Memory (unsuspended/total) MB: ${unsuspendedMemory}/${totalMemory}\n\n` +
+        `\`\`\`Servers owned by ${getPanelUsername(interaction.user.id)}\n\n` +
+        `Servers: ${serverObjects.data.length}\n`+ 
+        `Memory Total MB (active/allowed): ${unsuspendedMemory}/${allowedTotalMemory}\n\n` +
         `${formattedString}\`\`\``;
     }
 

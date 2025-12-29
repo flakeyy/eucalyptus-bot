@@ -20,7 +20,7 @@ module.exports = {
     .setDescription("Suspends a server based on a server ID.")
     .addStringOption(option =>
       option.setName("server-id")
-        .setDescription("/get-owned-servers for server IDs")
+        .setDescription("/get-servers for server IDs")
         .setRequired(true)
     ),
 

@@ -12,7 +12,7 @@ module.exports = {
     .setDescription("Get the details of a specific server that you own.")
     .addStringOption(option =>
       option.setName("id")
-        .setDescription("Server ID, use /get-owned-servers to get IDs.")
+        .setDescription("Server ID, use /get-servers to get IDs.")
         .setRequired(true)
     ),
   async execute(interaction) {

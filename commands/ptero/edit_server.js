@@ -12,7 +12,7 @@ module.exports = {
     .setDescription("Edit specific server values not possible through the panel.")
     .addStringOption(option =>
       option.setName("server-id")
-        .setDescription("/get-owned-servers for server IDs")
+        .setDescription("/get-servers for server IDs")
         .setRequired(true)
     )
     .addStringOption(option =>
