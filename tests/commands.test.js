@@ -46,7 +46,7 @@ jest.mock("../utility/helper_functions.js", () => ({
   getMonitorUptime: jest.fn(),
   clientApiCall: jest.fn(),
   saveUsersFile: jest.fn(),
-  validateString: jest.fn((str) => str), // Mock validateString to return the input string
+  validateString: jest.fn((str) => str),
   userHasClientApiKey: jest.fn()
 }));
 
@@ -60,18 +60,17 @@ jest.mock("../config.json", () => ({
 
 jest.mock("../users.json", () => ({
   users: [
-    { panelId: 1, panelAPIKey: "old-key" },
-    { panelId: 2, panelAPIKey: "another-key" }
+    { panelId: 1, panelAPIKey: "old-key", discordId: "discord123", maximumAllowedMemory: 2048 },
+    { panelId: 2, panelAPIKey: "another-key", discordId: "discord456", maximumAllowedMemory: -1 }
   ]
 }), { virtual: true });
 
-// NOW require commands after all mocks are set up
 const { execute: editServer } = require("../commands/ptero/edit_server");
 const { execute: genServer } = require("../commands/ptero/gen_server");
 const { execute: getEggs } = require("../commands/ptero/get_eggs");
 const { execute: getNests } = require("../commands/ptero/get_nests");
 const { execute: getNodes } = require("../commands/ptero/get_nodes");
-const { execute: getOwnedServers } = require("../commands/ptero/get_owned_servers");
+const { execute: getServers } = require("../commands/ptero/get_servers.js");
 const { execute: suspendServer } = require("../commands/ptero/suspend_server");
 const { execute: unsuspendServer } = require("../commands/ptero/unsuspend_server");
 const { execute: info } = require("../commands/ptero/info");
@@ -331,7 +330,7 @@ describe("Ptero Commands", () => {
     });
   });
 
-  describe("get-owned-servers command", () => {
+  describe("get-servers command", () => {
     test("should retrieve owned servers", async () => {
       const permissions = require("../utility/permissions.js");
       const serverFuncs = require("../utility/server_functions.js");
@@ -346,7 +345,7 @@ describe("Ptero Commands", () => {
           {
             attributes: {
               name: "Server1",
-              id: "123",
+              identifier: "123",
               limits: { memory: 1024 },
               suspended: false
             }
@@ -360,7 +359,7 @@ describe("Ptero Commands", () => {
         user: { id: "discord123", username: "testuser" }
       };
 
-      await getOwnedServers(interaction);
+      await getServers(interaction);
       expect(interaction.deferReply).toHaveBeenCalled();
       expect(interaction.editReply).toHaveBeenCalled();
     });
@@ -378,7 +377,7 @@ describe("Ptero Commands", () => {
         user: { id: "discord123", username: "testuser" }
       };
 
-      await getOwnedServers(interaction);
+      await getServers(interaction);
       expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
     });
   });
