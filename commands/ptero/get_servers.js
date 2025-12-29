@@ -10,12 +10,25 @@ const { users } = require("../../users.json");
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("get-servers")
-    .setDescription("Gets information about user-owned servers."),
+    .setDescription("Gets information about user-owned servers.")
+    .addStringOption(option =>
+      option.setName("user")
+        .setDescription("Specify user (forum name) (not required, administrator only)")
+        .setRequired(false)
+      ),
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
-    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_SERVERS);
+    let authenticated = -1;
     let interactionReply = "";
+
+    if(interaction.options.getString("user") == null || (interaction.options.getString("user") === getPanelUsername(interaction.user.id))) {
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_SERVERS);
+    }
+    else {
+      authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.ADMINISTRATOR);
+    }
+
     if (authenticated == -1) {
       await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
       return;
@@ -30,7 +43,14 @@ module.exports = {
       return;
     }
 
-    const serverObjects = await getServersByUser(getUserId(interaction.user.id));
+    let userValue = interaction.options.getString("user") ? interaction.options.getString("user") : interaction.user.id;
+
+    const serverObjects = await getServersByUser(getUserId(userValue));
+
+    if(serverObjects === -1) {
+      await interaction.editReply(getErrorMessage("INVALID_INPUT"));
+      return;
+    }
 
     let unsuspendedMemory = 0;
     serverObjects.data.forEach(item => {
@@ -39,14 +59,14 @@ module.exports = {
       }
     });
     
-    const user = users.find(u => u.discordId === interaction.user.id);
+    const user = users.find(u => u.panelId === getUserId(userValue));
     let allowedTotalMemory = user.maximumAllowedMemory >= 0 ? user.maximumAllowedMemory : "Unlimited";
 
     const formattedString = serverObjects.data.map(item => `${item.attributes.name.padEnd(16)} | ${String(item.attributes.limits.memory).padEnd(5)} MB | ID:${item.attributes.identifier} ${(item.attributes.suspended ? `| SUSPENDED` : `| Available`)}`).join("\n");
 
     if (serverObjects) {
       interactionReply =
-        `\`\`\`Servers owned by ${getPanelUsername(interaction.user.id)}\n\n` +
+        `\`\`\`Servers owned by ${getPanelUsername(userValue)}\n\n` +
         `Servers: ${serverObjects.data.length}\n`+ 
         `Memory Total MB (active/allowed): ${unsuspendedMemory}/${allowedTotalMemory}\n\n` +
         `${formattedString}\`\`\``;

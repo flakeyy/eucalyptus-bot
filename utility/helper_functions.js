@@ -73,21 +73,41 @@ function formatNames(jsonData) {
   return jsonData.data.map(item => `- ${item.attributes.name}`).join("\n");
 }
 
-function getUserId(discordId) {
-  for (const user of users) {
-    if (user.discordId === discordId) {
-      return user.panelId;
+function getUserId(val) {
+  if(typeof val == 'number') {
+    for (const user of users) {
+      if (user.discordId == val) {
+        return user.panelId;
+      }
     }
   }
+  else if(typeof val == 'string') {
+    for (const user of users) {
+      if (user.panelUsername == val || user.discordId.toString() == val) {
+        return user.panelId;
+      }
+    }
+  }
+
   return -1; // no user found
 }
 
-function getPanelUsername(discordId) {
-  for (const user of users) {
-    if (user.discordId === discordId) {
-      return user.panelUsername;
+function getPanelUsername(val) {
+  if(typeof val == 'number') {
+    for (const user of users) {
+      if (user.discordId == val) {
+        return user.panelUsername;
+      }
     }
   }
+  else if(typeof val == 'string') {
+    for (const user of users) {
+      if (user.panelUsername == val || user.discordId.toString() == val) {
+        return user.panelUsername;
+      }
+    }
+  }
+  
   return -1; // no user found
 }
 

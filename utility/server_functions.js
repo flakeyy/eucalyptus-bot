@@ -114,7 +114,7 @@ async function getNodeIdByName(node) {
 
 async function getServersByUser(userId) {
   const parsedId = parseInt(userId, 10);
-  if (isNaN(parsedId)) {
+  if (isNaN(parsedId) || parsedId == -1) {
     return -1;
   }
   const apiResult = await applicationApiCall(`application/users/${parsedId}?include=servers`, "GET");
