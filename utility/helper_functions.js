@@ -5,6 +5,9 @@ const config = require("../config.json");
 const msgLog = require("./logger.js");
 const API_KEY = process.env.PANEL_API_KEY;
 const { users } = require("../users.json");
+const fs = require("node:fs");
+const path = require("node:path");
+
 
 async function applicationApiCall(path, method, body) {
   const result = await client.request({
@@ -155,6 +158,34 @@ function userHasClientApiKey(discordId) {
   return false;
 }
 
+async function getCommands() {
+  let commands = [];
+  const foldersPath = path.join(__dirname, "../commands");
+  try {
+    const commandFolders = await fs.promises.readdir(foldersPath);
+  
+    for (const folder of commandFolders) {
+      const commandsPath = path.join(foldersPath, folder);
+      const commandFiles = (await fs.promises.readdir(commandsPath)).filter(file => file.endsWith(".js"));
+
+      for (const file of commandFiles) {
+        const filePath = path.join(commandsPath, file);
+        const command = require(filePath);
+        if ("data" in command && "execute" in command) {
+          commands.push(command.data.toJSON());
+        } else {
+          console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        }
+      }
+    }
+    return commands;
+  }
+  catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
 module.exports = {
   applicationApiCall,
   clientApiCall,
@@ -166,5 +197,6 @@ module.exports = {
   reconstructCommand,
   getMonitorUptime,
   validateString,
-  userHasClientApiKey
+  userHasClientApiKey,
+  getCommands
 };
