@@ -12,16 +12,6 @@ module.exports = {
   async execute(interaction) {
     await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
-    const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.GET_SERVICE_INFORMATION);
-    let interactionReply = "";
-    if (authenticated == -1) {
-      await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
-      return;
-    }
-    else if (authenticated == false) {
-      await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
-      return;
-    }
 
     const panelUptime = await getMonitorUptime('panel');
     const nodeUptime = await getMonitorUptime('node');
