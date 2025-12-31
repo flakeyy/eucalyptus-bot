@@ -13,9 +13,8 @@ A simple discord bot that allows adminsistrators and users to manage their serve
 
 - create new servers
 - view available eggs, nests, nodes
-- view owned servers (per user)
-- suspend/unsuspend servers (working on it)
-- more to come..
+- view/edit servers
+- suspend/unsuspend/delete servers
 
 ## Installation
 
@@ -32,7 +31,7 @@ npm install
 3. Configuration
 - Create `config.json`, `.env`, `users.json`, and `blacklist.json` files
 - Add required values to `config.json` and `.env`
-- Add users in the `users.json` file (requires the administrator be added manually, further users can be added by the administrator via /add-user (not available yet!))
+- Add users in the `users.json` file
 
 4. Start the bot
 ```bash
@@ -41,23 +40,12 @@ node index.js
 
 ## Usage
 
-- `/gen-server` - Generate a new server
-- `/edit-server` - Edit server variables
-- `/get-servers` - Get user-owned servers
-- `/get-server-details` - Get the details of a specific server
-- `/suspend-server` - Suspends a server
-- `/unsuspend-server` - Unsuspends a server
+- `/servers` - Opens a menu for the user to navigate through their owned servers.
+- `/service` - Opens a menu that shows which nodes, nests, and eggs are available.
 
-- `/get-eggs` - Get available eggs on the node
-- `/get-nests` - Get available nests on the node
-- `/get-nodes` - Get availabe nodes to deploy onto
-
-- `/info` - Retrieves current service information
-- `/set-client-key` - Sets client API key (required to run almost any commands)
-
-## Contributing
-
-Pull requests are welcome. For major changes, please open an issue first.
+- `/info` - Retrieves general bot/panel information.
+- `/help` - Displays available commands.
+- `/set-client-key` - Sets client API key (required to run most commands).
 
 ## License
 
