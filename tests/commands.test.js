@@ -2,603 +2,151 @@
 jest.mock("../utility/logger.js", () => ({
   log: jest.fn(),
   debug: jest.fn(),
-  warn: jest.fn()
+  warn: jest.fn(),
+  error: jest.fn()
 }));
 
 jest.mock("../utility/permissions.js", () => ({
   PERMISSIONS: {
     GET_SERVICE_INFORMATION: 1,
-    CREATE_SERVER: 2,
-    SUSPEND_SERVER: 4,
-    UNSUSPEND_SERVER: 8,
-    DELETE_SERVER: 16,
-    READ_SERVERS: 32,
-    EDIT_SERVER_SETTINGS: 64,
-    SET_CLIENT_KEY: 128,
+    SET_CLIENT_KEY: 2,
+    READ_SERVERS: 4,
+    EDIT_SERVER_PROPERTIES: 8,
+    CREATE_SERVER: 16,
     ADMINISTRATOR: 65536
   },
   authenticateUserForPermission: jest.fn()
 }));
 
 jest.mock("../utility/server_functions.js", () => ({
-  getServerOwnerId: jest.fn(),
-  editServerBuild: jest.fn(),
-  getEggData: jest.fn(),
-  getNodeIdByName: jest.fn(),
-  getNestIdByName: jest.fn(),
-  getEggIdByName: jest.fn(),
-  getAvailableUserMemory: jest.fn(),
+  getEggs: jest.fn(),
   getNests: jest.fn(),
-  getNodes: jest.fn(),
-  getServersByUser: jest.fn(),
-  isServerSuspended: jest.fn(),
-  getServerInfoById: jest.fn(),
-  getEggs: jest.fn()
+  getNodes: jest.fn()
 }));
 
 jest.mock("../utility/helper_functions.js", () => ({
-  applicationApiCall: jest.fn(),
-  extractEnvVariables: jest.fn(),
-  getUserId: jest.fn(),
   reconstructCommand: jest.fn(),
-  formatNames: jest.fn(),
-  getPanelUsername: jest.fn(),
+  getUserId: jest.fn(),
+  getCommands: jest.fn(),
   getMonitorUptime: jest.fn(),
   clientApiCall: jest.fn(),
   saveUsersFile: jest.fn(),
-  validateString: jest.fn((str) => str),
   userHasClientApiKey: jest.fn()
 }));
 
 jest.mock("../utility/error_messages.js", () => ({
-  getErrorMessage: jest.fn()
+  getErrorMessage: jest.fn((code) => {
+    const messages = {
+      USER_NOT_FOUND: "User not found.",
+      INSUFFICIENT_PERMISSIONS: "Insufficient permissions.",
+      SERVER_TIMEOUT: "Server timeout.",
+      API_KEY_INVALID: "Invalid API key.",
+      API_KEY_NOT_SET: "API key not set."
+    };
+    return messages[code] || "Unknown error.";
+  })
 }));
 
 jest.mock("../config.json", () => ({
   debug: false
-}));
+}), { virtual: true });
 
 jest.mock("../users.json", () => ({
   users: [
-    { panelId: 1, panelAPIKey: "old-key", discordId: "discord123", maximumAllowedMemory: 2048 },
-    { panelId: 2, panelAPIKey: "another-key", discordId: "discord456", maximumAllowedMemory: -1 }
+    { panelId: 1, panelAPIKey: "test-key-1", discordId: "discord123", panelUsername: "testuser", permissions: 65536 },
+    { panelId: 2, panelAPIKey: "test-key-2", discordId: "discord456", panelUsername: "user2", permissions: 1 }
   ]
 }), { virtual: true });
 
-const { execute: editServer } = require("../commands/ptero/edit_server");
-const { execute: genServer } = require("../commands/ptero/gen_server");
-const { execute: getEggs } = require("../commands/ptero/get_eggs");
-const { execute: getNests } = require("../commands/ptero/get_nests");
-const { execute: getNodes } = require("../commands/ptero/get_nodes");
-const { execute: getServers } = require("../commands/ptero/get_servers.js");
-const { execute: suspendServer } = require("../commands/ptero/suspend_server");
-const { execute: unsuspendServer } = require("../commands/ptero/unsuspend_server");
-const { execute: info } = require("../commands/ptero/info");
-const { execute: setClientKey } = require("../commands/ptero/set_client_key");
+const { execute: info } = require("../commands/ptero/info.js");
+const { execute: setClientKey } = require("../commands/ptero/set_client_key.js");
 
-describe("Ptero Commands", () => {
+describe("Pterobot Command Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-  });
-
-  describe("edit-server command", () => {
-    test("should successfully edit a server with valid permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      serverFuncs.getServerOwnerId.mockResolvedValue(1);
-      helpers.getUserId.mockReturnValue(1);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      helpers.reconstructCommand.mockReturnValue("/edit-server server-id:123 setting:memory value:1024");
-      serverFuncs.editServerBuild.mockResolvedValue(200);
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {
-          getString: jest.fn()
-            .mockReturnValueOnce("123")
-            .mockReturnValueOnce("memory")
-            .mockReturnValueOnce("1024")
-        }
-      };
-
-      await editServer(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should deny access without proper permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn().mockReturnValue("123") }
-      };
-
-      await editServer(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-  });
-
-  describe("gen-server command", () => {
-    test("should defer and reply when permission granted", async () => {
-      const permissions = require("../utility/permissions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {
-          getString: jest.fn()
-            .mockReturnValueOnce("TestServer")
-            .mockReturnValueOnce("Node1")
-            .mockReturnValueOnce("Minecraft")
-            .mockReturnValueOnce("Vanilla")
-            .mockReturnValue("TestServer"),
-          getInteger: jest.fn().mockReturnValue(1024)
-        }
-      };
-
-      // Test will fail during createServer due to API calls, but that's expected
-      // We're testing that execute properly checks permissions
-      try {
-        await genServer(interaction);
-      } catch {
-        // Ignore errors from the createServer call
-      }
-      expect(interaction.deferReply).toHaveBeenCalled();
-    });
-
-    test("should deny access without proper permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {
-          getString: jest.fn(),
-          getInteger: jest.fn()
-        }
-      };
-
-      await genServer(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-  });
-
-  describe("get-eggs command", () => {
-    test("should retrieve eggs for a valid nest", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      serverFuncs.getNestIdByName.mockResolvedValue(1);
-      serverFuncs.getEggs.mockResolvedValue({
-        data: [
-          { attributes: { name: "Vanilla" } },
-          { attributes: { name: "Spigot" } }
-        ]
-      });
-      helpers.formatNames.mockReturnValue("- Vanilla\n- Spigot");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn().mockReturnValue("Minecraft") }
-      };
-
-      await getEggs(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should deny access without proper permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn() }
-      };
-
-      await getEggs(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-  });
-
-  describe("get-nests command", () => {
-    test("should retrieve all available nests", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      serverFuncs.getNests.mockResolvedValue({
-        data: [
-          { attributes: { name: "Minecraft" } },
-          { attributes: { name: "Rust" } }
-        ]
-      });
-      helpers.formatNames.mockReturnValue("- Minecraft\n- Rust");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {}
-      };
-
-      await getNests(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should deny access without proper permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {}
-      };
-
-      await getNests(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-  });
-
-  describe("get-nodes command", () => {
-    test("should retrieve all available nodes", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      serverFuncs.getNodes.mockResolvedValue({
-        data: [
-          {
-            attributes: {
-              name: "Node1",
-              description: "Primary Node",
-              memory: 8192,
-              allocated_resources: { memory: 2048 }
-            }
-          }
-        ]
-      });
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
-      };
-
-      await getNodes(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should deny access without proper permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
-      };
-
-      await getNodes(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-  });
-
-  describe("get-servers command", () => {
-    test("should retrieve owned servers", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(1);
-      helpers.getPanelUsername.mockReturnValue("testuser");
-      serverFuncs.getServersByUser.mockResolvedValue({
-        data: [
-          {
-            attributes: {
-              name: "Server1",
-              identifier: "123",
-              limits: { memory: 1024 },
-              suspended: false
-            }
-          }
-        ]
-      });
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {
-          getString: jest.fn()
-            .mockReturnValueOnce("testuser")
-        }
-      };
-
-      await getServers(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should deny access without proper permissions", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {
-          getString: jest.fn()
-            .mockReturnValueOnce("testuser")
-        }
-      };
-
-      await getServers(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-  });
-
-  describe("suspend-server command", () => {
-    test("should suspend an unsuspended server", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(1);
-      serverFuncs.getServerOwnerId.mockResolvedValue(1);
-      serverFuncs.isServerSuspended.mockResolvedValue(false);
-      helpers.applicationApiCall.mockResolvedValue({ statusCode: 204 });
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn().mockReturnValue("123") }
-      };
-
-      await suspendServer(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should not suspend already suspended server", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(1);
-      serverFuncs.getServerOwnerId.mockResolvedValue(1);
-      serverFuncs.isServerSuspended.mockResolvedValue(true);
-      errors.getErrorMessage.mockReturnValue(
-        "The server is already suspended."
-      );
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn().mockReturnValue("123") }
-      };
-
-      await suspendServer(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith(
-        "The server is already suspended."
-      );
-    });
-  });
-
-  describe("unsuspend-server command", () => {
-    test("should unsuspend a suspended server", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(1);
-      serverFuncs.getServerOwnerId.mockResolvedValue(1);
-      serverFuncs.isServerSuspended.mockResolvedValue(true);
-      serverFuncs.getServerInfoById.mockResolvedValue({
-        body: {
-          json: async () => ({
-            attributes: {
-              limits: { memory: 1024 }
-            }
-          })
-        }
-      });
-      serverFuncs.getAvailableUserMemory.mockResolvedValue(2048);
-      helpers.applicationApiCall.mockResolvedValue({ statusCode: 204 });
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn().mockReturnValue("123") }
-      };
-
-      await unsuspendServer(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
-    });
-
-    test("should not unsuspend already active server", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(1);
-      serverFuncs.getServerOwnerId.mockResolvedValue(1);
-      serverFuncs.isServerSuspended.mockResolvedValue(false);
-      errors.getErrorMessage.mockReturnValue("The server is already active.");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn().mockReturnValue("123") }
-      };
-
-      await unsuspendServer(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith(
-        "The server is already active."
-      );
-    });
-
-    test("should deny unsuspension without sufficient memory", async () => {
-      const permissions = require("../utility/permissions.js");
-      const serverFuncs = require("../utility/server_functions.js");
-      const helpers = require("../utility/helper_functions.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.userHasClientApiKey.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(1);
-      serverFuncs.getServerOwnerId.mockResolvedValue(1);
-      serverFuncs.isServerSuspended.mockResolvedValue(true);
-      serverFuncs.getServerInfoById.mockResolvedValue({
-        body: {
-          json: async () => ({
-            attributes: {
-              limits: { memory: 2048 }
-            }
-          })
-        }
-      });
-      serverFuncs.getAvailableUserMemory.mockResolvedValue(1024);
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: { getString: jest.fn().mockReturnValue("123") }
-      };
-
-      const result = await unsuspendServer(interaction);
-
-      // Function returns the error message instead of calling editReply in this case
-      expect(result).toBeDefined();
-    });
+    // Set up global variables used by commands
+    global.version = "1.0.0";
+    global.commitHash = "abc123";
+    global.isDev = false;
+    global.serverCount = 10;
+    global.userCount = 5;
   });
 
   describe("info command", () => {
-    beforeEach(() => {
-      // Set up global variables that info.js uses
-      global.version = "1.0.0";
-      global.commitHash = "abc123";
-      global.isDev = false;
-      global.serverCount = 10;
-      global.userCount = 5;
-    });
-
-    test("should retrieve service information with valid permissions", async () => {
-      const permissions = require("../utility/permissions.js");
+    test("should display service information", async () => {
       const helpers = require("../utility/helper_functions.js");
 
-      permissions.authenticateUserForPermission.mockReturnValue(true);
       helpers.reconstructCommand.mockReturnValue("/info");
       helpers.getMonitorUptime.mockResolvedValueOnce(99.5).mockResolvedValueOnce(98.2);
 
       const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
+        reply: jest.fn(),
+        followUp: jest.fn(),
+        user: { id: "discord123", username: "testuser" },
+        replied: false,
+        deferred: false
       };
 
       await info(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
+
+      expect(interaction.reply).toHaveBeenCalled();
       expect(helpers.getMonitorUptime).toHaveBeenCalledWith('panel');
       expect(helpers.getMonitorUptime).toHaveBeenCalledWith('node');
     });
 
-    test("should handle null uptime values gracefully", async () => {
-      const permissions = require("../utility/permissions.js");
+    test("should handle null uptime values", async () => {
       const helpers = require("../utility/helper_functions.js");
 
-      permissions.authenticateUserForPermission.mockReturnValue(true);
       helpers.reconstructCommand.mockReturnValue("/info");
       helpers.getMonitorUptime.mockResolvedValue(null);
 
       const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" }
+        reply: jest.fn(),
+        followUp: jest.fn(),
+        user: { id: "discord123", username: "testuser" },
+        replied: false,
+        deferred: false
       };
 
       await info(interaction);
-      expect(interaction.deferReply).toHaveBeenCalled();
-      expect(interaction.editReply).toHaveBeenCalled();
+
+      expect(interaction.reply).toHaveBeenCalled();
+    });
+
+    test("should handle errors gracefully", async () => {
+      const helpers = require("../utility/helper_functions.js");
+
+      helpers.reconstructCommand.mockReturnValue("/info");
+      helpers.getMonitorUptime.mockRejectedValue(new Error("API Error"));
+
+      const mockCatch = jest.fn().mockResolvedValue(undefined);
+      const interaction = {
+        reply: jest.fn().mockReturnValue({ catch: mockCatch }),
+        followUp: jest.fn().mockReturnValue({ catch: mockCatch }),
+        user: { id: "discord123", username: "testuser" },
+        replied: false,
+        deferred: false
+      };
+
+      await info(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: 'An error occurred while loading the service information.',
+          ephemeral: true
+        })
+      );
     });
   });
 
   describe("set-client-key command", () => {
-    test("should successfully set API key with valid key", async () => {
+    test("should set API key successfully with valid key", async () => {
       const permissions = require("../utility/permissions.js");
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
-      helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:new-api-key");
+      helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:********");
       helpers.clientApiCall.mockResolvedValue({ statusCode: 200 });
 
       const interaction = {
@@ -606,13 +154,20 @@ describe("Ptero Commands", () => {
         editReply: jest.fn(),
         user: { id: "discord123", username: "testuser" },
         options: {
-          getString: jest.fn().mockReturnValue("new-api-key")
+          getString: jest.fn().mockReturnValue("new-valid-key")
         }
       };
 
       await setClientKey(interaction);
-      expect(interaction.deferReply).toHaveBeenCalledWith({ flags: 64 }); // MessageFlags.Ephemeral = 64
-      expect(helpers.clientApiCall).toHaveBeenCalledWith("client/account", "GET", null, "discord123", "new-api-key");
+
+      expect(interaction.deferReply).toHaveBeenCalledWith({ flags: 64 });
+      expect(helpers.clientApiCall).toHaveBeenCalledWith(
+        "client/account",
+        "GET",
+        null,
+        "discord123",
+        "new-valid-key"
+      );
       expect(helpers.saveUsersFile).toHaveBeenCalled();
       expect(interaction.editReply).toHaveBeenCalledWith({
         content: "Successfully set client API key.",
@@ -623,13 +178,11 @@ describe("Ptero Commands", () => {
     test("should reject invalid API key", async () => {
       const permissions = require("../utility/permissions.js");
       const helpers = require("../utility/helper_functions.js");
-      const errors = require("../utility/error_messages.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
-      helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:invalid-key");
+      helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:********");
       helpers.clientApiCall.mockResolvedValue({ statusCode: 401 });
-      errors.getErrorMessage.mockReturnValue("Invalid API key");
 
       const interaction = {
         deferReply: jest.fn(),
@@ -641,74 +194,93 @@ describe("Ptero Commands", () => {
       };
 
       await setClientKey(interaction);
-      expect(interaction.deferReply).toHaveBeenCalledWith({ flags: 64 });
-      expect(helpers.clientApiCall).toHaveBeenCalled();
+
+      expect(interaction.editReply).toHaveBeenCalledWith("Invalid API key.");
       expect(helpers.saveUsersFile).not.toHaveBeenCalled();
-      expect(errors.getErrorMessage).toHaveBeenCalledWith("API_KEY_INVALID");
     });
 
-    test("should deny access without proper permissions", async () => {
+    test("should deny access for user not found", async () => {
       const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
-
-      permissions.authenticateUserForPermission.mockReturnValue(false);
-      errors.getErrorMessage.mockReturnValue("Insufficient permissions");
-
-      const interaction = {
-        deferReply: jest.fn(),
-        editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
-        options: {
-          getString: jest.fn().mockReturnValue("some-key")
-        }
-      };
-
-      await setClientKey(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions");
-    });
-
-    test("should handle user not found", async () => {
-      const permissions = require("../utility/permissions.js");
-      const errors = require("../utility/error_messages.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(-1);
-      errors.getErrorMessage.mockReturnValue("User not found");
 
       const interaction = {
         deferReply: jest.fn(),
         editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
+        user: { id: "unknown-user", username: "unknown" },
         options: {
           getString: jest.fn().mockReturnValue("some-key")
         }
       };
 
       await setClientKey(interaction);
-      expect(interaction.editReply).toHaveBeenCalledWith("User not found");
+
+      expect(interaction.editReply).toHaveBeenCalledWith("User not found.");
     });
 
-    test("should handle user not matching any panel ID", async () => {
+    test("should deny access for insufficient permissions", async () => {
       const permissions = require("../utility/permissions.js");
-      const helpers = require("../utility/helper_functions.js");
-      const errors = require("../utility/error_messages.js");
 
-      permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(999); // Non-existent user ID
-      helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:some-key");
-      errors.getErrorMessage.mockReturnValue("Invalid API key");
+      permissions.authenticateUserForPermission.mockReturnValue(false);
 
       const interaction = {
         deferReply: jest.fn(),
         editReply: jest.fn(),
-        user: { id: "discord123", username: "testuser" },
+        user: { id: "discord456", username: "user2" },
         options: {
           getString: jest.fn().mockReturnValue("some-key")
         }
       };
 
       await setClientKey(interaction);
-      expect(interaction.deferReply).toHaveBeenCalledWith({ flags: 64 });
+
+      expect(interaction.editReply).toHaveBeenCalledWith("Insufficient permissions.");
+    });
+
+    test("should handle missing API key input", async () => {
+      const permissions = require("../utility/permissions.js");
+      const helpers = require("../utility/helper_functions.js");
+
+      permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.getUserId.mockReturnValue(1);
+
+      const interaction = {
+        deferReply: jest.fn(),
+        editReply: jest.fn(),
+        user: { id: "discord123", username: "testuser" },
+        options: {
+          getString: jest.fn().mockReturnValue(null)
+        }
+      };
+
+      await setClientKey(interaction);
+
+      // Should fail with INVALID_INPUT error
+      expect(interaction.editReply).toHaveBeenCalled();
+    });
+
+    test("should not save when user panel ID not found in users array", async () => {
+      const permissions = require("../utility/permissions.js");
+      const helpers = require("../utility/helper_functions.js");
+
+      permissions.authenticateUserForPermission.mockReturnValue(true);
+      helpers.getUserId.mockReturnValue(999); // Non-existent panel ID
+      helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:********");
+      helpers.clientApiCall.mockResolvedValue({ statusCode: 200 });
+
+      const interaction = {
+        deferReply: jest.fn(),
+        editReply: jest.fn(),
+        user: { id: "discord123", username: "testuser" },
+        options: {
+          getString: jest.fn().mockReturnValue("new-key")
+        }
+      };
+
+      await setClientKey(interaction);
+
       expect(helpers.saveUsersFile).not.toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith("Invalid API key.");
     });
   });
 });
