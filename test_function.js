@@ -1,4 +1,4 @@
-const { editServerBuild } = require("./utility/server_functions.js");
+const { editServerInfo } = require("./utility/server_functions.js");
 const msgLog = require("./utility/logger.js");
 
 async function runTest() {
