@@ -112,28 +112,23 @@ async function getNodeIdByName(node) {
 
 // SERVERS
 
-async function getServersByUser(userId) {
-  const parsedId = parseInt(userId, 10);
-  if (isNaN(parsedId) || parsedId == -1) {
-    return -1;
-  }
-  const apiResult = await applicationApiCall(`application/users/${parsedId}?include=servers`, "GET");
+async function getClientServers(discordId) {
+  const apiResult = await clientApiCall("client", "GET", null, discordId);
   const jsonData = await apiResult.body.json();
-  const serverObjects = jsonData.attributes.relationships.servers;
-
-  return serverObjects;
+  
+  return jsonData;
 }
 
-async function getServerInfoById(serverId, userId) {
+async function getServerInfoById(serverId, discordId) {
   const validatedId = validateString(serverId);
-  const apiResult = await clientApiCall(`client/servers/${validatedId}`, "GET", null, userId);
+  const apiResult = await clientApiCall(`client/servers/${validatedId}`, "GET", null, discordId);
 
   return apiResult;
 }
 
-async function getServerResourceInfoById(serverId, userId) {
+async function getServerResourceInfoById(serverId, discordId) {
   const validatedId = validateString(serverId);
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/resources`, "GET", null, userId);
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/resources`, "GET", null, discordId);
 
   return apiResult;
 }
@@ -149,42 +144,72 @@ async function getServerOwnerId(serverId) {
   return ownerId;
 }
 
-async function isServerSuspended(serverId) {
-  const parsedId = parseInt(serverId, 10);
-  if (isNaN(parsedId)) {
-    return -1;
-  }
-  const apiResult = await applicationApiCall(`application/servers/${parsedId}`, "GET");
-  const jsonData = await apiResult.body.json();
-  const suspended = jsonData.attributes.suspended;
+async function isServerSuspended(serverId, discordId) {
+  const serverData = await getServerInfoById(serverId, discordId);
+  const jsonData = await serverData.body.json();
+  const suspended = jsonData.attributes.is_suspended;
   return suspended;
 }
 
-async function editServerBuild(serverId, settingName, value) {
+async function editServerInfo(serverId, settingName, value) {
   const parsedId = parseInt(serverId, 10);
   if (isNaN(parsedId)) {
     return -1;
   }
-  const serverInfo = await getServerInfoById(parsedId);
-  const requestBody = {
-    allocation: serverInfo.allocation,
-    memory: serverInfo.limits.memory,
-    swap: serverInfo.limits.swap,
-    disk: serverInfo.limits.disk,
-    io: serverInfo.limits.io,
-    cpu: serverInfo.limits.cpu,
-    feature_limits: {
-      databases: serverInfo.feature_limits.databases,
-      allocations: serverInfo.feature_limits.allocations,
-      backups: serverInfo.feature_limits.backups
-    }
-  };
 
-  const validSettings = [ "memory" ];
+  const validSettings = [ "memory", "name" ];
   if (!validSettings.includes(settingName)) {
     msgLog.error(`Invalid setting name: ${settingName}`);
     throw new Error(`Invalid setting name. Valid settings are: ${validSettings.join(", ")}`);
   }
+
+  // Handle name update separately (uses /details endpoint)
+  if (settingName === "name") {
+    if (!value || typeof value !== 'string' || value.trim().length === 0) {
+      msgLog.error(`Invalid value for name: ${value}`);
+      throw new Error("Name must be a non-empty string.");
+    }
+    
+    // Get current server info to preserve other fields
+    const serverInfoResponse = await applicationApiCall(`application/servers/${parsedId}`, "GET");
+    if (serverInfoResponse.statusCode !== 200) {
+      msgLog.error(`Failed to fetch server info for name update: ${serverInfoResponse.statusCode}`);
+      return serverInfoResponse.statusCode;
+    }
+    const serverData = await serverInfoResponse.body.json();
+    
+    const requestBody = {
+      name: value,
+      user: serverData.attributes.user,
+      external_id: serverData.attributes.external_id,
+      description: serverData.attributes.description
+    };
+    
+    const apiResult = await applicationApiCall(`application/servers/${parsedId}/details`, "PATCH", JSON.stringify(requestBody));
+    return apiResult.statusCode;
+  }
+
+  const serverInfoResponse = await applicationApiCall(`application/servers/${parsedId}`, "GET");
+  if (serverInfoResponse.statusCode !== 200) {
+    msgLog.error(`Failed to fetch server info for build update: ${serverInfoResponse.statusCode}`);
+    return serverInfoResponse.statusCode;
+  }
+  const serverData = await serverInfoResponse.body.json();
+  
+  const requestBody = {
+    allocation: serverData.attributes.allocation,
+    memory: serverData.attributes.limits.memory,
+    swap: serverData.attributes.limits.swap,
+    disk: serverData.attributes.limits.disk,
+    io: serverData.attributes.limits.io,
+    cpu: serverData.attributes.limits.cpu,
+    feature_limits: {
+      databases: serverData.attributes.feature_limits.databases,
+      allocations: serverData.attributes.feature_limits.allocations,
+      backups: serverData.attributes.feature_limits.backups
+    }
+  };
+
   if (isNaN(value) || value < 0) {
     msgLog.error(`Invalid value for ${settingName}: ${value}`);
     throw new Error("Value must be a non-negative number.");
@@ -199,6 +224,33 @@ async function editServerBuild(serverId, settingName, value) {
   const apiResult = await applicationApiCall(`application/servers/${parsedId}/build`, "PATCH", JSON.stringify(requestBody));
 
   return apiResult.statusCode;
+}
+
+async function suspendServer(serverId) {
+  const apiResult = await applicationApiCall(`application/servers/${serverId}/suspend`, "POST");
+  return apiResult.statusCode;
+}
+
+async function unsuspendServer(serverId) {
+  const apiResult = await applicationApiCall(`application/servers/${serverId}/unsuspend`, "POST");
+  return apiResult.statusCode;
+}
+
+async function deleteServer(serverId) {
+  const apiResult = await applicationApiCall(`application/servers/${serverId}`, "DELETE");
+  return apiResult.statusCode;
+}
+
+async function setServerPowerState(serverId, userId, action) {
+  const validatedId = validateString(serverId);
+
+  const body = JSON.stringify({
+    signal: action
+  });
+
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/power`, "POST", body, userId);
+  
+  return apiResult;
 }
 
 // MISC
@@ -243,11 +295,15 @@ module.exports = {
   getNestIdByName,
   getNodes,
   getNodeIdByName,
-  getServersByUser,
+  getClientServers,
   getServerInfoById,
   getServerResourceInfoById,
   getServerOwnerId,
   isServerSuspended,
-  editServerBuild,
+  editServerInfo: editServerInfo,
+  setServerPowerState,
+  suspendServer,
+  unsuspendServer,
+  deleteServer,
   getAvailableUserMemory
 };

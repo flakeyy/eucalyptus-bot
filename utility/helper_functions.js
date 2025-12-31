@@ -37,6 +37,8 @@ async function clientApiCall(path, method, body, userDiscordId, customAPIKey) {
       }
     }
   }
+  
+
   const result = await client.request({
     path: `/api/${path}`,
     method: `${method}`,
@@ -104,6 +106,29 @@ function getPanelUsername(val) {
     for (const user of users) {
       if (user.panelUsername == val || user.discordId.toString() == val) {
         return user.panelUsername;
+      }
+    }
+  }
+  
+  return -1; // no user found
+}
+
+function getDiscordId(val) {
+  if(typeof val == 'number') {
+    // Could be Discord ID or panel ID
+    for (const user of users) {
+      if (user.discordId == val) {
+        return user.discordId;
+      }
+      if (user.panelId == val) {
+        return user.discordId;
+      }
+    }
+  }
+  else if(typeof val == 'string') {
+    for (const user of users) {
+      if (user.panelUsername == val || user.discordId.toString() == val) {
+        return user.discordId;
       }
     }
   }
@@ -213,6 +238,7 @@ module.exports = {
   formatNames,
   getUserId,
   getPanelUsername,
+  getDiscordId,
   saveUsersFile,
   reconstructCommand,
   getMonitorUptime,

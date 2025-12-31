@@ -1,34 +1,55 @@
-const { SlashCommandBuilder } = require("discord.js");
+const { ContainerBuilder, SlashCommandBuilder, MessageFlags } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { reconstructCommand, getCommands } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
+
+const COLORS = {
+  PRIMARY: 0x6b34eb
+};
 
 module.exports = {
   data: new SlashCommandBuilder()
     .setName("help")
     .setDescription("Displays available commands."),
   async execute(interaction) {
-    await interaction.deferReply();
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
 
-    const commands = await getCommands();
+    try {
+      const commands = await getCommands();
 
-    interactionReply = `\`\`\`\n`+
-        `Available Commands:\n`+
-        `Client API key must be set before using most commands!\n\n`+
-        `${commands.map(cmd => `/${cmd.name} - ${cmd.description}`).join("\n")}` +
-        `\`\`\``;
+      const helpText = 
+        `**Available Commands**\n\n` +
+        `_Client API key must be set before using many commands!_\n\n` +
+        `${commands.map(cmd => `**/${cmd.name}** - ${cmd.description}`).join("\n")}`;
 
-    if (interactionReply != "") {
       if (config.debug) {
-        msgLog.debug(`${interactionReply}`);
+        msgLog.debug(`Help command executed for ${interaction.user.username}`);
       }
-      await interaction.editReply(interactionReply);
-    }
-    else {
-      msgLog.warn(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)} | ${getErrorMessage("SERVER_TIMEOUT")}`);
-      await interaction.editReply(getErrorMessage("SERVER_TIMEOUT"));
+
+      const container = new ContainerBuilder()
+        .setAccentColor(COLORS.PRIMARY)
+        .addTextDisplayComponents((text) =>
+          text.setContent(helpText)
+        );
+
+      await interaction.reply({
+        components: [container],
+        flags: MessageFlags.IsComponentsV2,
+      });
+
+    } catch (error) {
+      console.error('Error in help command:', error);
+      const errorMessage = { 
+        content: getErrorMessage("SERVER_TIMEOUT"), 
+        ephemeral: true 
+      };
+      
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp(errorMessage).catch(() => {});
+      } else {
+        await interaction.reply(errorMessage).catch(() => {});
+      }
     }
   }
 };

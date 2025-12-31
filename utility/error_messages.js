@@ -47,7 +47,7 @@ const ERROR_MESSAGES = {
   },
   SERVER_CREATION_FAILED_MEMORY: {
     id: -13,
-    format: amountToFree => `Creating this server would put you over your allowed maximum memory usage.\nYou will need to create this server with less memory OR free up ${amountToFree} MB by deleting or suspending other active servers.`
+    format: amountToFree => `**Creating this server would put you over your allowed maximum memory usage.**\n\nYou will need to create this server with less memory OR free up ${amountToFree} MB by deleting or suspending other active servers.`
   },
   SERVER_SUSPEND_FAILED: {
     id: -14,
@@ -88,6 +88,26 @@ const ERROR_MESSAGES = {
   SERVER_NOT_FOUND: {
     id: -23,
     text: "The specified server could not be found.\nPlease ensure the server ID is correct and try again."
+  },
+  USER_TIMEOUT: {
+    id: -24,
+    text: "Session timed out while waiting for user input.\nRe-run the command to continue."
+  },
+  INVALID_SERVER_NAME: {
+    id: -25,
+    text: "Invalid server name.\nServer name cannot be empty."
+  },
+  SERVER_NAME_UPDATE_FAILED: {
+    id: -26,
+    text: "Failed to update server name.\nPlease try again or contact an administrator."
+  },
+  INVALID_MEMORY_VALUE: {
+    id: -27,
+    text: "Invalid memory value.\nMemory must be a positive number."
+  },
+  SERVER_MEMORY_UPDATE_FAILED: {
+    id: -28,
+    text: "Failed to update server memory.\nPlease try again or contact an administrator."
   }
 };
 
