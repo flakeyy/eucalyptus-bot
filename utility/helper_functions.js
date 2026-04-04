@@ -155,7 +155,7 @@ function saveUsersFile() {
 
 async function getMonitorUptime(type) {
   const URL = 'https://uptime.flakey.tech';
-  const SLUG = 'node';
+  const SLUG = 'eucalyptus';
   const MONITOR_ID = (type == 'panel' ? 1 : (type == 'node' ? 7 : null));
 
   if (MONITOR_ID === null) {
