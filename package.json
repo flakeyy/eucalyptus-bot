@@ -1,6 +1,6 @@
 {
   "name": "pterobot",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "a discord bot that interacts with pterodactyls API",
   "main": "index.js",
   "author": "flakey",
@@ -9,9 +9,9 @@
     "test": "jest --runInBand"
   },
   "dependencies": {
-    "discord.js": "14.25.1",
+    "discord.js": "^14.26.2",
     "dotenv": "17.2.3",
-    "undici": "7.16.0"
+    "undici": "^7.24.7"
   },
   "devDependencies": {
     "@eslint/js": "9.39.2",
