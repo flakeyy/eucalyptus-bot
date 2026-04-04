@@ -22,7 +22,7 @@ module.exports = {
         `v${global.version}/${global.commitHash}${(global.isDev ? " | dev" : " | prod")}\n\n` +
         `**Hosting:** ${global.serverCount} servers for ${global.userCount} users\n` +
         `**Panel:** https://dino.flakey.tech\n` +
-        `**Uptime:** https://uptime.flakey.tech/status/node\n` +
+        `**Uptime:** https://uptime.flakey.tech/status/eucalyptus\n` +
         `  • Panel: ${panelUptime != null ? panelUptime + "%" : "Unavailable"} (24 hrs)\n` +
         `  • HMB01 Node: ${nodeUptime != null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n\n` +
         `/service for more specific service information.\n\n` +
