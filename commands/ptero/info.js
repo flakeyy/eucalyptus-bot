@@ -24,7 +24,7 @@ module.exports = {
         `**Panel:** https://dino.flakey.tech\n` +
         `**Uptime:** https://uptime.flakey.tech/status/eucalyptus\n` +
         `  • Panel: ${panelUptime != null ? panelUptime + "%" : "Unavailable"} (24 hrs)\n` +
-        `  • HMB01 Node: ${nodeUptime != null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n\n` +
+        `  • Server Node: ${nodeUptime != null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n\n` +
         `/service for more specific service information.\n\n` +
         `_developed by flakey_`;
 
