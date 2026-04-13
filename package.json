@@ -6,6 +6,9 @@
   "author": "flakey",
   "license": "ISC",
   "scripts": {
+    "start": "node index.js",
+    "start:dev": "node index.js --dev",
+    "lint": "eslint .",
     "test": "jest --runInBand"
   },
   "dependencies": {

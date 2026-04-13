@@ -16,6 +16,10 @@ module.exports = [
         console: true,
         setInterval: true,
         clearInterval: true,
+        setTimeout: true,
+        clearTimeout: true,
+        global: true,
+        fetch: true,
         // Test globals
         jest: true,
         describe: true,
@@ -34,7 +38,7 @@ module.exports = [
       "object-curly-spacing": [ "error", "always" ],
       "arrow-spacing": [ "error", { before: true, after: true } ],
       "max-len": [ "error", {
-        code: 120,
+        code: 150,
         ignoreUrls: true,
         ignoreStrings: true,
         ignoreTemplateLiterals: true,
@@ -62,7 +66,7 @@ module.exports = [
 
       // Variables and Equality
       "prefer-const": "error",
-      eqeqeq: "off", // Allows loose equality
+      eqeqeq: "error",
 
       // General Style
       "no-multiple-empty-lines": [ "error", { max: 1 } ],

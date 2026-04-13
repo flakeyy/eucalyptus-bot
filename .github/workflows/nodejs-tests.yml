@@ -21,7 +21,10 @@ jobs:
 
       - name: Get dependencies
         run: npm install --no-audit --no-fund; cp config.json.sample config.json
-        
+
+      - name: Lint
+        run: npm run lint
+
       - name: Run tests
         env:
           CI: true

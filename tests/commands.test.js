@@ -35,15 +35,15 @@ jest.mock("../utility/helper_functions.js", () => ({
 }));
 
 jest.mock("../utility/error_messages.js", () => ({
-  getErrorMessage: jest.fn((code) => {
+  getErrorMessage: jest.fn(code => {
     const messages = {
       USER_NOT_FOUND: "User not found.",
       INSUFFICIENT_PERMISSIONS: "Insufficient permissions.",
-      SERVER_TIMEOUT: "Server timeout.",
+      INVALID_INPUT: "Invalid input.",
       API_KEY_INVALID: "Invalid API key.",
       API_KEY_NOT_SET: "API key not set."
     };
-    return messages[code] || "Unknown error.";
+    return messages[code] || `Unknown error: ${code}`;
   })
 }));
 
@@ -59,12 +59,12 @@ jest.mock("../users.json", () => ({
 }), { virtual: true });
 
 const { execute: info } = require("../commands/ptero/info.js");
+const { execute: help } = require("../commands/ptero/help.js");
 const { execute: setClientKey } = require("../commands/ptero/set_client_key.js");
 
 describe("Pterobot Command Tests", () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    // Set up global variables used by commands
     global.version = "1.0.0";
     global.commitHash = "abc123";
     global.isDev = false;
@@ -80,8 +80,8 @@ describe("Pterobot Command Tests", () => {
       helpers.getMonitorUptime.mockResolvedValueOnce(99.5).mockResolvedValueOnce(98.2);
 
       const interaction = {
-        reply: jest.fn(),
-        followUp: jest.fn(),
+        reply: jest.fn().mockResolvedValue(undefined),
+        followUp: jest.fn().mockResolvedValue(undefined),
         user: { id: "discord123", username: "testuser" },
         replied: false,
         deferred: false
@@ -89,9 +89,11 @@ describe("Pterobot Command Tests", () => {
 
       await info(interaction);
 
-      expect(interaction.reply).toHaveBeenCalled();
-      expect(helpers.getMonitorUptime).toHaveBeenCalledWith('panel');
-      expect(helpers.getMonitorUptime).toHaveBeenCalledWith('node');
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ flags: expect.any(Number) })
+      );
+      expect(helpers.getMonitorUptime).toHaveBeenCalledWith("panel");
+      expect(helpers.getMonitorUptime).toHaveBeenCalledWith("node");
     });
 
     test("should handle null uptime values", async () => {
@@ -101,8 +103,8 @@ describe("Pterobot Command Tests", () => {
       helpers.getMonitorUptime.mockResolvedValue(null);
 
       const interaction = {
-        reply: jest.fn(),
-        followUp: jest.fn(),
+        reply: jest.fn().mockResolvedValue(undefined),
+        followUp: jest.fn().mockResolvedValue(undefined),
         user: { id: "discord123", username: "testuser" },
         replied: false,
         deferred: false
@@ -119,10 +121,9 @@ describe("Pterobot Command Tests", () => {
       helpers.reconstructCommand.mockReturnValue("/info");
       helpers.getMonitorUptime.mockRejectedValue(new Error("API Error"));
 
-      const mockCatch = jest.fn().mockResolvedValue(undefined);
       const interaction = {
-        reply: jest.fn().mockReturnValue({ catch: mockCatch }),
-        followUp: jest.fn().mockReturnValue({ catch: mockCatch }),
+        reply: jest.fn().mockResolvedValue(undefined),
+        followUp: jest.fn().mockResolvedValue(undefined),
         user: { id: "discord123", username: "testuser" },
         replied: false,
         deferred: false
@@ -132,7 +133,108 @@ describe("Pterobot Command Tests", () => {
 
       expect(interaction.reply).toHaveBeenCalledWith(
         expect.objectContaining({
-          content: 'An error occurred while loading the service information.',
+          content: "An error occurred while loading the service information.",
+          ephemeral: true
+        })
+      );
+    });
+
+    test("should use followUp when already replied", async () => {
+      const helpers = require("../utility/helper_functions.js");
+
+      helpers.reconstructCommand.mockReturnValue("/info");
+      helpers.getMonitorUptime.mockRejectedValue(new Error("API Error"));
+
+      const interaction = {
+        reply: jest.fn().mockResolvedValue(undefined),
+        followUp: jest.fn().mockResolvedValue(undefined),
+        user: { id: "discord123", username: "testuser" },
+        replied: true,
+        deferred: false
+      };
+
+      await info(interaction);
+
+      expect(interaction.followUp).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: "An error occurred while loading the service information.",
+          ephemeral: true
+        })
+      );
+      expect(interaction.reply).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("help command", () => {
+    test("should display available commands", async () => {
+      const helpers = require("../utility/helper_functions.js");
+
+      helpers.reconstructCommand.mockReturnValue("/help");
+      helpers.getCommands.mockResolvedValue([
+        { name: "info", description: "Retrieves current service information." },
+        { name: "help", description: "Displays available commands." },
+        { name: "set-client-key", description: "Sets your client API key." }
+      ]);
+
+      const interaction = {
+        reply: jest.fn().mockResolvedValue(undefined),
+        followUp: jest.fn().mockResolvedValue(undefined),
+        user: { id: "discord123", username: "testuser" },
+        replied: false,
+        deferred: false
+      };
+
+      await help(interaction);
+
+      expect(helpers.getCommands).toHaveBeenCalled();
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({ flags: expect.any(Number) })
+      );
+    });
+
+    test("should handle getCommands returning null", async () => {
+      const helpers = require("../utility/helper_functions.js");
+
+      helpers.reconstructCommand.mockReturnValue("/help");
+      helpers.getCommands.mockResolvedValue(null);
+
+      const interaction = {
+        reply: jest.fn().mockResolvedValue(undefined),
+        followUp: jest.fn().mockResolvedValue(undefined),
+        user: { id: "discord123", username: "testuser" },
+        replied: false,
+        deferred: false
+      };
+
+      await help(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: "An error occurred while loading commands.",
+          ephemeral: true
+        })
+      );
+    });
+
+    test("should handle getCommands throwing an error", async () => {
+      const helpers = require("../utility/helper_functions.js");
+
+      helpers.reconstructCommand.mockReturnValue("/help");
+      helpers.getCommands.mockRejectedValue(new Error("Filesystem error"));
+
+      const interaction = {
+        reply: jest.fn().mockResolvedValue(undefined),
+        followUp: jest.fn().mockResolvedValue(undefined),
+        user: { id: "discord123", username: "testuser" },
+        replied: false,
+        deferred: false
+      };
+
+      await help(interaction);
+
+      expect(interaction.reply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          content: "An error occurred while loading commands.",
           ephemeral: true
         })
       );
@@ -243,6 +345,7 @@ describe("Pterobot Command Tests", () => {
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
       helpers.getUserId.mockReturnValue(1);
+      helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:********");
 
       const interaction = {
         deferReply: jest.fn(),
@@ -255,8 +358,8 @@ describe("Pterobot Command Tests", () => {
 
       await setClientKey(interaction);
 
-      // Should fail with INVALID_INPUT error
-      expect(interaction.editReply).toHaveBeenCalled();
+      expect(interaction.editReply).toHaveBeenCalledWith("Invalid input.");
+      expect(helpers.clientApiCall).not.toHaveBeenCalled();
     });
 
     test("should not save when user panel ID not found in users array", async () => {
@@ -264,21 +367,21 @@ describe("Pterobot Command Tests", () => {
       const helpers = require("../utility/helper_functions.js");
 
       permissions.authenticateUserForPermission.mockReturnValue(true);
-      helpers.getUserId.mockReturnValue(999); // Non-existent panel ID
+      helpers.getUserId.mockReturnValue(999); // panel ID not in users array
       helpers.reconstructCommand.mockReturnValue("/set-client-key api-key:********");
-      helpers.clientApiCall.mockResolvedValue({ statusCode: 200 });
 
       const interaction = {
         deferReply: jest.fn(),
         editReply: jest.fn(),
         user: { id: "discord123", username: "testuser" },
         options: {
-          getString: jest.fn().mockReturnValue("new-key")
+          getString: jest.fn().mockReturnValue("some-key")
         }
       };
 
       await setClientKey(interaction);
 
+      expect(helpers.clientApiCall).not.toHaveBeenCalled();
       expect(helpers.saveUsersFile).not.toHaveBeenCalled();
       expect(interaction.editReply).toHaveBeenCalledWith("Invalid API key.");
     });

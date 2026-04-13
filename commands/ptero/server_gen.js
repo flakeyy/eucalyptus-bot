@@ -7,16 +7,16 @@ const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailab
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 const COLORS = {
-    PRIMARY: 0x6b34eb,
-    SUCCESS: 0x00ff00,
-    DISABLED: 0x808080
+  PRIMARY: 0x6b34eb,
+  SUCCESS: 0x00ff00,
+  DISABLED: 0x808080
 };
 
 const COLLECTOR_IDLE_TIMEOUT = 300_000;
 
 const HTTP_STATUS_CODES = {
-    CREATED: 201,
-    UNAUTHORIZED: 401
+  CREATED: 201,
+  UNAUTHORIZED: 401
 };
 
 async function getDefaultAllocation(node) {
@@ -25,7 +25,7 @@ async function getDefaultAllocation(node) {
   const jsonData = await jsonString.data;
 
   for (let i = 0;i < jsonData.length;i++) {
-    if (!jsonData[i].attributes.assigned && (jsonData[i].attributes.alias == null || (jsonData[i].attributes.alias != null && jsonData[i].attributes.ip == "0.0.0.0"))) {
+    if (!jsonData[i].attributes.assigned && (jsonData[i].attributes.alias === null || (jsonData[i].attributes.alias !== null && jsonData[i].attributes.ip === "0.0.0.0"))) {
       return jsonData[i].attributes.id;
     }
   }
@@ -33,11 +33,11 @@ async function getDefaultAllocation(node) {
 }
 
 async function createServer(name, node, nest, egg, memory, discordId, userId) {
-  if (name == "" || name == null) {
+  if (name === "" || name === null) {
     return getErrorMessage("INVALID_INPUT");
   }
   const nodeId = await getNodeIdByName(node);
-  if (nodeId == -1) {
+  if (nodeId === -1) {
     return getErrorMessage("NODE_NOT_FOUND");
   }
   else if (typeof(nodeId) === "string") {
@@ -46,15 +46,15 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
 
   let overheadMemory = config["default_overhead_mb"];
   const nestId = await getNestIdByName(nest);
-  if (nestId == -1) {
+  if (nestId === -1) {
     return getErrorMessage("NEST_NOT_FOUND");
   }
-  if (nestId == config["minecraft_nest_id"]) {
+  if (nestId === config["minecraft_nest_id"]) {
     overheadMemory = config["java_overhead_mb"];
   }
 
   const eggId = await getEggIdByName(nestId, egg);
-  if (eggId == -1) {
+  if (eggId === -1) {
     return getErrorMessage("EGG_NOT_FOUND");
   }
 
@@ -65,12 +65,12 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
   }
 
   const defaultAllocation = await getDefaultAllocation(nodeId);
-  if (defaultAllocation == -1) {
+  if (defaultAllocation === -1) {
     return getErrorMessage("ALLOCATION_NOT_FOUND");
   }
 
   const eggInfo = await getEggData(nestId, eggId);
-  if (eggInfo == -1) {
+  if (eggInfo === -1) {
     return getErrorMessage("EGG_INFO_NOT_RETURNED");
   }
 
@@ -114,7 +114,7 @@ module.exports = {
 
   async execute(interaction) {
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
-    
+
     const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.CREATE_SERVER);
     if (authenticated === -1) {
       await interaction.reply(getErrorMessage("USER_NOT_FOUND"));
@@ -160,40 +160,40 @@ module.exports = {
 
       // Build initial container with node selection
       const nodeSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId('node-selection')
-        .setPlaceholder('Select a node');
+        .setCustomId("node-selection")
+        .setPlaceholder("Select a node");
 
       for (const node of nodesData.data) {
         nodeSelectMenu.addOptions(
           new StringSelectMenuOptionBuilder()
             .setLabel(node.attributes.name)
-            .setDescription(`${node.attributes.description || 'No description'}`)
+            .setDescription(`${node.attributes.description || "No description"}`)
             .setValue(String(node.attributes.id))
         );
       }
 
-      const memoryDisplay = availableMemory === -1 
-        ? 'Unlimited' 
+      const memoryDisplay = availableMemory === -1
+        ? "Unlimited"
         : `${availableMemory} MB`;
 
       const initialContainer = new ContainerBuilder()
         .setAccentColor(COLORS.PRIMARY)
-        .addTextDisplayComponents((text) =>
+        .addTextDisplayComponents(text =>
           text.setContent(`**Create New Server**\n\n**Available Memory:** ${memoryDisplay}\n\nSelect a node to host your server:`)
         )
-        .addSeparatorComponents((separator) => separator)
-        .addActionRowComponents((actionRow) =>
+        .addSeparatorComponents(separator => separator)
+        .addActionRowComponents(actionRow =>
           actionRow.setComponents(nodeSelectMenu)
         );
 
       await interaction.reply({
-        components: [initialContainer],
-        flags: MessageFlags.IsComponentsV2,
+        components: [ initialContainer ],
+        flags: MessageFlags.IsComponentsV2
       });
 
       const response = await interaction.fetchReply();
       const collector = response.createMessageComponentCollector({
-        filter: (i) => i.user.id === interaction.user.id,
+        filter: i => i.user.id === interaction.user.id,
         idle: COLLECTOR_IDLE_TIMEOUT
       });
 
@@ -203,46 +203,46 @@ module.exports = {
       let serverName = null;
       let serverMemory = null;
 
-      collector.on('collect', async (i) => {
+      collector.on("collect", async i => {
         try {
-          if (i.customId === 'node-selection') {
+          if (i.customId === "node-selection") {
             selectedNode = nodesData.data.find(n => String(n.attributes.id) === i.values[0]);
 
             // Build nest selection menu
             const nestSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId('nest-selection')
-              .setPlaceholder('Select a nest (game type)');
+              .setCustomId("nest-selection")
+              .setPlaceholder("Select a nest (game type)");
 
             for (const nest of nestsData.data) {
               nestSelectMenu.addOptions(
                 new StringSelectMenuOptionBuilder()
                   .setLabel(nest.attributes.name)
-                  .setDescription(nest.attributes.description || 'No description')
+                  .setDescription(nest.attributes.description || "No description")
                   .setValue(String(nest.attributes.id))
               );
             }
 
             const nestContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
-              .addTextDisplayComponents((text) =>
+              .addTextDisplayComponents(text =>
                 text.setContent(`**Create New Server**\n\n**Selected Node:** ${selectedNode.attributes.name}\n\nSelect a nest (game type):`)
               )
-              .addSeparatorComponents((separator) => separator)
-              .addActionRowComponents((actionRow) =>
+              .addSeparatorComponents(separator => separator)
+              .addActionRowComponents(actionRow =>
                 actionRow.setComponents(nestSelectMenu)
               )
-              .addActionRowComponents((actionRow) =>
+              .addActionRowComponents(actionRow =>
                 actionRow.setComponents(
-                  new ButtonBuilder().setCustomId('back-to-nodes').setLabel('← Back').setStyle(ButtonStyle.Secondary)
+                  new ButtonBuilder().setCustomId("back-to-nodes").setLabel("← Back").setStyle(ButtonStyle.Secondary)
                 )
               );
 
             await i.update({
-              components: [nestContainer],
-              flags: MessageFlags.IsComponentsV2,
+              components: [ nestContainer ],
+              flags: MessageFlags.IsComponentsV2
             });
 
-          } else if (i.customId === 'nest-selection') {
+          } else if (i.customId === "nest-selection") {
             selectedNest = nestsData.data.find(n => String(n.attributes.id) === i.values[0]);
 
             const eggsData = await getEggs(selectedNest.attributes.id);
@@ -266,66 +266,66 @@ module.exports = {
             }
 
             const eggSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId('egg-selection')
-              .setPlaceholder('Select an egg (server type)');
+              .setCustomId("egg-selection")
+              .setPlaceholder("Select an egg (server type)");
 
             for (const egg of eggsData.data) {
               eggSelectMenu.addOptions(
                 new StringSelectMenuOptionBuilder()
                   .setLabel(egg.attributes.name)
-                  .setDescription(egg.attributes.description?.substring(0, 100) || 'No description')
+                  .setDescription(egg.attributes.description?.substring(0, 100) || "No description")
                   .setValue(String(egg.attributes.id))
               );
             }
 
             const eggContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
-              .addTextDisplayComponents((text) =>
+              .addTextDisplayComponents(text =>
                 text.setContent(`**Create New Server**\n\n**Node:** ${selectedNode.attributes.name}\n**Nest:** ${selectedNest.attributes.name}\n\nSelect an egg (server type):`)
               )
-              .addSeparatorComponents((separator) => separator)
-              .addActionRowComponents((actionRow) =>
+              .addSeparatorComponents(separator => separator)
+              .addActionRowComponents(actionRow =>
                 actionRow.setComponents(eggSelectMenu)
               )
-              .addActionRowComponents((actionRow) =>
+              .addActionRowComponents(actionRow =>
                 actionRow.setComponents(
-                  new ButtonBuilder().setCustomId('back-to-nests').setLabel('← Back').setStyle(ButtonStyle.Secondary)
+                  new ButtonBuilder().setCustomId("back-to-nests").setLabel("← Back").setStyle(ButtonStyle.Secondary)
                 )
               );
 
             await i.update({
-              components: [eggContainer],
-              flags: MessageFlags.IsComponentsV2,
+              components: [ eggContainer ],
+              flags: MessageFlags.IsComponentsV2
             });
 
-          } else if (i.customId === 'egg-selection') {
+          } else if (i.customId === "egg-selection") {
             const eggsData = await getEggs(selectedNest.attributes.id);
             selectedEgg = eggsData.data.find(e => String(e.attributes.id) === i.values[0]);
 
             // Show modal for server name and memory
             const modal = new ModalBuilder()
-              .setCustomId('server-details-modal')
-              .setTitle('Server Details');
+              .setCustomId("server-details-modal")
+              .setTitle("Server Details");
 
             const nameInput = new TextInputBuilder()
-              .setCustomId('server-name')
-              .setLabel('Server Name')
+              .setCustomId("server-name")
+              .setLabel("Server Name")
               .setStyle(TextInputStyle.Short)
-              .setPlaceholder('My Server')
+              .setPlaceholder("My Server")
               .setRequired(true)
               .setMaxLength(40);
 
             const memoryInput = new TextInputBuilder()
-              .setCustomId('server-memory')
-              .setLabel('Memory (MB)')
+              .setCustomId("server-memory")
+              .setLabel("Memory (MB)")
               .setStyle(TextInputStyle.Short)
-              .setPlaceholder('1024')
+              .setPlaceholder("1024")
               .setRequired(true)
               .setMaxLength(5);
 
             modal.addComponents(
-              { type: 1, components: [nameInput] },
-              { type: 1, components: [memoryInput] }
+              { type: 1, components: [ nameInput ] },
+              { type: 1, components: [ memoryInput ] }
             );
 
             await i.showModal(modal);
@@ -333,26 +333,26 @@ module.exports = {
             // Wait for modal submission
             try {
               const modalSubmit = await i.awaitModalSubmit({
-                filter: (modalI) => modalI.customId === 'server-details-modal' && modalI.user.id === interaction.user.id,
+                filter: modalI => modalI.customId === "server-details-modal" && modalI.user.id === interaction.user.id,
                 time: 300_000
               });
 
-              serverName = modalSubmit.fields.getTextInputValue('server-name');
-              const memoryInputValue = modalSubmit.fields.getTextInputValue('server-memory');
+              serverName = modalSubmit.fields.getTextInputValue("server-name");
+              const memoryInputValue = modalSubmit.fields.getTextInputValue("server-memory");
               serverMemory = parseInt(memoryInputValue, 10);
 
               if (isNaN(serverMemory) || serverMemory <= 0) {
-                await modalSubmit.reply({ content: 'Invalid memory value. Please enter a positive number.', ephemeral: true });
+                await modalSubmit.reply({ content: "Invalid memory value. Please enter a positive number.", ephemeral: true });
                 return;
               }
 
               // Check if user has enough memory
               const currentAvailableMemory = await getAvailableUserMemory(panelId, discordId);
               const memoryAfterCreation = currentAvailableMemory - serverMemory;
-              
+
               const hasInsufficientMemory = currentAvailableMemory !== -1 && memoryAfterCreation < 0;
-              
-              let displayContent = `**Confirm Server Creation**\n\n` +
+
+              let displayContent = "**Confirm Server Creation**\n\n" +
                 `**Name:** ${serverName}\n` +
                 `**Node:** ${selectedNode.attributes.name}\n` +
                 `**Nest:** ${selectedNest.attributes.name}\n` +
@@ -363,8 +363,8 @@ module.exports = {
                 const memoryToFree = Math.abs(memoryAfterCreation);
                 displayContent += getErrorMessage("SERVER_CREATION_FAILED_MEMORY", memoryToFree);
               } else {
-                const memoryDisplayAfter = currentAvailableMemory === -1 
-                  ? 'Unlimited' 
+                const memoryDisplayAfter = currentAvailableMemory === -1
+                  ? "Unlimited"
                   : `${memoryAfterCreation} MB`;
                 displayContent += `**Remaining Memory:** ${memoryDisplayAfter}`;
               }
@@ -372,45 +372,45 @@ module.exports = {
               // Show confirmation screen
               const confirmContainer = new ContainerBuilder()
                 .setAccentColor(hasInsufficientMemory ? COLORS.DISABLED : COLORS.PRIMARY)
-                .addTextDisplayComponents((text) =>
+                .addTextDisplayComponents(text =>
                   text.setContent(displayContent)
                 )
-                .addSeparatorComponents((separator) => separator)
-                .addActionRowComponents((actionRow) =>
+                .addSeparatorComponents(separator => separator)
+                .addActionRowComponents(actionRow =>
                   actionRow.setComponents(
                     new ButtonBuilder()
-                      .setCustomId('confirm-create')
-                      .setLabel('Create Server')
+                      .setCustomId("confirm-create")
+                      .setLabel("Create Server")
                       .setStyle(ButtonStyle.Success)
                       .setDisabled(hasInsufficientMemory),
                     new ButtonBuilder()
-                      .setCustomId('cancel-create')
-                      .setLabel('Cancel')
+                      .setCustomId("cancel-create")
+                      .setLabel("Cancel")
                       .setStyle(ButtonStyle.Danger)
                   )
                 );
 
               await modalSubmit.update({
-                components: [confirmContainer],
-                flags: MessageFlags.IsComponentsV2,
+                components: [ confirmContainer ],
+                flags: MessageFlags.IsComponentsV2
               });
             } catch (error) {
-              console.error('Modal submit timeout or error:', error);
+              console.error("Modal submit timeout or error:", error);
             }
 
-          } else if (i.customId === 'confirm-create') {
+          } else if (i.customId === "confirm-create") {
             await i.deferUpdate();
 
             // Show creating status
             const creatingContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
-              .addTextDisplayComponents((text) =>
-                text.setContent('**Creating Server...**\n\nPlease wait, this may take a moment.')
+              .addTextDisplayComponents(text =>
+                text.setContent("**Creating Server...**\n\nPlease wait, this may take a moment.")
               );
 
             await i.editReply({
-              components: [creatingContainer],
-              flags: MessageFlags.IsComponentsV2,
+              components: [ creatingContainer ],
+              flags: MessageFlags.IsComponentsV2
             });
 
             // Create the server
@@ -428,56 +428,56 @@ module.exports = {
             if (apiResult.statusCode === HTTP_STATUS_CODES.CREATED) {
               resultContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.SUCCESS)
-                .addTextDisplayComponents((text) =>
+                .addTextDisplayComponents(text =>
                   text.setContent(
-                    `**Server created successfully!**\n\n` +
+                    "**Server created successfully!**\n\n" +
                     `**Name:** ${apiResult.attributes.name}\n` +
-                    `**Status:** Installing\n\n` +
+                    "**Status:** Installing\n\n" +
                     `View your server at:\n${process.env.PANEL_URL}server/${apiResult.attributes.identifier}`
                   )
                 );
-            } else if (typeof apiResult === 'string') {
+            } else if (typeof apiResult === "string") {
               // Error message from validation
               resultContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.DISABLED)
-                .addTextDisplayComponents((text) =>
+                .addTextDisplayComponents(text =>
                   text.setContent(`**Server Creation Failed**\n\n${apiResult}`)
                 );
             } else {
               resultContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.DISABLED)
-                .addTextDisplayComponents((text) =>
+                .addTextDisplayComponents(text =>
                   text.setContent(`**Server Creation Failed**\n\n${getErrorMessage("API_REQUEST_FAILED", apiResult.statusCode)}`)
                 );
             }
 
             await i.editReply({
-              components: [resultContainer],
-              flags: MessageFlags.IsComponentsV2,
+              components: [ resultContainer ],
+              flags: MessageFlags.IsComponentsV2
             });
 
-            collector.stop('completed');
+            collector.stop("completed");
 
-          } else if (i.customId === 'cancel-create') {
+          } else if (i.customId === "cancel-create") {
             const cancelContainer = new ContainerBuilder()
               .setAccentColor(COLORS.DISABLED)
-              .addTextDisplayComponents((text) =>
-                text.setContent('Server creation cancelled.')
+              .addTextDisplayComponents(text =>
+                text.setContent("Server creation cancelled.")
               );
 
             await i.update({
-              components: [cancelContainer],
-              flags: MessageFlags.IsComponentsV2,
+              components: [ cancelContainer ],
+              flags: MessageFlags.IsComponentsV2
             });
-            collector.stop('cancelled');
+            collector.stop("cancelled");
 
-          } else if (i.customId === 'back-to-nodes') {
+          } else if (i.customId === "back-to-nodes") {
             selectedNest = null;
             selectedEgg = null;
 
             const nodeSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId('node-selection')
-              .setPlaceholder('Select a node');
+              .setCustomId("node-selection")
+              .setPlaceholder("Select a node");
 
             for (const node of nodesData.data) {
               nodeSelectMenu.addOptions(
@@ -490,37 +490,37 @@ module.exports = {
             }
 
             const currentAvailableMemory = await getAvailableUserMemory(panelId, discordId);
-            const memoryDisplayBack = currentAvailableMemory === -1 
-              ? 'Unlimited' 
+            const memoryDisplayBack = currentAvailableMemory === -1
+              ? "Unlimited"
               : `${currentAvailableMemory} MB`;
 
             const backContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
-              .addTextDisplayComponents((text) =>
+              .addTextDisplayComponents(text =>
                 text.setContent(`**Create New Server**\n\n**Available Memory:** ${memoryDisplayBack}\n\nSelect a node to host your server:`)
               )
-              .addSeparatorComponents((separator) => separator)
-              .addActionRowComponents((actionRow) =>
+              .addSeparatorComponents(separator => separator)
+              .addActionRowComponents(actionRow =>
                 actionRow.setComponents(nodeSelectMenu)
               );
 
             await i.update({
-              components: [backContainer],
-              flags: MessageFlags.IsComponentsV2,
+              components: [ backContainer ],
+              flags: MessageFlags.IsComponentsV2
             });
 
-          } else if (i.customId === 'back-to-nests') {
+          } else if (i.customId === "back-to-nests") {
             selectedEgg = null;
 
             const nestSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId('nest-selection')
-              .setPlaceholder('Select a nest (game type)');
+              .setCustomId("nest-selection")
+              .setPlaceholder("Select a nest (game type)");
 
             for (const nest of nestsData.data) {
               nestSelectMenu.addOptions(
                 new StringSelectMenuOptionBuilder()
                   .setLabel(nest.attributes.name)
-                  .setDescription(nest.attributes.description || 'No description')
+                  .setDescription(nest.attributes.description || "No description")
                   .setValue(String(nest.attributes.id))
                   .setDefault(selectedNest && nest.attributes.id === selectedNest.attributes.id)
               );
@@ -528,32 +528,32 @@ module.exports = {
 
             const backContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
-              .addTextDisplayComponents((text) =>
+              .addTextDisplayComponents(text =>
                 text.setContent(`**Create New Server**\n\n**Selected Node:** ${selectedNode.attributes.name}\n\nSelect a nest (game type):`)
               )
-              .addSeparatorComponents((separator) => separator)
-              .addActionRowComponents((actionRow) =>
+              .addSeparatorComponents(separator => separator)
+              .addActionRowComponents(actionRow =>
                 actionRow.setComponents(nestSelectMenu)
               )
-              .addActionRowComponents((actionRow) =>
+              .addActionRowComponents(actionRow =>
                 actionRow.setComponents(
-                  new ButtonBuilder().setCustomId('back-to-nodes').setLabel('← Back').setStyle(ButtonStyle.Secondary)
+                  new ButtonBuilder().setCustomId("back-to-nodes").setLabel("← Back").setStyle(ButtonStyle.Secondary)
                 )
               );
 
             await i.update({
-              components: [backContainer],
-              flags: MessageFlags.IsComponentsV2,
+              components: [ backContainer ],
+              flags: MessageFlags.IsComponentsV2
             });
           }
 
         } catch (error) {
-          console.error('Error handling interaction:', error);
-          const errorResponse = { 
-            content: 'An error occurred while processing your request.', 
-            ephemeral: true 
+          console.error("Error handling interaction:", error);
+          const errorResponse = {
+            content: "An error occurred while processing your request.",
+            ephemeral: true
           };
-          
+
           if (i.replied || i.deferred) {
             await i.followUp(errorResponse).catch(() => {});
           } else {
@@ -562,28 +562,28 @@ module.exports = {
         }
       });
 
-      collector.on('end', async (collected, reason) => {
-        if (reason === 'idle') {
+      collector.on("end", async (collected, reason) => {
+        if (reason === "idle") {
           const timeoutContainer = new ContainerBuilder()
             .setAccentColor(COLORS.DISABLED)
-            .addTextDisplayComponents((text) =>
+            .addTextDisplayComponents(text =>
               text.setContent(getErrorMessage("USER_TIMEOUT"))
             );
 
-          await interaction.editReply({ 
-            components: [timeoutContainer],
-            flags: MessageFlags.IsComponentsV2,
+          await interaction.editReply({
+            components: [ timeoutContainer ],
+            flags: MessageFlags.IsComponentsV2
           }).catch(() => {});
         }
       });
 
     } catch (error) {
-      console.error('Error in gen-server command:', error);
-      const errorMessage = { 
-        content: 'An error occurred while loading the server creation menu.', 
-        ephemeral: true 
+      console.error("Error in gen-server command:", error);
+      const errorMessage = {
+        content: "An error occurred while loading the server creation menu.",
+        ephemeral: true
       };
-      
+
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp(errorMessage).catch(() => {});
       } else {

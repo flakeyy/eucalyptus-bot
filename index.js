@@ -23,36 +23,29 @@ if (process.argv[2] === "--dev") {
 }
 
 if (useDev) {
-  try {
-    DISCORD_TOKEN = process.env.DEV_DISCORD_TOKEN;
-    API_KEY = process.env.PANEL_API_KEY;
-    PANEL_URL = process.env.PANEL_URL;
-  } catch {
-    console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
-    process.exit(1);
-  }
+  DISCORD_TOKEN = process.env.DEV_DISCORD_TOKEN;
+  API_KEY = process.env.PANEL_API_KEY;
 } else {
-  try {
-    DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
-    API_KEY = process.env.PANEL_API_KEY;
-    PANEL_URL = process.env.PANEL_URL;
-  } catch {
-    console.error("Error loading env variables. Please make sure you have filled out the required env variables in .env.");
-    process.exit(1);
-  }
+  DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
+  API_KEY = process.env.PANEL_API_KEY;
+}
+
+if (!DISCORD_TOKEN || !API_KEY) {
+  msgLog.error("Missing required env variables (DISCORD_TOKEN / PANEL_API_KEY). Check your .env file.");
+  process.exit(1);
 }
 
 try {
   require("./config.json");
 } catch {
-  console.error("Error loading config.json. Please make sure you have a config.json file in the root directory.");
+  msgLog.error("Error loading config.json. Please make sure you have a config.json file in the root directory.");
   process.exit(1);
 }
 
 try {
   require("./users.json");
 } catch {
-  console.error("Error loading users.json. Please make sure you have a users.json file in the root directory.");
+  msgLog.error("Error loading users.json. Please make sure you have a users.json file in the root directory.");
   process.exit(1);
 }
 
@@ -83,15 +76,19 @@ async function getTotalUsers() {
 }
 
 async function setPresence() {
-  await getTotalServers();
-  await getTotalUsers();
+  try {
+    await getTotalServers();
+    await getTotalUsers();
 
-  dClient.user.setStatus("online");
-  dClient.application.edit({description: `Watching over ${global.serverCount} servers\n${process.env.PANEL_URL}\n/info for more details`});
-};
+    dClient.user.setStatus("online");
+    dClient.application.edit({ description: `Watching over ${global.serverCount} servers\n${process.env.PANEL_URL}\n/info for more details` });
+  } catch (error) {
+    msgLog.error(`Failed to update presence: ${error.message}`);
+  }
+}
 
 dClient.once(Events.ClientReady, readyClient => {
-  console.log(`${readyClient.user.tag} is live | v${global.version}/${global.commitHash}${useDev ? " | dev" : ""}`);
+  msgLog.log(`${readyClient.user.tag} is live | v${global.version}/${global.commitHash}${useDev ? " | dev" : ""}`);
   setPresence();
   setInterval(setPresence, 300000);
 });
@@ -113,12 +110,12 @@ dClient.commands = new Collection();
       if ("data" in command && "execute" in command) {
         dClient.commands.set(command.data.name, command);
       } else {
-        console.log(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
+        msgLog.error(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
       }
     }
   }
 })().catch(err => {
-  console.error("Error loading commands:", err);
+  msgLog.error(`Error loading commands: ${err}`);
   process.exit(1);
 });
 
@@ -128,7 +125,7 @@ dClient.on(Events.InteractionCreate, async interaction => {
   const command = interaction.client.commands.get(interaction.commandName);
 
   if (!command) {
-    console.error(`No such command: ${interaction.commandName}`);
+    msgLog.error(`No such command: ${interaction.commandName}`);
     return;
   }
 

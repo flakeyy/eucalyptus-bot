@@ -3,7 +3,7 @@ const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { users } = require("../../users.json");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { reconstructCommand, getUserId, saveUsersFile, clientApiCall, validateString } = require("../../utility/helper_functions.js");
+const { reconstructCommand, getUserId, saveUsersFile, clientApiCall } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
@@ -19,11 +19,11 @@ module.exports = {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
     const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.SET_CLIENT_KEY);
-    if (authenticated == -1) {
+    if (authenticated === -1) {
       await interaction.editReply(getErrorMessage("USER_NOT_FOUND"));
       return;
     }
-    else if (authenticated == false) {
+    else if (authenticated === false) {
       await interaction.editReply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
       return;
     }
@@ -47,14 +47,14 @@ module.exports = {
       }
     }
 
-    if(success) {
+    if (success) {
       if (config.debug) {
         msgLog.debug(`Successfully set client API key for user: ${interaction.user.username}/${interaction.user.id}`);
       }
-      await interaction.editReply({content: "Successfully set client API key.", flags: MessageFlags.Ephemeral});
+      await interaction.editReply({ content: "Successfully set client API key.", flags: MessageFlags.Ephemeral });
     }
     else {
       await interaction.editReply(getErrorMessage("API_KEY_INVALID"));
     }
   }
-}
+};
