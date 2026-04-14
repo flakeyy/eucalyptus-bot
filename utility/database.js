@@ -85,7 +85,7 @@ function migrateFromJson(database) {
         if (entries.length > 0) {
           const insert = database.prepare("INSERT OR IGNORE INTO blacklist_nodes (node_name, reason) VALUES (?, ?)");
           const insertAll = database.transaction(rows => {
-            for (const [name, reason] of rows) {
+            for (const [ name, reason ] of rows) {
               insert.run(name, reason || null);
             }
           });

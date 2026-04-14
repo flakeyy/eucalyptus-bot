@@ -26,7 +26,9 @@ module.exports = [
         test: true,
         expect: true,
         afterEach: true,
-        beforeEach: true
+        beforeEach: true,
+        beforeAll: true,
+        afterAll: true
       }
     },
     rules: {

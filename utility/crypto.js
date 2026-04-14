@@ -20,7 +20,7 @@ function getKey() {
  * Format: enc:<iv_hex>:<authTag_hex>:<ciphertext_hex>
  */
 function encrypt(plaintext) {
-  if (plaintext == null || plaintext === "") return plaintext;
+  if (plaintext === null || plaintext === undefined || plaintext === "") return plaintext;
   const key = getKey();
   const iv = randomBytes(IV_LEN);
   const cipher = createCipheriv(ALGO, key, iv);
@@ -37,7 +37,7 @@ function encrypt(plaintext) {
  * Returns null on authentication failure so callers can detect a bad key.
  */
 function decrypt(stored) {
-  if (stored == null || stored === "") return stored;
+  if (stored === null || stored === undefined || stored === "") return stored;
   if (!stored.startsWith(PREFIX)) return stored; // legacy plaintext
 
   const parts = stored.slice(PREFIX.length).split(":");

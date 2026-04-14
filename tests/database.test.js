@@ -27,7 +27,11 @@ jest.mock("better-sqlite3", () => {
 
     // ── SELECT discord_id, panel_api_key … (used by encryptExistingKeys) ───
     if (/SELECT discord_id, panel_api_key FROM users WHERE panel_api_key IS NOT NULL/i.test(s)) {
-      return { all: () => users.filter(u => u.panel_api_key != null).map(u => ({ discord_id: u.discord_id, panel_api_key: u.panel_api_key })) };
+      return {
+        all: () => users
+          .filter(u => u.panel_api_key !== null && u.panel_api_key !== undefined)
+          .map(u => ({ discord_id: u.discord_id, panel_api_key: u.panel_api_key }))
+      };
     }
 
     // ── SELECT * FROM users ─────────────────────────────────────────────────
@@ -50,7 +54,10 @@ jest.mock("better-sqlite3", () => {
         run: (discordId, panelUsername, panelId, maxMem, perms, apiKey) => {
           const exists = users.some(u => u.discord_id === discordId || u.panel_id === panelId);
           if (!exists) {
-            users.push({ discord_id: discordId, panel_username: panelUsername, panel_id: panelId, maximum_allowed_memory: maxMem, permissions: perms, panel_api_key: apiKey });
+            users.push({
+              discord_id: discordId, panel_username: panelUsername, panel_id: panelId,
+              maximum_allowed_memory: maxMem, permissions: perms, panel_api_key: apiKey
+            });
           }
         }
       };
@@ -60,7 +67,10 @@ jest.mock("better-sqlite3", () => {
         run: (discordId, panelUsername, panelId, maxMem, perms, apiKey) => {
           if (users.some(u => u.discord_id === discordId)) throw new Error("UNIQUE constraint failed: users.discord_id");
           if (users.some(u => u.panel_id === panelId)) throw new Error("UNIQUE constraint failed: users.panel_id");
-          users.push({ discord_id: discordId, panel_username: panelUsername, panel_id: panelId, maximum_allowed_memory: maxMem, permissions: perms, panel_api_key: apiKey });
+          users.push({
+            discord_id: discordId, panel_username: panelUsername, panel_id: panelId,
+            maximum_allowed_memory: maxMem, permissions: perms, panel_api_key: apiKey
+          });
         }
       };
     }

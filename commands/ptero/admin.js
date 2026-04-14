@@ -15,7 +15,6 @@ const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/pe
 const msgLog = require("../../utility/logger.js");
 const db = require("../../utility/database.js");
 const {
-  getUserId,
   reconstructCommand,
   userHasClientApiKey
 } = require("../../utility/helper_functions.js");
@@ -403,7 +402,7 @@ async function handleUserDelete(interaction) {
     .setAccentColor(COLORS.ADMIN)
     .addTextDisplayComponents(text =>
       text.setContent(
-        `**[ADMIN] Delete User**\n\n` +
+        "**[ADMIN] Delete User**\n\n" +
         `Are you sure you want to remove <@${targetUser.id}> (\`${targetUser.username}\`) from the database?\n\n` +
         formatUserInfo(existing) + "\n\n" +
         "**This only removes them from the bot's database.** Their panel account will not be affected."
@@ -528,42 +527,6 @@ async function handleAdminServers(interaction) {
     }
   };
 
-  const buildAdminMainView = (statusMessage = null) =>
-    new ContainerBuilder()
-      .setAccentColor(COLORS.ADMIN)
-      .addTextDisplayComponents(text => text.setContent(adminHeader))
-      .addActionRowComponents(actionRow =>
-        actionRow.setComponents(buildServerSelectMenu(serverObjects, currentSelectedServer?.attributes?.identifier))
-      )
-      .addTextDisplayComponents(text => {
-        if (!currentSelectedServer) return text.setContent("");
-        let detailsText = "";
-        if (currentServerResourceInfo && currentServerResourceInfo.attributes) {
-          const memUsageMB = (currentServerResourceInfo.attributes.resources.memory_bytes / UNIT_CONVERSIONS.BYTES_TO_MB).toFixed(0);
-          const diskUsageGB = (currentServerResourceInfo.attributes.resources.disk_bytes / UNIT_CONVERSIONS.BYTES_TO_GB).toFixed(2);
-          const cpuUsage = (currentServerResourceInfo.attributes.resources.cpu_absolute).toFixed(2);
-          const state = currentServerResourceInfo.attributes.is_suspended
-            ? "Suspended"
-            : `Active, ${currentServerResourceInfo.attributes.current_state}`;
-          detailsText =
-            `**Status:** ${state}\n` +
-            `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-            `**Memory:** ${memUsageMB}/${currentSelectedServer.attributes.limits.memory} MB\n` +
-            `**Disk:** ${diskUsageGB} GB\n` +
-            `**CPU:** ${cpuUsage}/${(currentSelectedServer.attributes.limits.cpu).toFixed(2)}%\n` +
-            `**Node:** ${currentSelectedServer.attributes.node}`;
-        } else {
-          detailsText =
-            `**Status:** Suspended\n` +
-            `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-            `**Memory Limit:** ${currentSelectedServer.attributes.limits.memory} MB\n` +
-            `**Node:** ${currentSelectedServer.attributes.node}`;
-        }
-        if (statusMessage) detailsText += `\n\n${statusMessage}`;
-        return text.setContent(detailsText);
-      });
-
-  // buildAdminMainView as a ContainerBuilder with buttons appended
   const buildFullAdminMainView = (statusMessage = null) => {
     const isSuspended = !currentServerResourceInfo;
     const container = new ContainerBuilder()
@@ -591,7 +554,7 @@ async function handleAdminServers(interaction) {
           `**Node:** ${currentSelectedServer.attributes.node}`;
       } else {
         detailsText =
-          `**Status:** Suspended\n` +
+          "**Status:** Suspended\n" +
           `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
           `**Memory Limit:** ${currentSelectedServer.attributes.limits.memory} MB\n` +
           `**Node:** ${currentSelectedServer.attributes.node}`;
