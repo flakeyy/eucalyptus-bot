@@ -1,9 +1,16 @@
 .env
 keys.json
 config.json
-users.json
-blacklist.json
 node_modules
 logs
 .DS_Store
 .github
+
+# SQLite database files
+*.db
+*.db-shm
+*.db-wal
+
+# Legacy data files (migrated to SQLite)
+users.json
+blacklist.json

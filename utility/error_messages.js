@@ -79,11 +79,11 @@ const ERROR_MESSAGES = {
   },
   CLIENT_API_FAILURE: {
     id: -21,
-    text: `The API request could not be completed.\nYour provided API key may be invalid or you may not have access to this resource.`
+    text: "The API request could not be completed.\nYour provided API key may be invalid or you may not have access to this resource."
   },
   API_KEY_NOT_SET: {
     id: -22,
-    text: `You must set your client API key before using this command.\nPlease use /set-client-key to set your API key.`
+    text: "You must set your client API key before using this command.\nPlease use /set-client-key to set your API key."
   },
   SERVER_NOT_FOUND: {
     id: -23,

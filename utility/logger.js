@@ -22,12 +22,12 @@ function msgLog(level, ...args) {
   const timestamp = new Date().toISOString();
   const msg = args.map(a => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
   const line = `[${timestamp}] [${level}] ${msg}\n`;
-  fs.appendFile(logFile, line, (err) => {
+  fs.appendFile(logFile, line, err => {
     if (err) {
       console.error("Error writing to log file:", err);
     }
   });
-  fs.appendFile(latestLogFile, line, (err) => {
+  fs.appendFile(latestLogFile, line, err => {
     if (err) {
       console.error("Error writing to latest log file:", err);
     }

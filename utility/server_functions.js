@@ -1,6 +1,5 @@
-const blacklist = require("../blacklist.json");
+const db = require("./database.js");
 const msgLog = require("./logger.js");
-const { users } = require("../users.json");
 const { applicationApiCall, clientApiCall, validateString } = require("./helper_functions.js");
 
 // EGGS
@@ -23,7 +22,7 @@ async function getEggData(nestId, eggId) {
   const apiResult = await applicationApiCall(`application/nests/${parsedNestId}/eggs/${parsedEggId}?include=variables`, "GET");
   const jsonData = await apiResult.body.json();
 
-  if (jsonData == undefined) {
+  if (jsonData === undefined) {
     return -1;
   }
 
@@ -39,13 +38,13 @@ async function getEggIdByName(nestId, egg) {
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
 
-  if (jsonData == undefined) {
+  if (jsonData === undefined) {
     return -1;
   }
 
   const filteredData = jsonData.filter(word => word.attributes.name.toLowerCase().includes(egg.toLowerCase()))[0];
-  if (filteredData == undefined) {
-    console.error(`Egg '${egg}' does not exist`);
+  if (filteredData === undefined) {
+    msgLog.error(`Egg '${egg}' does not exist`);
     return -1;
   }
   else {
@@ -68,13 +67,13 @@ async function getNestIdByName(nest) {
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
 
-  if (jsonData == undefined) {
+  if (jsonData === undefined) {
     return -1;
   }
 
   const filteredData = jsonData.filter(word => word.attributes.name.toLowerCase().includes(nest.toLowerCase()))[0];
-  if (filteredData == undefined) {
-    console.error(`Nest '${nest}' does not exist`);
+  if (filteredData === undefined) {
+    msgLog.error(`Nest '${nest}' does not exist`);
     return -1;
   }
   else {
@@ -96,16 +95,17 @@ async function getNodeIdByName(node) {
   const jsonString = await apiResult.body.json();
   const jsonData = await jsonString.data;
 
-  if (jsonData == undefined) {
+  if (jsonData === undefined) {
     return -1;
   }
 
   const filteredData = jsonData.filter(word => word.attributes.name.toLowerCase().includes(node.toLowerCase()))[0];
-  if (filteredData == undefined) {
+  if (filteredData === undefined) {
     return -1;
   }
-  if (blacklist.nodes[filteredData.attributes.name]) {
-    return `Node '${filteredData.attributes.name}' is currently blacklisted: ${blacklist.nodes[filteredData.attributes.name]}`;
+  const blacklistEntry = db.getBlacklistedNode(filteredData.attributes.name);
+  if (blacklistEntry) {
+    return `Node '${filteredData.attributes.name}' is currently blacklisted: ${blacklistEntry.reason}`;
   }
   return filteredData.attributes.id;
 }
@@ -115,7 +115,7 @@ async function getNodeIdByName(node) {
 async function getClientServers(discordId) {
   const apiResult = await clientApiCall("client", "GET", null, discordId);
   const jsonData = await apiResult.body.json();
-  
+
   return jsonData;
 }
 
@@ -165,11 +165,11 @@ async function editServerInfo(serverId, settingName, value) {
 
   // Handle name update separately (uses /details endpoint)
   if (settingName === "name") {
-    if (!value || typeof value !== 'string' || value.trim().length === 0) {
+    if (!value || typeof value !== "string" || value.trim().length === 0) {
       msgLog.error(`Invalid value for name: ${value}`);
       throw new Error("Name must be a non-empty string.");
     }
-    
+
     // Get current server info to preserve other fields
     const serverInfoResponse = await applicationApiCall(`application/servers/${parsedId}`, "GET");
     if (serverInfoResponse.statusCode !== 200) {
@@ -177,14 +177,14 @@ async function editServerInfo(serverId, settingName, value) {
       return serverInfoResponse.statusCode;
     }
     const serverData = await serverInfoResponse.body.json();
-    
+
     const requestBody = {
       name: value,
       user: serverData.attributes.user,
       external_id: serverData.attributes.external_id,
       description: serverData.attributes.description
     };
-    
+
     const apiResult = await applicationApiCall(`application/servers/${parsedId}/details`, "PATCH", JSON.stringify(requestBody));
     return apiResult.statusCode;
   }
@@ -195,7 +195,7 @@ async function editServerInfo(serverId, settingName, value) {
     return serverInfoResponse.statusCode;
   }
   const serverData = await serverInfoResponse.body.json();
-  
+
   const requestBody = {
     allocation: serverData.attributes.allocation,
     memory: serverData.attributes.limits.memory,
@@ -249,7 +249,7 @@ async function setServerPowerState(serverId, userId, action) {
   });
 
   const apiResult = await clientApiCall(`client/servers/${validatedId}/power`, "POST", body, userId);
-  
+
   return apiResult;
 }
 
@@ -261,30 +261,21 @@ async function getAvailableUserMemory(userId, discordId) {
     return -1;
   }
   const apiResult = await applicationApiCall(`application/users/${parsedId}?include=servers`, "GET");
-  const jsonData = await apiResult.body.json();
 
-  if (apiResult == -1) {
-    return apiResult;
+  if (apiResult.statusCode !== 200) {
+    msgLog.error(`Failed to fetch user data for memory calculation: HTTP ${apiResult.statusCode}`);
+    return -1;
   }
-  else {
-    let memoryAvailable = 0;
-    let totalMemoryUsage = 0;
-    for (let i = 0; i < jsonData.attributes.relationships.servers.data.length; i++) {
-      totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory;
-    }
-    for (let i = 0; i < users.length; i++) {
-      if (users[i].discordId == discordId) {
-        if (users[i].maximumAllowedMemory == -1) {
-          memoryAvailable = 128000;
-          break;
-        }
-        else {
-          memoryAvailable = users[i].maximumAllowedMemory - totalMemoryUsage;
-        }
-      }
-    }
-    return memoryAvailable;
+
+  const jsonData = await apiResult.body.json();
+  let totalMemoryUsage = 0;
+  for (let i = 0; i < jsonData.attributes.relationships.servers.data.length; i++) {
+    totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory;
   }
+  const user = db.getUserByDiscordId(discordId);
+  if (!user) return 0;
+  if (user.maximumAllowedMemory === -1) return 128000;
+  return user.maximumAllowedMemory - totalMemoryUsage;
 }
 
 module.exports = {

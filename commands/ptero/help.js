@@ -2,7 +2,6 @@ const { ContainerBuilder, SlashCommandBuilder, MessageFlags } = require("discord
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { reconstructCommand, getCommands } = require("../../utility/helper_functions.js");
-const { getErrorMessage } = require("../../utility/error_messages.js");
 
 const COLORS = {
   PRIMARY: 0x6b34eb
@@ -18,9 +17,9 @@ module.exports = {
     try {
       const commands = await getCommands();
 
-      const helpText = 
-        `**Available Commands**\n\n` +
-        `_Client API key must be set before using many commands!_\n\n` +
+      const helpText =
+        "**Available Commands**\n\n" +
+        "_Client API key must be set before using many commands!_\n\n" +
         `${commands.map(cmd => `**/${cmd.name}** - ${cmd.description}`).join("\n")}`;
 
       if (config.debug) {
@@ -29,22 +28,22 @@ module.exports = {
 
       const container = new ContainerBuilder()
         .setAccentColor(COLORS.PRIMARY)
-        .addTextDisplayComponents((text) =>
+        .addTextDisplayComponents(text =>
           text.setContent(helpText)
         );
 
       await interaction.reply({
-        components: [container],
-        flags: MessageFlags.IsComponentsV2,
+        components: [ container ],
+        flags: MessageFlags.IsComponentsV2
       });
 
     } catch (error) {
-      console.error('Error in help command:', error);
-      const errorMessage = { 
-        content: getErrorMessage("SERVER_TIMEOUT"), 
-        ephemeral: true 
+      msgLog.error(`Error in help command: ${error.message}`);
+      const errorMessage = {
+        content: "An error occurred while loading commands.",
+        ephemeral: true
       };
-      
+
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp(errorMessage).catch(() => {});
       } else {

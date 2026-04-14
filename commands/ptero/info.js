@@ -14,38 +14,42 @@ module.exports = {
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
 
     try {
-      const panelUptime = await getMonitorUptime('panel');
-      const nodeUptime = await getMonitorUptime('node');
+      const panelUptime = await getMonitorUptime("panel");
+      const nodeUptime = await getMonitorUptime("node");
 
-      const infoText = 
-        `**cathost/pyrodactyl bot**\n` +
+      const uptimeStatusUrl = process.env.UPTIME_URL && process.env.UPTIME_SLUG
+        ? `${process.env.UPTIME_URL}/status/${process.env.UPTIME_SLUG}`
+        : null;
+
+      const infoText =
+        "**cathost/pyrodactyl bot**\n" +
         `v${global.version}/${global.commitHash}${(global.isDev ? " | dev" : " | prod")}\n\n` +
         `**Hosting:** ${global.serverCount} servers for ${global.userCount} users\n` +
-        `**Panel:** https://dino.flakey.tech\n` +
-        `**Uptime:** https://uptime.flakey.tech/status/eucalyptus\n` +
-        `  • Panel: ${panelUptime != null ? panelUptime + "%" : "Unavailable"} (24 hrs)\n` +
-        `  • Server Node: ${nodeUptime != null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n\n` +
-        `/service for more specific service information.\n\n` +
-        `_developed by flakey_`;
+        `**Panel:** ${process.env.PANEL_URL}\n` +
+        (uptimeStatusUrl ? `**Uptime:** ${uptimeStatusUrl}\n` : "") +
+        `  • Panel: ${panelUptime !== null ? panelUptime + "%" : "Unavailable"} (24 hrs)\n` +
+        `  • Server Node: ${nodeUptime !== null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n\n` +
+        "/service for more specific service information.\n\n" +
+        "_developed by flakey_";
 
       const container = new ContainerBuilder()
         .setAccentColor(COLORS.PRIMARY)
-        .addTextDisplayComponents((text) =>
+        .addTextDisplayComponents(text =>
           text.setContent(infoText)
         );
 
       await interaction.reply({
-        components: [container],
-        flags: MessageFlags.IsComponentsV2,
+        components: [ container ],
+        flags: MessageFlags.IsComponentsV2
       });
 
     } catch (error) {
-      console.error('Error in info command:', error);
-      const errorMessage = { 
-        content: 'An error occurred while loading the service information.', 
-        ephemeral: true 
+      msgLog.error(`Error in info command: ${error.message}`);
+      const errorMessage = {
+        content: "An error occurred while loading the service information.",
+        ephemeral: true
       };
-      
+
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp(errorMessage).catch(() => {});
       } else {

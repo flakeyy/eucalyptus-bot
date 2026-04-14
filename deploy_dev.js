@@ -10,16 +10,16 @@ const rest = new REST().setToken(DEV_DISCORD_TOKEN);
 
 (async () => {
   try {
-    let commands = await getCommands();
+    const commands = await getCommands();
 
     console.log(`Started refreshing ${commands.length} application (/) commands.`);
 
     // refresh commands
-    if(commands === null) {
+    if (commands === null) {
       console.error("Error retrieving commands.");
       return;
     }
-    const data = await rest.put(Routes.applicationGuildCommands(DEV_CLIENT_ID, DEV_GUILD_ID),{ body: commands });
+    const data = await rest.put(Routes.applicationGuildCommands(DEV_CLIENT_ID, DEV_GUILD_ID), { body: commands });
     console.log(`Successfully reloaded ${data.length} application (/) commands.`);
   } catch (error) {
     console.error(error);
