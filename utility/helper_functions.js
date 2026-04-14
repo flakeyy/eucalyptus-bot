@@ -4,7 +4,7 @@ const client = new Client(process.env.PANEL_URL);
 const config = require("../config.json");
 const msgLog = require("./logger.js");
 const API_KEY = process.env.PANEL_API_KEY;
-const { users } = require("../users.json");
+const db = require("./database.js");
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -30,10 +30,9 @@ async function applicationApiCall(path, method, body) {
 async function clientApiCall(path, method, body, userDiscordId, customAPIKey) {
   let API_KEY = customAPIKey || "";
   if (API_KEY === "") {
-    for (const user of users) {
-      if (user.discordId === userDiscordId) {
-        API_KEY = user.panelAPIKey;
-      }
+    const user = db.getUserByDiscordId(userDiscordId);
+    if (user) {
+      API_KEY = user.panelAPIKey;
     }
   }
 
@@ -74,64 +73,33 @@ function formatNames(jsonData) {
 }
 
 function getUserId(val) {
+  let user;
   if (typeof val === "number") {
-    for (const user of users) {
-      if (user.discordId === String(val)) {
-        return user.panelId;
-      }
-    }
+    user = db.getUserByDiscordId(String(val));
+  } else if (typeof val === "string") {
+    user = db.getUserByDiscordId(val) || db.getUserByPanelUsername(val);
   }
-  else if (typeof val === "string") {
-    for (const user of users) {
-      if (user.panelUsername === val || user.discordId.toString() === val) {
-        return user.panelId;
-      }
-    }
-  }
-
-  return -1; // no user found
+  return user ? user.panelId : -1;
 }
 
 function getPanelUsername(val) {
+  let user;
   if (typeof val === "number") {
-    for (const user of users) {
-      if (user.discordId === String(val)) {
-        return user.panelUsername;
-      }
-    }
+    user = db.getUserByDiscordId(String(val));
+  } else if (typeof val === "string") {
+    user = db.getUserByDiscordId(val) || db.getUserByPanelUsername(val);
   }
-  else if (typeof val === "string") {
-    for (const user of users) {
-      if (user.panelUsername === val || user.discordId.toString() === val) {
-        return user.panelUsername;
-      }
-    }
-  }
-
-  return -1; // no user found
+  return user ? user.panelUsername : -1;
 }
 
 function getDiscordId(val) {
+  let user;
   if (typeof val === "number") {
-    // Could be Discord ID or panel ID
-    for (const user of users) {
-      if (user.discordId === String(val)) {
-        return user.discordId;
-      }
-      if (user.panelId === val) {
-        return user.discordId;
-      }
-    }
+    user = db.getUserByDiscordId(String(val)) || db.getUserByPanelId(val);
+  } else if (typeof val === "string") {
+    user = db.getUserByDiscordId(val) || db.getUserByPanelUsername(val);
   }
-  else if (typeof val === "string") {
-    for (const user of users) {
-      if (user.panelUsername === val || user.discordId.toString() === val) {
-        return user.discordId;
-      }
-    }
-  }
-
-  return -1; // no user found
+  return user ? user.discordId : -1;
 }
 
 function reconstructCommand(interaction) {
@@ -140,14 +108,6 @@ function reconstructCommand(interaction) {
     .join(" ")}`;
 
   return fullCommand;
-}
-
-async function saveUsersFile() {
-  try {
-    await fs.promises.writeFile("./users.json", JSON.stringify({ users: users }, null, 2));
-  } catch (err) {
-    msgLog.error(`Error writing users.json: ${err.message}`);
-  }
 }
 
 async function getMonitorUptime(type) {
@@ -192,12 +152,9 @@ function validateString(str, minLength = 1, maxLength = 32) {
 }
 
 function userHasClientApiKey(discordId) {
-  for (const user of users) {
-    if (user.discordId === discordId) {
-      return user.panelAPIKey && user.panelAPIKey !== "";
-    }
-  }
-  return false;
+  const user = db.getUserByDiscordId(discordId);
+  if (!user) return false;
+  return !!(user.panelAPIKey && user.panelAPIKey !== "");
 }
 
 async function getCommands() {
@@ -236,7 +193,6 @@ module.exports = {
   getUserId,
   getPanelUsername,
   getDiscordId,
-  saveUsersFile,
   reconstructCommand,
   getMonitorUptime,
   validateString,

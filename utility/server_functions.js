@@ -1,6 +1,5 @@
-const blacklist = require("../blacklist.json");
+const db = require("./database.js");
 const msgLog = require("./logger.js");
-const { users } = require("../users.json");
 const { applicationApiCall, clientApiCall, validateString } = require("./helper_functions.js");
 
 // EGGS
@@ -104,8 +103,9 @@ async function getNodeIdByName(node) {
   if (filteredData === undefined) {
     return -1;
   }
-  if (blacklist.nodes[filteredData.attributes.name]) {
-    return `Node '${filteredData.attributes.name}' is currently blacklisted: ${blacklist.nodes[filteredData.attributes.name]}`;
+  const blacklistEntry = db.getBlacklistedNode(filteredData.attributes.name);
+  if (blacklistEntry) {
+    return `Node '${filteredData.attributes.name}' is currently blacklisted: ${blacklistEntry.reason}`;
   }
   return filteredData.attributes.id;
 }
@@ -268,22 +268,14 @@ async function getAvailableUserMemory(userId, discordId) {
   }
 
   const jsonData = await apiResult.body.json();
-  let memoryAvailable = 0;
   let totalMemoryUsage = 0;
   for (let i = 0; i < jsonData.attributes.relationships.servers.data.length; i++) {
     totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory;
   }
-  for (let i = 0; i < users.length; i++) {
-    if (users[i].discordId === discordId) {
-      if (users[i].maximumAllowedMemory === -1) {
-        memoryAvailable = 128000;
-        break;
-      } else {
-        memoryAvailable = users[i].maximumAllowedMemory - totalMemoryUsage;
-      }
-    }
-  }
-  return memoryAvailable;
+  const user = db.getUserByDiscordId(discordId);
+  if (!user) return 0;
+  if (user.maximumAllowedMemory === -1) return 128000;
+  return user.maximumAllowedMemory - totalMemoryUsage;
 }
 
 module.exports = {

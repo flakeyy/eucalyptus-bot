@@ -198,6 +198,9 @@ async function handlePowerAction(action, server, userId, updateLoadingMessage) {
 }
 
 module.exports = {
+  buildServerSelectMenu,
+  buildMainServerView,
+
   data: new SlashCommandBuilder()
     .setName("servers")
     .setDescription("Opens the interactive server management menu."),

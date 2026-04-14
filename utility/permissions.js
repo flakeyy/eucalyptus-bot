@@ -1,5 +1,5 @@
 const { getUserId } = require("./helper_functions.js");
-const { users } = require("../users.json");
+const db = require("./database.js");
 const msgLog = require("./logger.js");
 
 // bitwise integer permissions
@@ -14,13 +14,9 @@ const PERMISSIONS = {
 };
 
 function hasPermission(userId, permission) {
-  for (const user of users) {
-    if (user.panelId === userId) {
-      const userPermissions = user.permissions;
-      return (userPermissions & permission) === permission;
-    }
-  }
-  return false;
+  const user = db.getUserByPanelId(userId);
+  if (!user) return false;
+  return (user.permissions & permission) === permission;
 }
 
 function authenticateUserForPermission(discordId, permission) {

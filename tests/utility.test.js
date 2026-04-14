@@ -4,16 +4,25 @@ jest.mock("undici", () => ({
   Client: jest.fn().mockImplementation(() => ({ request: jest.fn() }))
 }));
 jest.mock("../config.json", () => ({ debug: false }), { virtual: true });
-jest.mock("../users.json", () => ({
-  users: [
-    // ADMINISTRATOR — all permissions via bit 16
-    { panelId: 1, panelAPIKey: "key-alice", discordId: "111", panelUsername: "alice", permissions: 65536, maximumAllowedMemory: 4096 },
-    // GET_SERVICE_INFORMATION only (bit 0 = 1)
-    { panelId: 2, panelAPIKey: "key-bob", discordId: "222", panelUsername: "bob", permissions: 1, maximumAllowedMemory: 2048 },
-    // No permissions, no API key
-    { panelId: 3, panelAPIKey: "", discordId: "333", panelUsername: "charlie", permissions: 0, maximumAllowedMemory: -1 }
-  ]
-}), { virtual: true });
+
+const TEST_USERS = [
+  // ADMINISTRATOR — all permissions via bit 16
+  { panelId: 1, panelAPIKey: "key-alice", discordId: "111", panelUsername: "alice", permissions: 65536, maximumAllowedMemory: 4096 },
+  // GET_SERVICE_INFORMATION only (bit 0 = 1)
+  { panelId: 2, panelAPIKey: "key-bob", discordId: "222", panelUsername: "bob", permissions: 1, maximumAllowedMemory: 2048 },
+  // No permissions, no API key
+  { panelId: 3, panelAPIKey: "", discordId: "333", panelUsername: "charlie", permissions: 0, maximumAllowedMemory: -1 }
+];
+
+jest.mock("../utility/database.js", () => ({
+  getUserByDiscordId: jest.fn(id => TEST_USERS.find(u => u.discordId === id) || null),
+  getUserByPanelId: jest.fn(id => TEST_USERS.find(u => u.panelId === id) || null),
+  getUserByPanelUsername: jest.fn(name => TEST_USERS.find(u => u.panelUsername === name) || null),
+  getAllUsers: jest.fn(() => TEST_USERS),
+  updateUserApiKey: jest.fn(),
+  getBlacklistedNode: jest.fn(() => null),
+  getAllBlacklistedNodes: jest.fn(() => [])
+}));
 jest.mock("../utility/logger.js", () => ({
   log: jest.fn(),
   debug: jest.fn(),

@@ -9,6 +9,7 @@ const {
   MessageFlags
 } = require("discord.js");
 const { applicationApiCall } = require("./utility/helper_functions");
+const { initDatabase } = require("./utility/database.js");
 const dClient = new discordClient({ intents: [ GatewayIntentBits.Guilds ] });
 const msgLog = require("./utility/logger.js");
 
@@ -35,6 +36,12 @@ if (!DISCORD_TOKEN || !API_KEY) {
   process.exit(1);
 }
 
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY;
+if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 64) {
+  msgLog.error("Missing or invalid ENCRYPTION_KEY. Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\" and add it to your .env file.");
+  process.exit(1);
+}
+
 try {
   require("./config.json");
 } catch {
@@ -43,9 +50,9 @@ try {
 }
 
 try {
-  require("./users.json");
-} catch {
-  msgLog.error("Error loading users.json. Please make sure you have a users.json file in the root directory.");
+  initDatabase();
+} catch (err) {
+  msgLog.error(`Failed to initialize database: ${err.message}`);
   process.exit(1);
 }
 

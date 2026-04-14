@@ -1,9 +1,9 @@
 const { SlashCommandBuilder, MessageFlags } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
-const { users } = require("../../users.json");
+const db = require("../../utility/database.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { reconstructCommand, getUserId, saveUsersFile, clientApiCall } = require("../../utility/helper_functions.js");
+const { reconstructCommand, getUserId, clientApiCall } = require("../../utility/helper_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
@@ -35,15 +35,13 @@ module.exports = {
     }
 
     const userId = getUserId(interaction.user.id);
+    const user = db.getUserByPanelId(userId);
     let success = false;
-    for (const user of users) {
-      if (user.panelId === userId) {
-        const result = await clientApiCall("client/account", "GET", null, interaction.user.id, newApiKey);
-        if (result.statusCode === 200) {
-          user.panelAPIKey = newApiKey;
-          saveUsersFile();
-          success = true;
-        }
+    if (user) {
+      const result = await clientApiCall("client/account", "GET", null, interaction.user.id, newApiKey);
+      if (result.statusCode === 200) {
+        db.updateUserApiKey(user.discordId, newApiKey);
+        success = true;
       }
     }
 
