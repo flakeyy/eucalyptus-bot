@@ -59,7 +59,7 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
   }
 
   const availableMemory = await getAvailableUserMemory(userId, discordId);
-  if (availableMemory - memory < 0) {
+  if (availableMemory !== -1 && availableMemory - memory < 0) {
     const memoryToFree = (availableMemory - memory) * -1;
     return getErrorMessage("SERVER_CREATION_FAILED_MEMORY", memoryToFree);
   }
@@ -202,6 +202,10 @@ module.exports = {
       let selectedEgg = null;
       let serverName = null;
       let serverMemory = null;
+
+      const logGenAction = (i, action, extra = "") => {
+        msgLog.log(`${i.user.username}/${i.user.id} | [gen-server] ${action}${extra ? ` | ${extra}` : ""}`);
+      };
 
       collector.on("collect", async i => {
         try {
@@ -395,13 +399,12 @@ module.exports = {
                 flags: MessageFlags.IsComponentsV2
               });
             } catch (error) {
-              console.error("Modal submit timeout or error:", error);
+              msgLog.error(`Modal submit timeout or error: ${error.message}`);
             }
 
           } else if (i.customId === "confirm-create") {
             await i.deferUpdate();
 
-            // Show creating status
             const creatingContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
               .addTextDisplayComponents(text =>
@@ -413,7 +416,6 @@ module.exports = {
               flags: MessageFlags.IsComponentsV2
             });
 
-            // Create the server
             const apiResult = await createServer(
               serverName,
               selectedNode.attributes.name,
@@ -426,6 +428,7 @@ module.exports = {
 
             let resultContainer;
             if (apiResult.statusCode === HTTP_STATUS_CODES.CREATED) {
+              logGenAction(i, "server-created", `name: ${apiResult.attributes.name} | id: ${apiResult.attributes.identifier} | memory: ${serverMemory} MB | node: ${selectedNode.attributes.name}`);
               resultContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.SUCCESS)
                 .addTextDisplayComponents(text =>
@@ -437,13 +440,14 @@ module.exports = {
                   )
                 );
             } else if (typeof apiResult === "string") {
-              // Error message from validation
+              msgLog.warn(`${i.user.username}/${i.user.id} | [gen-server] server-rejected | name: ${serverName} | memory: ${serverMemory} MB | reason: ${apiResult}`);
               resultContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.DISABLED)
                 .addTextDisplayComponents(text =>
                   text.setContent(`**Server Creation Failed**\n\n${apiResult}`)
                 );
             } else {
+              msgLog.warn(`${i.user.username}/${i.user.id} | [gen-server] server-rejected | name: ${serverName} | memory: ${serverMemory} MB | reason: API status ${apiResult.statusCode}`);
               resultContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.DISABLED)
                 .addTextDisplayComponents(text =>
@@ -548,7 +552,7 @@ module.exports = {
           }
 
         } catch (error) {
-          console.error("Error handling interaction:", error);
+          msgLog.error(`Error handling gen-server interaction: ${error.message}`);
           const errorResponse = {
             content: "An error occurred while processing your request.",
             ephemeral: true
@@ -578,7 +582,7 @@ module.exports = {
       });
 
     } catch (error) {
-      console.error("Error in gen-server command:", error);
+      msgLog.error(`Error in gen-server command: ${error.message}`);
       const errorMessage = {
         content: "An error occurred while loading the server creation menu.",
         ephemeral: true
