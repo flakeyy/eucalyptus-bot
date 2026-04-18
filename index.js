@@ -9,27 +9,14 @@ const {
   MessageFlags
 } = require("discord.js");
 const { applicationApiCall } = require("./utility/helper_functions");
-const { initDatabase } = require("./utility/database.js");
+const { initDatabase, getAllUsers } = require("./utility/database.js");
+const { generateBootstrapToken } = require("./utility/bootstrap.js");
 const dClient = new discordClient({ intents: [ GatewayIntentBits.Guilds ] });
 const msgLog = require("./utility/logger.js");
 
-// Environment variables with defaults
-let useDev = false;
-let DISCORD_TOKEN = process.env.DISCORD_TOKEN || "";
-let API_KEY = process.env.PANEL_API_KEY || "";
-
-// Check for dev mode
-if (process.argv[2] === "--dev") {
-  useDev = true;
-}
-
-if (useDev) {
-  DISCORD_TOKEN = process.env.DEV_DISCORD_TOKEN;
-  API_KEY = process.env.PANEL_API_KEY;
-} else {
-  DISCORD_TOKEN = process.env.PROD_DISCORD_TOKEN;
-  API_KEY = process.env.PANEL_API_KEY;
-}
+const useDev = process.argv[2] === "--dev";
+const DISCORD_TOKEN = useDev ? process.env.DEV_DISCORD_TOKEN : process.env.PROD_DISCORD_TOKEN;
+const API_KEY = process.env.PANEL_API_KEY;
 
 if (!DISCORD_TOKEN || !API_KEY) {
   msgLog.error("Missing required env variables (DISCORD_TOKEN / PANEL_API_KEY). Check your .env file.");
@@ -56,8 +43,16 @@ try {
   process.exit(1);
 }
 
-global.isDev = useDev;
+if (getAllUsers().length === 0) {
+  const token = generateBootstrapToken();
+  msgLog.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+  msgLog.log("NO USERS FOUND — FIRST RUN SETUP");
+  msgLog.log(`Bootstrap token: ${token}`);
+  msgLog.log("Run /init in Discord with this token to create the first admin account.");
+  msgLog.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+}
 
+global.isDev = useDev;
 global.version = require("./package.json").version;
 
 try {
@@ -68,18 +63,14 @@ try {
 
 async function getTotalServers() {
   const result = await applicationApiCall("application/servers", "GET", null);
-  const jsonString = await result.body.json();
-  const jsonData = await jsonString.data;
-
-  global.serverCount = jsonData.length;
+  const json = await result.body.json();
+  global.serverCount = json.data.length;
 }
 
 async function getTotalUsers() {
   const result = await applicationApiCall("application/users", "GET", null);
-  const jsonString = await result.body.json();
-  const jsonData = await jsonString.data;
-
-  global.userCount = jsonData.length;
+  const json = await result.body.json();
+  global.userCount = json.data.length;
 }
 
 async function setPresence() {
@@ -102,7 +93,6 @@ dClient.once(Events.ClientReady, readyClient => {
 
 dClient.commands = new Collection();
 
-// Load commands asynchronously
 (async () => {
   const foldersPath = path.join(__dirname, "commands");
   const commandFolders = await fs.promises.readdir(foldersPath);
@@ -113,7 +103,6 @@ dClient.commands = new Collection();
     for (const file of commandFiles) {
       const filePath = path.join(commandsPath, file);
       const command = require(filePath);
-      // Set a new item in the Collection with the key as the command name and the value as the exported module
       if ("data" in command && "execute" in command) {
         dClient.commands.set(command.data.name, command);
       } else {
