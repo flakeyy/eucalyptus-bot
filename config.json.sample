@@ -2,5 +2,31 @@
     "debug": false,
     "minecraft_nest_id": 1,
     "default_overhead_mb": 256,
-    "java_overhead_mb": 2048
+    "java_overhead_mb": 2048,
+    "modpack_eggs": {
+        "forge": 0,
+        "fabric": 0,
+        "neoforge": 0,
+        "quilt": 0
+    },
+    "mc_version_variable": "MC_VERSION",
+    "java_images": {
+        "8": "ghcr.io/pterodactyl/yolks:java_8",
+        "11": "ghcr.io/pterodactyl/yolks:java_11",
+        "17": "ghcr.io/pterodactyl/yolks:java_17",
+        "21": "ghcr.io/pterodactyl/yolks:java_21"
+    },
+    "minecraft_java_map": {
+        "1.21": 21,
+        "1.20": 21,
+        "1.19": 17,
+        "1.18": 17,
+        "1.17": 17,
+        "1.16": 11,
+        "1.15": 8,
+        "1.14": 8,
+        "1.13": 8,
+        "1.12": 8,
+        "1.8": 8
+    }
 }
