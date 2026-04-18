@@ -316,6 +316,10 @@ async function handleUserEdit(interaction) {
     idle: COLLECTOR_IDLE_TIMEOUT
   });
 
+  const logAdminUserAction = (i, action, extra = "") => {
+    msgLog.log(`${i.user.username}/${i.user.id} | [admin] ${action} | target: ${targetUser.username} (${targetUser.id})${extra ? ` | ${extra}` : ""}`);
+  };
+
   collector.on("collect", async i => {
     if (i.customId === "admin-edit-field-select") {
       const selectedField = EDITABLE_FIELDS.find(f => f.value === i.values[0]);
@@ -366,6 +370,7 @@ async function handleUserEdit(interaction) {
         await modalSubmit.deferUpdate();
 
         const rawValue = modalSubmit.fields.getTextInputValue("admin-edit-value-input").trim();
+        logAdminUserAction(i, "edit-field-submit", `field: ${selectedField.value} | value: ${selectedField.value === "panel_api_key" ? "********" : rawValue}`);
 
         let parsedValue = rawValue;
         if (selectedField.numeric) {
@@ -414,6 +419,7 @@ async function handleUserEdit(interaction) {
 
     } else if (i.customId === "admin-perm-save") {
       if (pendingPermissions === null) return;
+      logAdminUserAction(i, "perm-save", `bitmask: ${pendingPermissions} (0x${pendingPermissions.toString(16).toUpperCase()})`);
       await i.deferUpdate();
       try {
         db.updateUser(targetUser.id, "permissions", pendingPermissions);
@@ -503,6 +509,7 @@ async function handleUserDelete(interaction) {
   collector.on("collect", async i => {
     await i.deferUpdate();
     if (i.customId === "admin-confirm-delete-user") {
+      msgLog.log(`${i.user.username}/${i.user.id} | [admin] delete-user:confirmed | target: ${targetUser.username} (${targetUser.id})`);
       try {
         db.deleteUser(targetUser.id);
         await i.editReply({
@@ -706,6 +713,13 @@ async function handleAdminServers(interaction) {
       .addTextDisplayComponents(text => text.setContent(getErrorMessage(errorKey)));
   };
 
+  const logAdminServerAction = (i, action, extra = "") => {
+    const serverCtx = currentSelectedServer
+      ? ` | ${currentSelectedServer.attributes.name} (${currentSelectedServer.attributes.identifier})`
+      : "";
+    msgLog.log(`${i.user.username}/${i.user.id} | [admin] ${action} | target: ${targetUser.username} (${targetDiscordId})${serverCtx}${extra ? ` | ${extra}` : ""}`);
+  };
+
   collector.on("collect", async i => {
     try {
       if (i.customId === "server-selection") {
@@ -797,8 +811,9 @@ async function handleAdminServers(interaction) {
         startAutoRefresh();
 
       } else if (i.customId === "admin-power-start" || i.customId === "admin-power-restart" || i.customId === "admin-power-stop") {
-        await i.deferUpdate();
         const action = i.customId === "admin-power-start" ? "start" : i.customId === "admin-power-restart" ? "restart" : "stop";
+        logAdminServerAction(i, `power-${action}`);
+        await i.deferUpdate();
         const verb = { "start": "Starting", "restart": "Restarting", "stop": "Stopping" }[action];
 
         await i.editReply({ components: [ buildFullAdminMainView(`${verb} server.`) ], flags: MessageFlags.IsComponentsV2 });
@@ -836,6 +851,7 @@ async function handleAdminServers(interaction) {
           });
           await submit.deferUpdate();
           const newName = submit.fields.getTextInputValue("admin-server-name-input").trim();
+          logAdminServerAction(i, "edit-server-name:submit", `new name: ${newName}`);
           if (!newName) {
             await submit.editReply({ components: [ buildFullAdminMainView(getErrorMessage("INVALID_SERVER_NAME")) ], flags: MessageFlags.IsComponentsV2 });
             return;
@@ -880,6 +896,7 @@ async function handleAdminServers(interaction) {
           });
           await submit.deferUpdate();
           const newMemory = parseInt(submit.fields.getTextInputValue("admin-server-memory-input").trim(), 10);
+          logAdminServerAction(i, "edit-server-memory:submit", `new memory: ${newMemory} MB`);
           if (isNaN(newMemory) || newMemory <= 0) {
             await submit.editReply({ components: [ buildFullAdminMainView(getErrorMessage("INVALID_MEMORY_VALUE")) ], flags: MessageFlags.IsComponentsV2 });
             return;
@@ -903,6 +920,7 @@ async function handleAdminServers(interaction) {
         } catch { /* modal timed out */ }
 
       } else if (i.customId === "admin-suspend-server") {
+        logAdminServerAction(i, "suspend-server");
         await i.deferUpdate();
         const serverIsSuspended = await isServerSuspended(currentSelectedServer.attributes.identifier, targetDiscordId);
         if (serverIsSuspended) {
@@ -929,6 +947,7 @@ async function handleAdminServers(interaction) {
         clearAutoRefresh();
 
       } else if (i.customId === "admin-unsuspend-server") {
+        logAdminServerAction(i, "unsuspend-server");
         await i.deferUpdate();
         const serverIsSuspended = await isServerSuspended(currentSelectedServer.attributes.identifier, targetDiscordId);
         if (!serverIsSuspended) {
@@ -977,6 +996,7 @@ async function handleAdminServers(interaction) {
         await i.editReply({ components: [ confirmContainer ], flags: MessageFlags.IsComponentsV2 });
 
       } else if (i.customId === "admin-confirm-delete-server") {
+        logAdminServerAction(i, "delete-server:confirmed");
         await i.deferUpdate();
         await i.editReply({ components: [ new ContainerBuilder().setAccentColor(COLORS.ADMIN).addTextDisplayComponents(t => t.setContent("**Deleting Server...**\n\nPlease wait.")) ], flags: MessageFlags.IsComponentsV2 });
         const statusCode = await deleteServer(currentSelectedServer.attributes.internal_id);

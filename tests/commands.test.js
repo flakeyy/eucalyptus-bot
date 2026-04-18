@@ -30,7 +30,8 @@ jest.mock("../utility/server_functions.js", () => ({
   unsuspendServer: jest.fn(),
   deleteServer: jest.fn(),
   editServerInfo: jest.fn(),
-  setServerPowerState: jest.fn()
+  setServerPowerState: jest.fn(),
+  getAvailableUserMemory: jest.fn().mockResolvedValue(null)
 }));
 
 jest.mock("../commands/ptero/server_menu.js", () => ({

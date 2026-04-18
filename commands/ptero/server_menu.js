@@ -379,12 +379,20 @@ module.exports = {
         return disabledContainer;
       };
 
+      const logMenuAction = (i, action, extra = "") => {
+        const serverCtx = currentSelectedServer
+          ? ` | ${currentSelectedServer.attributes.name} (${currentSelectedServer.attributes.identifier})`
+          : "";
+        msgLog.log(`${i.user.username}/${i.user.id} | [servers] ${action}${serverCtx}${extra ? ` | ${extra}` : ""}`);
+      };
+
       collector.on("collect", async i => {
         try {
           if (i.customId === "server-selection") {
             clearAutoRefresh();
 
             const selectedServerId = i.values[0];
+            msgLog.debug(`${i.user.username}/${i.user.id} | [servers] select-server | ${selectedServerId}`);
 
             const selectedServerObject = await getServerInfoById(selectedServerId, interaction.user.id);
 
@@ -468,6 +476,7 @@ module.exports = {
               flags: MessageFlags.IsComponentsV2
             });
           } else if (i.customId === "power-start") {
+            logMenuAction(i, "power-start");
             await i.deferUpdate();
 
             const loadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, "Starting server.");
@@ -500,6 +509,7 @@ module.exports = {
 
             startAutoRefresh();
           } else if (i.customId === "power-restart") {
+            logMenuAction(i, "power-restart");
             await i.deferUpdate();
 
             const loadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, "Restarting server.");
@@ -532,6 +542,7 @@ module.exports = {
 
             startAutoRefresh();
           } else if (i.customId === "power-stop") {
+            logMenuAction(i, "power-stop");
             await i.deferUpdate();
 
             const loadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, "Stopping server.");
@@ -624,6 +635,7 @@ module.exports = {
               await modalSubmit.deferUpdate();
 
               const newName = modalSubmit.fields.getTextInputValue("server-name-input").trim();
+              logMenuAction(i, "edit-server-name:submit", `new name: ${newName}`);
 
               if (!newName || newName.length === 0) {
                 const errorContainer = new ContainerBuilder()
@@ -714,6 +726,7 @@ module.exports = {
               await modalSubmit.deferUpdate();
 
               const newMemoryStr = modalSubmit.fields.getTextInputValue("server-memory-input").trim();
+              logMenuAction(i, "edit-server-memory:submit", `new memory: ${newMemoryStr} MB`);
               const newMemory = parseInt(newMemoryStr);
 
               if (isNaN(newMemory) || newMemory <= 0) {
@@ -776,6 +789,7 @@ module.exports = {
               msgLog.error(`Memory edit modal error: ${error.message}`);
             }
           } else if (i.customId === "suspend-server") {
+            logMenuAction(i, "suspend-server");
             await i.deferUpdate();
 
             const serverIsSuspended = await isServerSuspended(currentSelectedServer.attributes.identifier, interaction.user.id);
@@ -837,6 +851,7 @@ module.exports = {
 
             clearAutoRefresh();
           } else if (i.customId === "unsuspend-server") {
+            logMenuAction(i, "unsuspend-server");
             await i.deferUpdate();
 
             const serverIsSuspended = await isServerSuspended(currentSelectedServer.attributes.identifier, interaction.user.id);
@@ -947,6 +962,7 @@ module.exports = {
               flags: MessageFlags.IsComponentsV2
             });
           } else if (i.customId === "confirm-delete") {
+            logMenuAction(i, "delete-server:confirmed");
             await i.deferUpdate();
 
             const deletingContainer = new ContainerBuilder()
