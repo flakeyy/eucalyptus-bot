@@ -108,6 +108,26 @@ const ERROR_MESSAGES = {
   SERVER_MEMORY_UPDATE_FAILED: {
     id: -28,
     text: "Failed to update server memory.\nPlease try again or contact an administrator."
+  },
+  CURSEFORGE_MODPACK_NOT_FOUND: {
+    id: -29,
+    text: "No modpack was found at that URL.\nPlease check the URL and try again."
+  },
+  CURSEFORGE_API_ERROR: {
+    id: -30,
+    text: "Failed to reach the CurseForge API.\nPlease try again later."
+  },
+  MODPACK_EGG_NOT_CONFIGURED: {
+    id: -31,
+    format: loaderType => `No egg is configured for loader type \`${loaderType ?? "unknown"}\`.\nPlease set the correct egg ID in \`config.json\` under \`modpack_eggs.${loaderType ?? "<loader>"}\`.`
+  },
+  MODPACK_FILE_DOWNLOAD_FAILED: {
+    id: -32,
+    text: "Failed to download the modpack file.\nThe file may be unavailable or distribution-restricted."
+  },
+  MODPACK_FILE_UPLOAD_FAILED: {
+    id: -33,
+    text: "Failed to upload the modpack file to the server.\nPlease try again."
   }
 };
 

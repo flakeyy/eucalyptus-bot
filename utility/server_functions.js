@@ -253,6 +253,90 @@ async function setServerPowerState(serverId, userId, action) {
   return apiResult;
 }
 
+// FILE MANAGEMENT
+
+async function listServerFiles(serverId, discordId, dirPath = "/") {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return null;
+  const apiResult = await clientApiCall(
+    `client/servers/${validatedId}/files/list?directory=${encodeURIComponent(dirPath)}`,
+    "GET", null, discordId
+  );
+  if (apiResult.statusCode !== 200) return null;
+  const jsonData = await apiResult.body.json();
+  return jsonData.data || [];
+}
+
+async function deleteServerFiles(serverId, discordId, filenames) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return -1;
+  const body = JSON.stringify({ root: "/", files: filenames });
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/delete`, "POST", body, discordId);
+  return apiResult.statusCode;
+}
+
+async function getFileUploadUrl(serverId, discordId) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return null;
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/upload`, "GET", null, discordId);
+  if (apiResult.statusCode !== 200) return null;
+  const jsonData = await apiResult.body.json();
+  return jsonData.attributes?.url || null;
+}
+
+async function pullServerFile(serverId, discordId, url, directory, filename) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return -1;
+  const body = JSON.stringify({ url, directory, filename, use_header: false, foreground: false });
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/pull`, "POST", body, discordId);
+  return apiResult.statusCode;
+}
+
+async function decompressFile(serverId, discordId, root, filename) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return -1;
+  const body = JSON.stringify({ root, file: filename });
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/decompress`, "POST", body, discordId);
+  return apiResult.statusCode;
+}
+
+async function changeServerEgg(internalServerId, eggId, nestId, envOverrides = {}, imageOverride = null) {
+  const parsedServerId = parseInt(internalServerId, 10);
+  const parsedEggId = parseInt(eggId, 10);
+  const parsedNestId = parseInt(nestId, 10);
+  if (isNaN(parsedServerId) || isNaN(parsedEggId) || isNaN(parsedNestId)) return -1;
+
+  const eggData = await getEggData(parsedNestId, parsedEggId);
+  if (eggData === -1 || !eggData.attributes) return -1;
+
+  const egg = eggData.attributes;
+  const environment = {};
+  if (egg.relationships?.variables?.data) {
+    for (const varEntry of egg.relationships.variables.data) {
+      const attr = varEntry.attributes;
+      environment[attr.env_variable] = attr.default_value || "";
+    }
+  }
+
+  const body = JSON.stringify({
+    egg: parsedEggId,
+    startup: egg.startup,
+    environment: { ...environment, ...envOverrides },
+    image: imageOverride || egg.docker_image,
+    skip_scripts: false
+  });
+
+  const apiResult = await applicationApiCall(`application/servers/${parsedServerId}/startup`, "PATCH", body);
+  return apiResult.statusCode;
+}
+
+async function reinstallServer(internalServerId) {
+  const parsedId = parseInt(internalServerId, 10);
+  if (isNaN(parsedId)) return -1;
+  const apiResult = await applicationApiCall(`application/servers/${parsedId}/reinstall`, "POST");
+  return apiResult.statusCode;
+}
+
 // MISC
 
 async function getAvailableUserMemory(userId, discordId) {
@@ -296,5 +380,12 @@ module.exports = {
   suspendServer,
   unsuspendServer,
   deleteServer,
-  getAvailableUserMemory
+  getAvailableUserMemory,
+  listServerFiles,
+  deleteServerFiles,
+  getFileUploadUrl,
+  decompressFile,
+  pullServerFile,
+  changeServerEgg,
+  reinstallServer
 };

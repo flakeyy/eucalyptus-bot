@@ -21,7 +21,7 @@ async function applicationApiCall(path, method, body) {
   });
 
   if (config.debug) {
-    msgLog.debug(`API: ${method} /api/${path} | Status Code: ${result.statusCode}`);
+    msgLog.debug(`API: ${method} /panel/${path} | Status Code: ${result.statusCode}`);
   }
 
   return result;
@@ -48,7 +48,7 @@ async function clientApiCall(path, method, body, userDiscordId, customAPIKey) {
   });
 
   if (config.debug) {
-    msgLog.debug(`API: ${method} /api/${path} | Status Code: ${result.statusCode}`);
+    msgLog.debug(`API: ${method} /panel/${path} | Status Code: ${result.statusCode}`);
   }
 
   return result;
