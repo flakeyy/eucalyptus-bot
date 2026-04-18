@@ -227,15 +227,15 @@ async function updateProgress(i, message) {
   await i.editReply({ components: [ container ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
 }
 
-async function runInstallation(i, state, discordId) {
+async function runInstallation(i, state, interaction) {
   const { serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
 
   // a. Stop server
   await updateProgress(i, "Stopping server...");
-  await setServerPowerState(serverId, discordId, "stop").catch(() => {});
+  await setServerPowerState(serverId, interaction.user.id, "stop").catch(() => {});
   for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
     await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, discordId);
+    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       const data = await resourceApi.body.json();
       if (data.attributes.current_state === "offline") break;
@@ -244,9 +244,9 @@ async function runInstallation(i, state, discordId) {
 
   // b. Delete files
   await updateProgress(i, "Deleting server files...");
-  const files = await listServerFiles(serverId, discordId, "/");
+  const files = await listServerFiles(serverId, interaction.user.id, "/");
   if (files && files.length > 0) {
-    await deleteServerFiles(serverId, discordId, files.map(f => f.attributes.name));
+    await deleteServerFiles(serverId, interaction.user.id, files.map(f => f.attributes.name));
   }
 
   // c. Change egg (set MC_VERSION and correct Java Docker image)
@@ -266,7 +266,7 @@ async function runInstallation(i, state, discordId) {
   await new Promise(r => setTimeout(r, 5000));
   for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
     await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, discordId);
+    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       const data = await resourceApi.body.json();
       if (data.attributes.current_state !== "installing") break;
@@ -275,7 +275,7 @@ async function runInstallation(i, state, discordId) {
 
   // e. Stream modpack from CurseForge → Wings (no full-file buffering)
   await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
-  const uploadUrl = await getFileUploadUrl(serverId, discordId);
+  const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
   if (!uploadUrl) {
     await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
     return;
@@ -291,11 +291,11 @@ async function runInstallation(i, state, discordId) {
 
   // f. Extract
   await updateProgress(i, "Extracting files...");
-  await decompressFile(serverId, discordId, "/", targetFile.displayName);
+  await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
 
   // g. Done
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
-  msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${selectedServerId} `);
+  msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
   if (usingClientPack) {
     doneContent += "\n\n**Reminder:** A client modpack was used. The server may not function correctly without a dedicated server pack.";
   }
@@ -653,7 +653,7 @@ module.exports = {
               mcVersion
             };
             msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] installing: ${modpackName} | ${selectedServerId}`);
-            await runInstallation(i, installState, interaction.user.id);
+            await runInstallation(i, installState, interaction);
 
           } else if (i.customId === "cancel") {
             await i.deferUpdate();
