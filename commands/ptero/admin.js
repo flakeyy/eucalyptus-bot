@@ -27,7 +27,8 @@ const {
   suspendServer,
   unsuspendServer,
   deleteServer,
-  editServerInfo
+  editServerInfo,
+  getAvailableUserMemory
 } = require("../../utility/server_functions.js");
 const { buildServerSelectMenu } = require("./server_menu.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
@@ -68,18 +69,31 @@ const EDITABLE_FIELDS = [
   { value: "panel_username",        label: "Panel Username",             description: "The user's Pterodactyl panel username",           numeric: false },
   { value: "panel_id",              label: "Panel ID",                   description: "The user's numeric Pterodactyl user ID",           numeric: true  },
   { value: "maximum_allowed_memory", label: "Max Memory (MB, -1 = ∞)",  description: "Maximum total memory this user can allocate",      numeric: true  },
-  { value: "permissions",           label: "Permissions (bitmask)",      description: "Bitfield of granted permissions (e.g. 65536 = admin)", numeric: true },
+  { value: "permissions",           label: "Permissions",                description: "Toggle individual permissions granted to this user",  numeric: false },
   { value: "panel_api_key",         label: "Panel API Key",              description: "The user's stored client API key",                 numeric: false }
 ];
 
-function formatUserInfo(user, header = "User Info") {
-  const memDisplay = user.maximumAllowedMemory === -1 ? "Unlimited" : `${user.maximumAllowedMemory} MB`;
+const PERM_LABELS = [
+  { key: "GET_SERVICE_INFORMATION", label: "Get Service Info" },
+  { key: "SET_CLIENT_KEY",          label: "Set Client Key" },
+  { key: "READ_SERVERS",            label: "Read Servers" },
+  { key: "EDIT_SERVER_PROPERTIES",  label: "Edit Server Props" },
+  { key: "CREATE_SERVER",           label: "Create Server" },
+  { key: "ADMINISTRATOR",           label: "Administrator" }
+];
+
+function formatUserInfo(user, header = "User Info", availableMemory = null) {
+  const maxIsUnlimited = Number(user.maximumAllowedMemory) === -1;
+  const maxDisplay = maxIsUnlimited ? "Unlimited" : `${user.maximumAllowedMemory} MB`;
+  const availDisplay = availableMemory === null ? ""
+    : `**Available Memory:** ${(maxIsUnlimited || availableMemory === -1) ? "Unlimited" : `${availableMemory} MB`}\n`;
   return (
     `**${header}**\n\n` +
     `**Discord ID:** \`${user.discordId}\`\n` +
     `**Panel Username:** \`${user.panelUsername}\`\n` +
     `**Panel ID:** \`${user.panelId}\`\n` +
-    `**Max Memory:** ${memDisplay}\n` +
+    `**Max Memory:** ${maxDisplay}\n` +
+    availDisplay +
     `**Permissions:** \`${user.permissions}\` (0x${user.permissions.toString(16).toUpperCase()})\n` +
     `**Panel API Key:** ${user.panelAPIKey ? "`[set]`" : "`[not set]`"}`
   );
@@ -167,8 +181,10 @@ async function handleUserView(interaction) {
     return;
   }
 
+  const availableMemory = await getAvailableUserMemory(existing.panelId, targetUser.id);
+
   await interaction.editReply({
-    content: formatUserInfo(existing, `User Info — ${targetUser.username}`),
+    content: formatUserInfo(existing, `User Info — ${targetUser.username}`, availableMemory),
     flags: MessageFlags.Ephemeral
   });
 }
@@ -224,30 +240,73 @@ async function handleUserEdit(interaction) {
     return;
   }
 
-  // Build the initial view: user info + select menu
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId("admin-edit-field-select")
-    .setPlaceholder("Select a field to edit");
+  const buildFieldSelectMenu = () => {
+    const menu = new StringSelectMenuBuilder()
+      .setCustomId("admin-edit-field-select")
+      .setPlaceholder("Select a field to edit");
+    for (const field of EDITABLE_FIELDS) {
+      menu.addOptions(
+        new StringSelectMenuOptionBuilder()
+          .setLabel(field.label)
+          .setDescription(field.description)
+          .setValue(field.value)
+      );
+    }
+    return menu;
+  };
 
-  for (const field of EDITABLE_FIELDS) {
-    selectMenu.addOptions(
-      new StringSelectMenuOptionBuilder()
-        .setLabel(field.label)
-        .setDescription(field.description)
-        .setValue(field.value)
-    );
-  }
+  const buildMainEditView = (user, availMem, statusMsg = null) => {
+    let content = `**[ADMIN] Editing — ${targetUser.username}**\n\n${formatUserInfo(user, "User Info", availMem)}`;
+    if (statusMsg) content += `\n\n${statusMsg}`;
+    return new ContainerBuilder()
+      .setAccentColor(COLORS.ADMIN)
+      .addTextDisplayComponents(text => text.setContent(content))
+      .addSeparatorComponents(sep => sep)
+      .addActionRowComponents(row => row.setComponents(buildFieldSelectMenu()));
+  };
 
-  const container = new ContainerBuilder()
-    .setAccentColor(COLORS.ADMIN)
-    .addTextDisplayComponents(text =>
-      text.setContent(`**[ADMIN] Editing — ${targetUser.username}**\n\n${formatUserInfo(existing)}`)
-    )
-    .addSeparatorComponents(sep => sep)
-    .addActionRowComponents(row => row.setComponents(selectMenu));
+  const buildPermToggleView = (bitmask, statusMsg = null) => {
+    let content = `**[ADMIN] Editing Permissions — ${targetUser.username}**\n\nBitmask: \`${bitmask}\` (0x${bitmask.toString(16).toUpperCase()})\n\nToggle permissions:`;
+    if (statusMsg) content += `\n\n${statusMsg}`;
+    const container = new ContainerBuilder()
+      .setAccentColor(COLORS.ADMIN)
+      .addTextDisplayComponents(text => text.setContent(content))
+      .addSeparatorComponents(sep => sep);
+
+    for (let idx = 0; idx < PERM_LABELS.length; idx += 3) {
+      const chunk = PERM_LABELS.slice(idx, idx + 3);
+      container.addActionRowComponents(row =>
+        row.setComponents(
+          ...chunk.map(p => {
+            const bit = PERMISSIONS[p.key];
+            const enabled = (bitmask & bit) === bit;
+            return new ButtonBuilder()
+              .setCustomId(`admin-perm-toggle-${p.key}`)
+              .setLabel((enabled ? "✓ " : "✗ ") + p.label)
+              .setStyle(enabled ? ButtonStyle.Success : ButtonStyle.Secondary);
+          })
+        )
+      );
+    }
+
+    container
+      .addSeparatorComponents(sep => sep)
+      .addActionRowComponents(row =>
+        row.setComponents(
+          new ButtonBuilder().setCustomId("admin-perm-save").setLabel("Save Permissions").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("admin-perm-cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
+        )
+      );
+
+    return container;
+  };
+
+  let pendingPermissions = null;
+
+  const availableMemory = await getAvailableUserMemory(existing.panelId, targetUser.id);
 
   await interaction.editReply({
-    components: [ container ],
+    components: [ buildMainEditView(existing, availableMemory) ],
     flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
   });
 
@@ -258,128 +317,141 @@ async function handleUserEdit(interaction) {
   });
 
   collector.on("collect", async i => {
-    if (i.customId !== "admin-edit-field-select") return;
+    if (i.customId === "admin-edit-field-select") {
+      const selectedField = EDITABLE_FIELDS.find(f => f.value === i.values[0]);
+      if (!selectedField) return;
 
-    const selectedField = EDITABLE_FIELDS.find(f => f.value === i.values[0]);
-    if (!selectedField) return;
-
-    // Get current value for the field
-    const currentValue = existing[
-      selectedField.value === "maximum_allowed_memory" ? "maximumAllowedMemory"
-        : selectedField.value === "panel_api_key" ? "panelAPIKey"
-          : selectedField.value === "panel_username" ? "panelUsername"
-            : selectedField.value === "panel_id" ? "panelId"
-              : selectedField.value
-    ];
-
-    const modal = new ModalBuilder()
-      .setCustomId(`admin-edit-modal-${selectedField.value}`)
-      .setTitle(`Edit: ${selectedField.label}`);
-
-    const input = new TextInputBuilder()
-      .setCustomId("admin-edit-value-input")
-      .setLabel(selectedField.label)
-      .setStyle(TextInputStyle.Short)
-      .setValue(currentValue !== null && currentValue !== undefined ? String(currentValue) : "")
-      .setRequired(true);
-
-    modal.addComponents(new ActionRowBuilder().addComponents(input));
-
-    await i.showModal(modal);
-
-    try {
-      const modalSubmit = await i.awaitModalSubmit({
-        filter: sub => sub.customId === `admin-edit-modal-${selectedField.value}` && sub.user.id === i.user.id,
-        time: 300_000
-      });
-
-      await modalSubmit.deferUpdate();
-
-      const rawValue = modalSubmit.fields.getTextInputValue("admin-edit-value-input").trim();
-
-      let parsedValue = rawValue;
-      if (selectedField.numeric) {
-        parsedValue = parseInt(rawValue, 10);
-        if (isNaN(parsedValue)) {
-          const updated = db.getUserByDiscordId(targetUser.id);
-          const errorContainer = new ContainerBuilder()
-            .setAccentColor(COLORS.ADMIN)
-            .addTextDisplayComponents(text =>
-              text.setContent(`**[ADMIN] Editing — ${targetUser.username}**\n\n${formatUserInfo(updated)}\n\n**Error:** \`${selectedField.label}\` must be a number.`)
-            )
-            .addSeparatorComponents(sep => sep)
-            .addActionRowComponents(row => row.setComponents(selectMenu));
-
-          await modalSubmit.editReply({
-            components: [ errorContainer ],
-            flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
-          });
-          return;
-        }
+      if (selectedField.value === "permissions") {
+        const fresh = db.getUserByDiscordId(targetUser.id);
+        pendingPermissions = fresh.permissions;
+        await i.deferUpdate();
+        await i.editReply({
+          components: [ buildPermToggleView(pendingPermissions) ],
+          flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+        });
+        return;
       }
 
+      const currentValue = existing[
+        selectedField.value === "maximum_allowed_memory" ? "maximumAllowedMemory"
+          : selectedField.value === "panel_api_key" ? "panelAPIKey"
+            : selectedField.value === "panel_username" ? "panelUsername"
+              : selectedField.value === "panel_id" ? "panelId"
+                : selectedField.value
+      ];
+
+      const modal = new ModalBuilder()
+        .setCustomId(`admin-edit-modal-${selectedField.value}`)
+        .setTitle(`Edit: ${selectedField.label}`);
+
+      modal.addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId("admin-edit-value-input")
+            .setLabel(selectedField.label)
+            .setStyle(TextInputStyle.Short)
+            .setValue(currentValue !== null && currentValue !== undefined ? String(currentValue) : "")
+            .setRequired(true)
+        )
+      );
+
+      await i.showModal(modal);
+
       try {
-        db.updateUser(targetUser.id, selectedField.value, parsedValue);
-        // Re-fetch to show updated state
-        const updated = db.getUserByDiscordId(targetUser.id);
+        const modalSubmit = await i.awaitModalSubmit({
+          filter: sub => sub.customId === `admin-edit-modal-${selectedField.value}` && sub.user.id === i.user.id,
+          time: 300_000
+        });
 
-        // Refresh the select menu options for any further edits
-        const refreshedSelect = new StringSelectMenuBuilder()
-          .setCustomId("admin-edit-field-select")
-          .setPlaceholder("Select a field to edit");
+        await modalSubmit.deferUpdate();
 
-        for (const field of EDITABLE_FIELDS) {
-          refreshedSelect.addOptions(
-            new StringSelectMenuOptionBuilder()
-              .setLabel(field.label)
-              .setDescription(field.description)
-              .setValue(field.value)
-          );
+        const rawValue = modalSubmit.fields.getTextInputValue("admin-edit-value-input").trim();
+
+        let parsedValue = rawValue;
+        if (selectedField.numeric) {
+          parsedValue = parseInt(rawValue, 10);
+          if (isNaN(parsedValue)) {
+            const updated = db.getUserByDiscordId(targetUser.id);
+            await modalSubmit.editReply({
+              components: [ buildMainEditView(updated, null, `**Error:** \`${selectedField.label}\` must be a number.`) ],
+              flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+            });
+            return;
+          }
         }
 
-        const successContainer = new ContainerBuilder()
-          .setAccentColor(COLORS.ADMIN)
-          .addTextDisplayComponents(text =>
-            text.setContent(`**[ADMIN] Editing — ${targetUser.username}**\n\n${formatUserInfo(updated)}\n\n**Updated \`${selectedField.label}\` successfully.**`)
-          )
-          .addSeparatorComponents(sep => sep)
-          .addActionRowComponents(row => row.setComponents(refreshedSelect));
+        try {
+          db.updateUser(targetUser.id, selectedField.value, parsedValue);
+          const updated = db.getUserByDiscordId(targetUser.id);
+          Object.assign(existing, updated);
+          const updatedAvailableMemory = await getAvailableUserMemory(updated.panelId, targetUser.id);
+          await modalSubmit.editReply({
+            components: [ buildMainEditView(updated, updatedAvailableMemory, `**Updated \`${selectedField.label}\` successfully.**`) ],
+            flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+          });
+        } catch (err) {
+          msgLog.error(`Admin user update failed: ${err.message}`);
+          const current = db.getUserByDiscordId(targetUser.id);
+          await modalSubmit.editReply({
+            components: [ buildMainEditView(current, null, `**Error:** \`${err.message}\``) ],
+            flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+          });
+        }
+      } catch {
+        // Modal timed out — silently end
+      }
 
-        await modalSubmit.editReply({
-          components: [ successContainer ],
+    } else if (i.customId.startsWith("admin-perm-toggle-")) {
+      if (pendingPermissions === null) return;
+      const permKey = i.customId.slice("admin-perm-toggle-".length);
+      const bit = PERMISSIONS[permKey];
+      if (bit === undefined) return;
+      pendingPermissions ^= bit;
+      await i.update({
+        components: [ buildPermToggleView(pendingPermissions) ],
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+      });
+
+    } else if (i.customId === "admin-perm-save") {
+      if (pendingPermissions === null) return;
+      await i.deferUpdate();
+      try {
+        db.updateUser(targetUser.id, "permissions", pendingPermissions);
+        const updated = db.getUserByDiscordId(targetUser.id);
+        Object.assign(existing, updated);
+        const updatedAvailableMemory = await getAvailableUserMemory(updated.panelId, targetUser.id);
+        pendingPermissions = null;
+        await i.editReply({
+          components: [ buildMainEditView(updated, updatedAvailableMemory, "**Updated `Permissions` successfully.**") ],
           flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
         });
       } catch (err) {
-        msgLog.error(`Admin user update failed: ${err.message}`);
-        const current = db.getUserByDiscordId(targetUser.id);
-        const errContainer = new ContainerBuilder()
-          .setAccentColor(COLORS.ADMIN)
-          .addTextDisplayComponents(text =>
-            text.setContent(`**[ADMIN] Editing — ${targetUser.username}**\n\n${formatUserInfo(current)}\n\n**Error:** \`${err.message}\``)
-          )
-          .addSeparatorComponents(sep => sep)
-          .addActionRowComponents(row => row.setComponents(selectMenu));
-
-        await modalSubmit.editReply({
-          components: [ errContainer ],
+        msgLog.error(`Admin user permissions update failed: ${err.message}`);
+        await i.editReply({
+          components: [ buildPermToggleView(pendingPermissions, `**Error:** \`${err.message}\``) ],
           flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
         });
       }
-    } catch {
-      // Modal timed out — silently end
+
+    } else if (i.customId === "admin-perm-cancel") {
+      pendingPermissions = null;
+      const current = db.getUserByDiscordId(targetUser.id);
+      Object.assign(existing, current);
+      await i.update({
+        components: [ buildMainEditView(existing, null) ],
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+      });
     }
   });
 
   collector.on("end", async (collected, reason) => {
     if (reason === "idle") {
-      const timedOutContainer = new ContainerBuilder()
-        .setAccentColor(COLORS.DISABLED)
-        .addTextDisplayComponents(text =>
-          text.setContent(getErrorMessage("USER_TIMEOUT"))
-        );
-
       await interaction.editReply({
-        components: [ timedOutContainer ],
+        components: [
+          new ContainerBuilder()
+            .setAccentColor(COLORS.DISABLED)
+            .addTextDisplayComponents(text => text.setContent(getErrorMessage("USER_TIMEOUT")))
+        ],
         flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
       }).catch(() => {});
     }

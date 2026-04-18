@@ -103,11 +103,16 @@ function getDiscordId(val) {
 }
 
 function reconstructCommand(interaction) {
-  const fullCommand = `/${interaction.commandName} ${interaction.options.data
-    .map(option => `${option.name}:${(option.name === "api-key") ? "********" : option.value}`)
-    .join(" ")}`;
+  function serializeOptions(options) {
+    return options.map(option => {
+      if (option.options) {
+        return `${option.name} ${serializeOptions(option.options)}`;
+      }
+      return `${option.name}:${option.name === "api-key" ? "********" : option.value}`;
+    }).join(" ");
+  }
 
-  return fullCommand;
+  return `/${interaction.commandName} ${serializeOptions(interaction.options.data)}`;
 }
 
 async function getMonitorUptime(type) {

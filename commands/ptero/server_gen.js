@@ -59,7 +59,7 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
   }
 
   const availableMemory = await getAvailableUserMemory(userId, discordId);
-  if (availableMemory - memory < 0) {
+  if (availableMemory !== -1 && availableMemory - memory < 0) {
     const memoryToFree = (availableMemory - memory) * -1;
     return getErrorMessage("SERVER_CREATION_FAILED_MEMORY", memoryToFree);
   }

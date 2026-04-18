@@ -274,7 +274,7 @@ async function getAvailableUserMemory(userId, discordId) {
   }
   const user = db.getUserByDiscordId(discordId);
   if (!user) return 0;
-  if (user.maximumAllowedMemory === -1) return 128000;
+  if (user.maximumAllowedMemory === -1) return -1;
   return user.maximumAllowedMemory - totalMemoryUsage;
 }
 

@@ -863,7 +863,7 @@ module.exports = {
             const serverMemory = currentSelectedServer.attributes.limits.memory;
             const availableMemory = await getAvailableUserMemory(getUserId(interaction.user.id), interaction.user.id);
 
-            if (availableMemory - serverMemory < 0) {
+            if (availableMemory !== -1 && availableMemory - serverMemory < 0) {
               const memoryToFree = (availableMemory - serverMemory) * -1;
               const errorContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.PRIMARY)
