@@ -295,6 +295,7 @@ async function runInstallation(i, state, discordId) {
 
   // g. Done
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
+  msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${selectedServerId} `);
   if (usingClientPack) {
     doneContent += "\n\n**Reminder:** A client modpack was used. The server may not function correctly without a dedicated server pack.";
   }
@@ -651,7 +652,7 @@ module.exports = {
               usingClientPack,
               mcVersion
             };
-            msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install | ${selectedServerName} (${selectedServerId}) | ${modpackName}`);
+            msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] installing: ${modpackName} | ${selectedServerId}`);
             await runInstallation(i, installState, interaction.user.id);
 
           } else if (i.customId === "cancel") {

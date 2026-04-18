@@ -383,7 +383,7 @@ module.exports = {
         const serverCtx = currentSelectedServer
           ? ` | ${currentSelectedServer.attributes.name} (${currentSelectedServer.attributes.identifier})`
           : "";
-        msgLog.log(`${i.user.username}/${i.user.id} | [servers] ${action}${serverCtx}${extra ? ` | ${extra}` : ""}`);
+        msgLog.log(`${i.user.username}/${i.user.id} | [server-menu] ${action}${serverCtx}${extra ? ` | ${extra}` : ""}`);
       };
 
       collector.on("collect", async i => {
