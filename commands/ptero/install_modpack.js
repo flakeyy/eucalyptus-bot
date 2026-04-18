@@ -227,15 +227,15 @@ async function updateProgress(i, message) {
   await i.editReply({ components: [ container ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
 }
 
-async function runInstallation(i, state, interaction) {
+async function runInstallation(i, state, userId) {
   const { serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
 
   // a. Stop server
   await updateProgress(i, "Stopping server...");
-  await setServerPowerState(serverId, interaction.user.id, "stop").catch(() => {});
+  await setServerPowerState(serverId, userId, "stop").catch(() => {});
   for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
     await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
+    const resourceApi = await getServerResourceInfoById(serverId, userId);
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       const data = await resourceApi.body.json();
       if (data.attributes.current_state === "offline") break;
@@ -244,9 +244,9 @@ async function runInstallation(i, state, interaction) {
 
   // b. Delete files
   await updateProgress(i, "Deleting server files...");
-  const files = await listServerFiles(serverId, interaction.user.id, "/");
+  const files = await listServerFiles(serverId, userId, "/");
   if (files && files.length > 0) {
-    await deleteServerFiles(serverId, interaction.user.id, files.map(f => f.attributes.name));
+    await deleteServerFiles(serverId, userId, files.map(f => f.attributes.name));
   }
 
   // c. Change egg (set MC_VERSION and correct Java Docker image)
@@ -266,7 +266,7 @@ async function runInstallation(i, state, interaction) {
   await new Promise(r => setTimeout(r, 5000));
   for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
     await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
+    const resourceApi = await getServerResourceInfoById(serverId, userId);
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       const data = await resourceApi.body.json();
       if (data.attributes.current_state !== "installing") break;
@@ -275,7 +275,7 @@ async function runInstallation(i, state, interaction) {
 
   // e. Stream modpack from CurseForge → Wings (no full-file buffering)
   await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
-  const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
+  const uploadUrl = await getFileUploadUrl(serverId, userId);
   if (!uploadUrl) {
     await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
     return;
@@ -291,11 +291,11 @@ async function runInstallation(i, state, interaction) {
 
   // f. Extract
   await updateProgress(i, "Extracting files...");
-  await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+  await decompressFile(serverId, userId, "/", targetFile.displayName);
 
   // g. Done
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
-  msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
+  msgLog.log(`${userId} | [install-modpack] install success: ${modpackName} | ${serverId} `);
   if (usingClientPack) {
     doneContent += "\n\n**Reminder:** A client modpack was used. The server may not function correctly without a dedicated server pack.";
   }
@@ -653,7 +653,7 @@ module.exports = {
               mcVersion
             };
             msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] installing: ${modpackName} | ${selectedServerId}`);
-            await runInstallation(i, installState, interaction);
+            await runInstallation(i, installState, interaction.user.id);
 
           } else if (i.customId === "cancel") {
             await i.deferUpdate();
