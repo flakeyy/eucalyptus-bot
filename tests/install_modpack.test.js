@@ -44,7 +44,7 @@ jest.mock("../config.json", () => ({
 
 // curseforge.js is NOT mocked globally — pure functions tested directly
 const curseforge = require("../utility/curseforge.js");
-const { parseProjectId, detectLoaderType, findServerPack, LOADER_MAP } = curseforge;
+const { parseProjectId, detectLoaderType, findServerPack } = curseforge;
 
 const { execute, runInstallation } = require("../commands/ptero/install_modpack.js");
 const serverFunctions = require("../utility/server_functions.js");
@@ -270,7 +270,10 @@ describe("install-modpack command", () => {
   test("shows CLIENT_API_FAILURE when getClientServers returns null", async () => {
     perms.authenticateUserForPermission.mockReturnValue(true);
     serverFunctions.getClientServers.mockResolvedValue(null);
-    helpers.applicationApiCall.mockResolvedValue({ statusCode: 200, body: { json: async () => ({ attributes: { relationships: { servers: { data: [] } } } }) } });
+    helpers.applicationApiCall.mockResolvedValue({
+      statusCode: 200,
+      body: { json: async () => ({ attributes: { relationships: { servers: { data: [] } } } }) }
+    });
 
     await execute(interaction);
 
@@ -346,7 +349,8 @@ describe("runInstallation behavior", () => {
     };
   }
 
-  function makeStreamResponse(bytes = new Uint8Array([1, 2, 3, 4])) {
+  /* global ReadableStream */
+  function makeStreamResponse(bytes = new Uint8Array([ 1, 2, 3, 4 ])) {
     const body = new ReadableStream({
       start(controller) { controller.enqueue(bytes); controller.close(); }
     });

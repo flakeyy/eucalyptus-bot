@@ -11,7 +11,7 @@ const {
   changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-const { getModpackById, getModpackFiles, detectLoaderType, findServerPack, findLinkedServerPackId, getFileById, parseProjectId } = require("../../utility/curseforge.js");
+const { getModpackById, getModpackFiles, detectLoaderType, getFileById, parseProjectId } = require("../../utility/curseforge.js");
 const config = require("../../config.json");
 
 function detectMCVersion(modpack, targetFile) {
@@ -47,14 +47,14 @@ function getJavaImageForMCVersion(mcVersion) {
   }
 
   // Find highest configured key that is <= the given version
-  const [vmaj, vmin] = majorMinor.split(".").map(Number);
+  const [ vmaj, vmin ] = majorMinor.split(".").map(Number);
   const sorted = Object.keys(javaMap).sort((a, b) => {
-    const [amaj, amin] = a.split(".").map(Number);
-    const [bmaj, bmin] = b.split(".").map(Number);
+    const [ amaj, amin ] = a.split(".").map(Number);
+    const [ bmaj, bmin ] = b.split(".").map(Number);
     return bmaj !== amaj ? bmaj - amaj : bmin - amin;
   });
   for (const key of sorted) {
-    const [kmaj, kmin] = key.split(".").map(Number);
+    const [ kmaj, kmin ] = key.split(".").map(Number);
     if (vmaj > kmaj || (vmaj === kmaj && vmin >= kmin)) {
       return images[String(javaMap[key])] || null;
     }
@@ -62,6 +62,7 @@ function getJavaImageForMCVersion(mcVersion) {
   return null;
 }
 
+/* global TextEncoder, ReadableStream */
 // Streams the file from CurseForge directly into a Wings multipart upload.
 // Only a small chunk lives in memory at a time — no full-file buffering.
 async function streamModpackToServer(uploadUrl, downloadUrl, filename) {
@@ -175,8 +176,8 @@ function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId) {
     .setAccentColor(COLORS.PRIMARY)
     .addTextDisplayComponents(text => text.setContent(
       `**Install Modpack — Select Version**\n\n**Modpack:** ${modpackName}\n\n` +
-      `The recommended version is pre-selected. Change it if needed.\n` +
-      `_Versions with a server pack are preferred._`
+      "The recommended version is pre-selected. Change it if needed.\n" +
+      "_Versions with a server pack are preferred._"
     ))
     .addSeparatorComponents(sep => sep)
     .addActionRowComponents(row => row.setComponents(menu))
@@ -186,13 +187,13 @@ function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId) {
     ));
 }
 
-function buildConfirmView1(serverName, modpackName, fileName, loaderType, usingClientPack) {
-  let content = `**Install Modpack — Confirm**\n\n`;
+function buildConfirmView1(serverName, modpackName, fileName, loaderType) {
+  let content = "**Install Modpack — Confirm**\n\n";
   content += `**Server:** ${serverName}\n`;
   content += `**Modpack:** ${modpackName}\n`;
   content += `**File:** ${fileName}\n`;
   content += `**Loader:** ${loaderType ?? "unknown"}\n\n`;
-  content += `**WARNING: This will permanently wipe all server files. Back up your server before continuing.**`;
+  content += "**WARNING: This will permanently wipe all server files. Back up your server before continuing.**";
 
   return new ContainerBuilder()
     .setAccentColor(COLORS.PRIMARY)
@@ -204,10 +205,10 @@ function buildConfirmView1(serverName, modpackName, fileName, loaderType, usingC
     ));
 }
 
-function buildConfirmView2(serverName, modpackName, usingClientPack) {
-  let content = `**Install Modpack — Final Confirmation**\n\n`;
+function buildConfirmView2(serverName, modpackName) {
+  let content = "**Install Modpack — Final Confirmation**\n\n";
   content += `Installing **${modpackName}** on **${serverName}**.\n\n`;
-  content += `**Last chance — this will permanently delete all server files.**`;
+  content += "**Last chance — this will permanently delete all server files.**";
 
   return new ContainerBuilder()
     .setAccentColor(COLORS.PRIMARY)
@@ -295,7 +296,7 @@ async function runInstallation(i, state, discordId) {
   // g. Done
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
   if (usingClientPack) {
-    doneContent += `\n\n**Reminder:** A client modpack was used. The server may not function correctly without a dedicated server pack.`;
+    doneContent += "\n\n**Reminder:** A client modpack was used. The server may not function correctly without a dedicated server pack.";
   }
 
   const doneContainer = new ContainerBuilder()
@@ -456,7 +457,7 @@ module.exports = {
               let modpack;
               try {
                 modpack = await getModpackById(projectId);
-              } catch (e) {
+              } catch {
                 const errContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
                   .addTextDisplayComponents(text => text.setContent(`**Install Modpack**\n\n${getErrorMessage("CURSEFORGE_API_ERROR")}`))
@@ -579,8 +580,8 @@ module.exports = {
                 .setAccentColor(COLORS.PRIMARY)
                 .addTextDisplayComponents(text => text.setContent(
                   `**Install Modpack**\n**${modpackName}**.\n\n` +
-                  `**WARNING:** Client modpack selected.\n` +
-                  `It is recommended that you use a dedicated server pack. The modpack may not install correctly.`
+                  "**WARNING:** Client modpack selected.\n" +
+                  "It is recommended that you use a dedicated server pack. The modpack may not install correctly."
                 ))
                 .addSeparatorComponents(sep => sep)
                 .addActionRowComponents(row => row.setComponents(
@@ -604,7 +605,7 @@ module.exports = {
             }
 
             await i.editReply({
-              components: [ buildConfirmView1(selectedServerName, modpackName, targetFile.displayName, loaderType, false) ],
+              components: [ buildConfirmView1(selectedServerName, modpackName, targetFile.displayName, loaderType) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -625,14 +626,14 @@ module.exports = {
             }
 
             await i.editReply({
-              components: [ buildConfirmView1(selectedServerName, modpackName, targetFile.displayName, loaderType, true) ],
+              components: [ buildConfirmView1(selectedServerName, modpackName, targetFile.displayName, loaderType) ],
               flags: MessageFlags.IsComponentsV2
             });
 
           } else if (i.customId === "confirm-1") {
             await i.deferUpdate();
             await i.editReply({
-              components: [ buildConfirmView2(selectedServerName, modpackName, usingClientPack) ],
+              components: [ buildConfirmView2(selectedServerName, modpackName) ],
               flags: MessageFlags.IsComponentsV2
             });
 

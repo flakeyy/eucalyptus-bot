@@ -92,4 +92,7 @@ async function getFileById(modId, fileId) {
   return data.data || null;
 }
 
-module.exports = { getModpackById, getModpackFiles, detectLoaderType, findServerPack, findLinkedServerPackId, getFileById, parseProjectId, LOADER_MAP };
+module.exports = {
+  getModpackById, getModpackFiles, detectLoaderType, findServerPack,
+  findLinkedServerPackId, getFileById, parseProjectId, LOADER_MAP
+};
