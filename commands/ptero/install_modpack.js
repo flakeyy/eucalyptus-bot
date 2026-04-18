@@ -63,13 +63,43 @@ function getJavaImageForMCVersion(mcVersion) {
 }
 
 /* global TextEncoder, ReadableStream */
-// Streams the file from CurseForge directly into a Wings multipart upload.
-// Only a small chunk lives in memory at a time — no full-file buffering.
-async function streamModpackToServer(uploadUrl, downloadUrl, filename) {
+// Phase 1: downloads the full file into memory (tracking download progress).
+// Phase 2: streams buffered chunks to Wings via a pull-based ReadableStream (tracking upload progress).
+// The push-based approach buffered in the ReadableStream queue anyway, so memory usage is equivalent.
+async function streamModpackToServer(uploadUrl, downloadUrl, filename, onProgress) {
   const dlResponse = await fetch(downloadUrl);
   if (!dlResponse.ok) throw Object.assign(new Error(`Download failed: HTTP ${dlResponse.status}`), { isDownload: true });
 
   const fileSize = parseInt(dlResponse.headers.get("content-length") || "0", 10);
+  const hasSize = fileSize > 0;
+  let lastProgressAt = 0;
+  const THROTTLE_MS = 2500;
+
+  function fireProgress(dl, ul) {
+    if (!onProgress || !hasSize) return;
+    const now = Date.now();
+    if (now - lastProgressAt >= THROTTLE_MS) {
+      lastProgressAt = now;
+      onProgress(dl, ul, fileSize);
+    }
+  }
+
+  // Phase 1 — buffer download, fire download progress
+  const chunks = [];
+  let downloadBytes = 0;
+  const dlReader = dlResponse.body.getReader();
+  while (true) {
+    const { done, value } = await dlReader.read();
+    if (done) break;
+    chunks.push(value);
+    downloadBytes += value.length;
+    fireProgress(downloadBytes, 0);
+  }
+  // Snap to 100% download before upload begins
+  lastProgressAt = 0;
+  fireProgress(fileSize, 0);
+
+  // Phase 2 — stream buffered chunks to Wings, fire upload progress via pull-based ReadableStream
   const boundary = `WingsBoundary${Date.now()}`;
   const enc = new TextEncoder();
   const partHeader = enc.encode(
@@ -78,30 +108,43 @@ async function streamModpackToServer(uploadUrl, downloadUrl, filename) {
   const partFooter = enc.encode(`\r\n--${boundary}--\r\n`);
 
   const uploadHeaders = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
-  if (fileSize > 0) {
+  if (hasSize) {
     uploadHeaders["Content-Length"] = String(partHeader.length + fileSize + partFooter.length);
   }
 
-  const reader = dlResponse.body.getReader();
+  let uploadBytes = 0;
+  let chunkIdx = 0;
+  let headerSent = false;
+
   const body = new ReadableStream({
-    async start(controller) {
-      controller.enqueue(partHeader);
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-      } finally {
+    pull(controller) {
+      if (!headerSent) {
+        controller.enqueue(partHeader);
+        headerSent = true;
+      } else if (chunkIdx < chunks.length) {
+        const chunk = chunks[chunkIdx++];
+        uploadBytes += chunk.length;
+        fireProgress(fileSize, uploadBytes);
+        controller.enqueue(chunk);
+      } else {
         controller.enqueue(partFooter);
         controller.close();
       }
-    },
-    cancel() { reader.cancel().catch(() => {}); }
+    }
   });
 
   const uploadResponse = await fetch(uploadUrl, { method: "POST", headers: uploadHeaders, body, duplex: "half" });
   if (!uploadResponse.ok) throw Object.assign(new Error(`Upload failed: HTTP ${uploadResponse.status}`), { isUpload: true });
+}
+
+function buildProgressBar(downloadBytes, uploadBytes, fileSize, width = 20) {
+  const half = Math.floor(width / 2);
+  const dlPct = Math.min(downloadBytes / fileSize, 1);
+  const ulPct = Math.min(uploadBytes / fileSize, 1);
+  const dlBar = "█".repeat(Math.round(dlPct * half)) + "░".repeat(half - Math.round(dlPct * half));
+  const ulBar = "█".repeat(Math.round(ulPct * half)) + "░".repeat(half - Math.round(ulPct * half));
+  const totalMb = (fileSize / 1_048_576).toFixed(1);
+  return `\`[${dlBar}↓${ulBar}↑]\` ↓ ${Math.round(dlPct * 100)}% · ↑ ${Math.round(ulPct * 100)}% · ${totalMb} MB`;
 }
 
 const COLORS = {
@@ -227,15 +270,15 @@ async function updateProgress(i, message) {
   await i.editReply({ components: [ container ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
 }
 
-async function runInstallation(i, state, userId) {
+async function runInstallation(i, state, interaction) {
   const { serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
 
   // a. Stop server
   await updateProgress(i, "Stopping server...");
-  await setServerPowerState(serverId, userId, "stop").catch(() => {});
+  await setServerPowerState(serverId, interaction.user.id, "stop").catch(() => {});
   for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
     await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, userId);
+    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       const data = await resourceApi.body.json();
       if (data.attributes.current_state === "offline") break;
@@ -244,9 +287,9 @@ async function runInstallation(i, state, userId) {
 
   // b. Delete files
   await updateProgress(i, "Deleting server files...");
-  const files = await listServerFiles(serverId, userId, "/");
+  const files = await listServerFiles(serverId, interaction.user.id, "/");
   if (files && files.length > 0) {
-    await deleteServerFiles(serverId, userId, files.map(f => f.attributes.name));
+    await deleteServerFiles(serverId, interaction.user.id, files.map(f => f.attributes.name));
   }
 
   // c. Change egg (set MC_VERSION and correct Java Docker image)
@@ -266,7 +309,7 @@ async function runInstallation(i, state, userId) {
   await new Promise(r => setTimeout(r, 5000));
   for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
     await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, userId);
+    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       const data = await resourceApi.body.json();
       if (data.attributes.current_state !== "installing") break;
@@ -275,13 +318,15 @@ async function runInstallation(i, state, userId) {
 
   // e. Stream modpack from CurseForge → Wings (no full-file buffering)
   await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
-  const uploadUrl = await getFileUploadUrl(serverId, userId);
+  const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
   if (!uploadUrl) {
     await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
     return;
   }
   try {
-    await streamModpackToServer(uploadUrl, targetFile.downloadUrl, targetFile.displayName);
+    await streamModpackToServer(uploadUrl, targetFile.downloadUrl, targetFile.displayName, (dl, ul, total) => {
+      updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar(dl, ul, total)}`).catch(() => {});
+    });
   } catch (err) {
     msgLog.error(`[install-modpack] stream failed: ${err.message}`);
     const code = err.isUpload ? "MODPACK_FILE_UPLOAD_FAILED" : "MODPACK_FILE_DOWNLOAD_FAILED";
@@ -291,11 +336,11 @@ async function runInstallation(i, state, userId) {
 
   // f. Extract
   await updateProgress(i, "Extracting files...");
-  await decompressFile(serverId, userId, "/", targetFile.displayName);
+  await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
 
   // g. Done
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
-  msgLog.log(`${userId} | [install-modpack] install success: ${modpackName} | ${serverId} `);
+  msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
   if (usingClientPack) {
     doneContent += "\n\n**Reminder:** A client modpack was used. The server may not function correctly without a dedicated server pack.";
   }
@@ -653,7 +698,7 @@ module.exports = {
               mcVersion
             };
             msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] installing: ${modpackName} | ${selectedServerId}`);
-            await runInstallation(i, installState, interaction.user.id);
+            await runInstallation(i, installState, interaction);
 
           } else if (i.customId === "cancel") {
             await i.deferUpdate();

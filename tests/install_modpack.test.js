@@ -385,7 +385,7 @@ describe("runInstallation behavior", () => {
       { attributes: { name: "config" } }
     ] });
 
-    const p1 = runInstallation(mockInteraction, makeState(), "discord1");
+    const p1 = runInstallation(mockInteraction, makeState(), { user: { id: "discord1", username: "testuser" } });
     await jest.runAllTimersAsync();
     await p1;
 
@@ -400,7 +400,7 @@ describe("runInstallation behavior", () => {
     mockHappyPath();
 
     // config mock has modpack_eggs.forge = 3 and minecraft_nest_id = 1
-    const p2 = runInstallation(mockInteraction, makeState({ loaderType: "forge" }), "discord1");
+    const p2 = runInstallation(mockInteraction, makeState({ loaderType: "forge" }), { user: { id: "discord1", username: "testuser" } });
     await jest.runAllTimersAsync();
     await p2;
 
@@ -411,7 +411,7 @@ describe("runInstallation behavior", () => {
     mockHappyPath();
 
     // config mock has modpack_eggs.fabric = 4
-    const p3 = runInstallation(mockInteraction, makeState({ loaderType: "fabric" }), "discord1");
+    const p3 = runInstallation(mockInteraction, makeState({ loaderType: "fabric" }), { user: { id: "discord1", username: "testuser" } });
     await jest.runAllTimersAsync();
     await p3;
 
@@ -430,7 +430,7 @@ describe("runInstallation behavior", () => {
     serverFunctions.getFileUploadUrl.mockResolvedValue("https://wings.example.com/upload?token=x");
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 });
 
-    const p4 = runInstallation(mockInteraction, makeState(), "discord1");
+    const p4 = runInstallation(mockInteraction, makeState(), { user: { id: "discord1", username: "testuser" } });
     await jest.runAllTimersAsync();
     await p4;
 
@@ -448,7 +448,7 @@ describe("runInstallation behavior", () => {
     serverFunctions.changeServerEgg.mockResolvedValue(200);
     serverFunctions.getFileUploadUrl.mockResolvedValue(null);
 
-    const p5 = runInstallation(mockInteraction, makeState(), "discord1");
+    const p5 = runInstallation(mockInteraction, makeState(), { user: { id: "discord1", username: "testuser" } });
     await jest.runAllTimersAsync();
     await p5;
 
@@ -458,7 +458,7 @@ describe("runInstallation behavior", () => {
   test("shows client pack reminder in done message when usingClientPack is true", async () => {
     mockHappyPath();
 
-    const p6 = runInstallation(mockInteraction, makeState({ usingClientPack: true }), "discord1");
+    const p6 = runInstallation(mockInteraction, makeState({ usingClientPack: true }), { user: { id: "discord1", username: "testuser" } });
     await jest.runAllTimersAsync();
     await p6;
 
