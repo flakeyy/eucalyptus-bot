@@ -213,7 +213,7 @@ async function handleUserCreate(interaction) {
   }
 
   try {
-    db.createUser(targetUser.id, panelUsername, panelId, maxMemory, permissions, null);
+    db.createUser(targetUser.id, panelUsername, panelId, maxMemory, permissions & ~PERMISSIONS.IMMUNITY, null);
     const created = db.getUserByDiscordId(targetUser.id);
     await interaction.editReply({
       content: `User created successfully!\n\n${formatUserInfo(created, `Created — ${targetUser.username}`)}`,
@@ -235,6 +235,14 @@ async function handleUserEdit(interaction) {
   if (!existing) {
     await interaction.editReply({
       content: `No database entry found for <@${targetUser.id}> (\`${targetUser.id}\`).`,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  if (existing.permissions & PERMISSIONS.IMMUNITY) {
+    await interaction.editReply({
+      content: "This user's account is protected and cannot be modified.",
       flags: MessageFlags.Ephemeral
     });
     return;
@@ -419,10 +427,11 @@ async function handleUserEdit(interaction) {
 
     } else if (i.customId === "admin-perm-save") {
       if (pendingPermissions === null) return;
-      logAdminUserAction(i, "perm-save", `bitmask: ${pendingPermissions} (0x${pendingPermissions.toString(16).toUpperCase()})`);
+      const safePermissions = pendingPermissions & ~PERMISSIONS.IMMUNITY;
+      logAdminUserAction(i, "perm-save", `bitmask: ${safePermissions} (0x${safePermissions.toString(16).toUpperCase()})`);
       await i.deferUpdate();
       try {
-        db.updateUser(targetUser.id, "permissions", pendingPermissions);
+        db.updateUser(targetUser.id, "permissions", safePermissions);
         const updated = db.getUserByDiscordId(targetUser.id);
         Object.assign(existing, updated);
         const updatedAvailableMemory = await getAvailableUserMemory(updated.panelId, targetUser.id);
@@ -471,6 +480,14 @@ async function handleUserDelete(interaction) {
   if (!existing) {
     await interaction.editReply({
       content: `No database entry found for <@${targetUser.id}> (\`${targetUser.id}\`).`,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  if (existing.permissions & PERMISSIONS.IMMUNITY) {
+    await interaction.editReply({
+      content: "This user's account is protected and cannot be removed.",
       flags: MessageFlags.Ephemeral
     });
     return;
@@ -552,6 +569,14 @@ async function handleAdminServers(interaction) {
   if (!targetDbUser) {
     await interaction.editReply({
       content: `No database entry found for <@${targetDiscordId}>. Add them with \`/admin user create\` first.`,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  if (targetDbUser.permissions & PERMISSIONS.IMMUNITY) {
+    await interaction.editReply({
+      content: "This user's account is protected and cannot be modified.",
       flags: MessageFlags.Ephemeral
     });
     return;

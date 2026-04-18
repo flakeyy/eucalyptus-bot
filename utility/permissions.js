@@ -10,7 +10,8 @@ const PERMISSIONS = {
   EDIT_SERVER_PROPERTIES: 1 << 3, // 8
   CREATE_SERVER: 1 << 4, // 16
 
-  ADMINISTRATOR: 1 << 16 // 65536
+  ADMINISTRATOR: 1 << 16, // 65536
+  IMMUNITY: 1 << 17 // 131072 — assigned only via /init; hidden and non-modifiable through any UI
 };
 
 function hasPermission(userId, permission) {

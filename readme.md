@@ -7,14 +7,16 @@ A Discord bot integration for the Pterodactyl/Pyrodactyl Panel.
 
 ## Description
 
-A simple discord bot that allows adminsistrators and users to manage their servers from within Discord. Made to extend functionality currently unavailable natively within the panel.
+A simple discord bot that allows administrators and users to manage their servers from within Discord. Made to extend functionality currently unavailable natively within the panel.
 
 ## Features
 
-- create new servers
-- view available eggs, nests, nodes
-- view/edit servers
-- suspend/unsuspend/delete servers
+- Create and manage servers interactively
+- Install CurseForge modpacks onto Minecraft servers
+- View available eggs, nests, and nodes
+- View and edit server properties
+- Suspend, unsuspend, and delete servers
+- Admin tools for managing bot users and their servers
 
 ## Installation
 
@@ -31,14 +33,13 @@ npm install
 3. Configuration
 - Copy `config.json.sample` → `config.json` and fill in the values
 - Create a `.env` file with the required environment variables (see below)
-- Copy `users.json.sample` → `users.json` and add your users — the bot will migrate this into the database on first boot
 
 4. Start the bot
 ```bash
 node index.js
 ```
 
-The bot creates a `pterobot.db` SQLite database on first run. If `users.json` and `blacklist.json` exist, their data is automatically imported and the files are no longer needed afterward.
+The bot creates a `pterobot.db` SQLite database on first run.
 
 ### Environment variables (`.env`)
 
@@ -57,27 +58,38 @@ The bot creates a `pterobot.db` SQLite database on first run. If `users.json` an
 | Field | Description |
 |---|---|
 | `debug` | Enable verbose API logging |
-| `minecraft_nest_id` | Nest ID used for server creation |
+| `minecraft_nest_id` | Nest ID used for Minecraft server creation |
 | `default_overhead_mb` | Default memory overhead added to new servers |
 | `java_overhead_mb` | Additional overhead for Java-based servers |
+| `modpack_eggs` | Egg IDs for each modloader (`forge`, `fabric`, `neoforge`, `quilt`) |
+| `mc_version_variable` | Panel egg variable name for the Minecraft version (e.g. `MC_VERSION`) |
+| `java_images` | Docker image map keyed by Java version (8, 11, 17, 21) |
+| `minecraft_java_map` | Map of Minecraft version prefixes to required Java version |
 
-### users.json format (for initial import)
+## First-run setup
 
-```json
-{
-  "users": [
-    {
-      "discordId": "123123123123123",
-      "panelUsername": "user1",
-      "panelId": 1,
-      "maximumAllowedMemory": -1,
-      "permissions": 65536
-    }
-  ]
-}
+When the database has no users, the bot prints a one-time bootstrap token to the console on startup:
+
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+NO USERS FOUND — FIRST RUN SETUP
+Bootstrap token: <token>
+Run /init in Discord with this token to create the first admin account.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-`maximumAllowedMemory` is in MB; `-1` means unlimited. `permissions` is a bitwise integer:
+In Discord, run:
+```
+/init token:<token> panel_username:<your panel username> panel_id:<your numeric panel user ID>
+```
+
+This creates your account with Administrator and Immunity permissions. The `/init` command is disabled permanently once any user exists. Use `/admin user create` to add additional users afterward.
+
+> **Fallback:** if needed, you can insert a user directly into `pterobot.db` using any SQLite client. Set `permissions` to `196608` (Administrator + Immunity) for the first admin.
+
+## Permissions
+
+`permissions` is a bitwise integer stored per user:
 
 | Flag | Value | Description |
 |---|---|---|
@@ -88,14 +100,26 @@ The bot creates a `pterobot.db` SQLite database on first run. If `users.json` an
 | `CREATE_SERVER` | 16 | Create new servers |
 | `ADMINISTRATOR` | 65536 | Bypass all permission checks |
 
+`maximumAllowedMemory` is in MB; `-1` means unlimited.
+
+### Immunity
+
+The user created via `/init` is granted a hidden Immunity flag (value `131072`) in addition to Administrator. Immunity is not visible or toggleable in the admin UI. Any user holding it cannot have their profile edited, permissions changed, or account deleted by other administrators through the bot. It cannot be assigned to other users.
+
 ## Usage
 
-- `/servers` - Opens a menu for the user to navigate through their owned servers.
-- `/service` - Opens a menu that shows which nodes, nests, and eggs are available.
-
-- `/info` - Retrieves general bot/panel information.
-- `/help` - Displays available commands.
-- `/set-client-key` - Sets client API key (required to run most commands).
+- `/servers` — Interactive server management menu (view, edit, suspend/unsuspend/delete).
+- `/gen-server` — Interactive menu to create a new server.
+- `/install-modpack` — Install a CurseForge modpack onto one of your Minecraft servers.
+- `/service` — View service information including nodes, nests, and eggs.
+- `/info` — Retrieves current service information.
+- `/help` — Displays available commands.
+- `/set-client-key` — Sets your client API key (required for most commands).
+- `/admin user view` — View a user's bot profile.
+- `/admin user create` — Add a Discord user to the bot database.
+- `/admin user edit` — Interactively edit a user's bot profile.
+- `/admin user delete` — Remove a user from the bot database.
+- `/admin servers` — Manage a user's servers as admin (bypasses memory limits).
 
 ## License
 
