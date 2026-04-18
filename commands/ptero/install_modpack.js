@@ -402,7 +402,7 @@ module.exports = {
                 text.setContent(`**Selected:** ${selectedServerName} (\`${selectedServerId}\`)`)
               )
               .addActionRowComponents(row => row.setComponents(
-                new ButtonBuilder().setCustomId("proceed-to-url").setLabel("Enter Modpack URL").setStyle(ButtonStyle.Primary)
+                new ButtonBuilder().setCustomId("proceed-to-url").setLabel("Enter Modpack ID").setStyle(ButtonStyle.Primary)
               ));
 
             await i.update({ components: [ selectedContainer ], flags: MessageFlags.IsComponentsV2 });
@@ -564,7 +564,7 @@ module.exports = {
               const noFileContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.PRIMARY)
                 .addTextDisplayComponents(text => text.setContent(
-                  `**Install Modpack**\n\n${getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED")}\n\nNo download URL is available for this file.`
+                  `**Install Modpack**\n\n${getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED")}\n\nNo download is available for this file.`
                 ))
                 .addSeparatorComponents(sep => sep)
                 .addActionRowComponents(row => row.setComponents(
