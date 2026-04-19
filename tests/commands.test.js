@@ -652,7 +652,7 @@ describe("Pterobot Command Tests", () => {
       permissions.authenticateUserForPermission.mockReturnValue(true);
       database.getUserByDiscordId.mockReturnValue(null);
 
-      const interaction = makeInteraction({ group: null, sub: "servers" });
+      const interaction = makeInteraction({ group: "servers", sub: "manage" });
       await admin(interaction);
 
       expect(interaction.editReply).toHaveBeenCalledWith(
@@ -671,7 +671,7 @@ describe("Pterobot Command Tests", () => {
       });
       helpers.userHasClientApiKey.mockReturnValue(false);
 
-      const interaction = makeInteraction({ group: null, sub: "servers" });
+      const interaction = makeInteraction({ group: "servers", sub: "manage" });
       await admin(interaction);
 
       expect(interaction.editReply).toHaveBeenCalledWith(

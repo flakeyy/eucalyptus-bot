@@ -4,6 +4,7 @@ const msgLog = require("../../utility/logger.js");
 const { getUserId, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getClientServers, setServerPowerState, getServerInfoById, getServerResourceInfoById, isServerSuspended, suspendServer, unsuspendServer, getAvailableUserMemory, deleteServer, editServerInfo } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
+const { PterodactylWebSocket } = require("../../utility/pterodactyl_websocket.js");
 
 const COLORS = {
   PRIMARY: 0x6b34eb,
@@ -11,17 +12,9 @@ const COLORS = {
 };
 
 const COLLECTOR_IDLE_TIMEOUT = 300_000;
-
-const AUTO_REFRESH_INTERVALS = {
-  RUNNING: 5000,
-  OFFLINE: null,
-  SUSPENDED: null
-};
-
-const POWER_ACTION_CONFIG = {
-  MAX_ATTEMPTS: 30,
-  POLL_INTERVAL: 1000
-};
+const WS_THROTTLE_MS = 3000;
+const CONSOLE_MAX_LINES = 20;
+const CONSOLE_PREVIEW_LINES = 5;
 
 const HTTP_STATUS_CODES = {
   OK: 200,
@@ -63,7 +56,7 @@ function buildServerSelectMenu(serverObjects, selectedServerId = null, disabled 
   return selectMenu;
 }
 
-function buildMainServerView(serverObjects, currentSelectedServer, serverResourceInfo = null, statusMessage = null) {
+function buildMainServerView(serverObjects, currentSelectedServer, serverResourceInfo = null, statusMessage = null, consoleLines = []) {
   const selectMenu = buildServerSelectMenu(
     serverObjects,
     currentSelectedServer?.attributes?.identifier
@@ -76,27 +69,37 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
     );
 
   if (currentSelectedServer) {
+    const limits = currentSelectedServer.attributes.limits;
     let detailsText = "";
 
     if (serverResourceInfo && serverResourceInfo.attributes) {
       const memUsageMB = (serverResourceInfo.attributes.resources.memory_bytes / UNIT_CONVERSIONS.BYTES_TO_MB).toFixed(0);
       const diskUsageGB = (serverResourceInfo.attributes.resources.disk_bytes / UNIT_CONVERSIONS.BYTES_TO_GB).toFixed(2);
       const cpuUsage = (serverResourceInfo.attributes.resources.cpu_absolute).toFixed(2);
+      const diskLimitGB = limits.disk > 0
+        ? `${(limits.disk / 1024).toFixed(2)} GB`
+        : null;
+      const diskText = diskLimitGB ? `${diskUsageGB} / ${diskLimitGB}` : `${diskUsageGB} GB`;
       const state = serverResourceInfo.attributes.is_suspended
         ? "Suspended"
-        : `Active, ${serverResourceInfo.attributes.current_state}`;
+        : `Active — ${serverResourceInfo.attributes.current_state}`;
 
       detailsText = `**Status:** ${state}\n` +
-                `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-                `**Memory:** ${memUsageMB}/${currentSelectedServer.attributes.limits.memory} MB\n` +
-                `**Disk:** ${diskUsageGB} GB\n` +
-                `**CPU Threads:** ${cpuUsage}/${(currentSelectedServer.attributes.limits.cpu).toFixed(2)}%\n` +
-                `**Node:** ${currentSelectedServer.attributes.node}`;
+        `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
+        `**Memory:** ${memUsageMB} / ${limits.memory} MB\n` +
+        `**Disk:** ${diskText}\n` +
+        `**CPU:** ${cpuUsage}%\n` +
+        `**Node:** ${currentSelectedServer.attributes.node}`;
     } else {
+      const diskLimitGB = limits.disk > 0 ? `${(limits.disk / 1024).toFixed(2)} GB` : null;
+      const diskText = diskLimitGB ? `— / ${diskLimitGB}` : "—";
+
       detailsText = "**Status:** Suspended\n" +
-                `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-                `**Memory Limit:** ${currentSelectedServer.attributes.limits.memory} MB\n` +
-                `**Node:** ${currentSelectedServer.attributes.node}`;
+        `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
+        `**Memory:** — / ${limits.memory} MB\n` +
+        `**Disk:** ${diskText}\n` +
+        "**CPU:** —\n" +
+        `**Node:** ${currentSelectedServer.attributes.node}`;
     }
 
     if (statusMessage) {
@@ -109,11 +112,22 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
       .addTextDisplayComponents(text =>
         text.setContent(detailsText)
       )
-      .addSeparatorComponents(separator => separator)
+      .addSeparatorComponents(separator => separator);
+
+    if (consoleLines.length > 0) {
+      const preview = consoleLines.slice(-CONSOLE_PREVIEW_LINES);
+      container
+        .addTextDisplayComponents(text =>
+          text.setContent("```\n" + preview.join("\n") + "\n```")
+        )
+        .addSeparatorComponents(separator => separator);
+    }
+
+    container
       .addActionRowComponents(actionRow =>
         actionRow.setComponents(
           new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId("refresh").setLabel("Refresh").setStyle(ButtonStyle.Secondary)
+          new ButtonBuilder().setCustomId("console-view").setLabel("Console").setStyle(ButtonStyle.Secondary).setDisabled(isSuspended)
         )
       )
       .addActionRowComponents(actionRow =>
@@ -128,78 +142,78 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
   return container;
 }
 
-async function handlePowerAction(action, server, userId, updateLoadingMessage) {
-  try {
-    const apiResult = await setServerPowerState(
-      server.attributes.identifier,
-      userId,
-      action
-    );
-
-    if (apiResult.statusCode !== HTTP_STATUS_CODES.NO_CONTENT) {
-      return {
-        success: false,
-        message: `Server ${action} command returned status code: ${apiResult.statusCode}`
-      };
-    }
-
-    const expectedStates = {
-      "start": [ "running" ],
-      "restart": [ "running" ],
-      "stop": [ "offline" ]
-    };
-
-    const actionVerbs = {
-      "start": "Starting",
-      "restart": "Restarting",
-      "stop": "Stopping"
-    };
-
-    const targetStates = expectedStates[action];
-    const maxAttempts = POWER_ACTION_CONFIG.MAX_ATTEMPTS;
-    const pollInterval = POWER_ACTION_CONFIG.POLL_INTERVAL;
-    const verb = actionVerbs[action] || action;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const dots = ".".repeat((attempt % 3) + 1);
-      if (updateLoadingMessage) {
-        await updateLoadingMessage(`${verb} server${dots}`);
-      }
-
-      await new Promise(resolve => setTimeout(resolve, pollInterval));
-
-      const resourceApi = await getServerResourceInfoById(server.attributes.identifier, userId);
-      if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-        const resourceData = await resourceApi.body.json();
-        const currentState = resourceData.attributes.current_state;
-
-        if (targetStates.includes(currentState)) {
-          return {
-            success: true,
-            message: `Server ${action} completed successfully!`,
-            resourceInfo: resourceData
-          };
-        }
-      }
-    }
-
-    return {
-      success: true,
-      message: `Server ${action} command sent, but state change is taking longer than expected.\nTry manually refreshing or check the server panel.`,
-      timeout: true
-    };
-  } catch (error) {
-    msgLog.error(`Error handling power action ${action}: ${error.message}`);
-    return {
-      success: false,
-      message: `Failed to ${action} server. Please try again.`
-    };
+function buildConsoleView(serverName, lines) {
+  let consoleText = "No output yet.";
+  if (lines.length > 0) {
+    const subset = lines.slice();
+    let text;
+    do {
+      text = "```\n" + subset.join("\n") + "\n```";
+      if (text.length <= 4000) break;
+      subset.shift();
+    } while (subset.length > 0);
+    if (subset.length > 0) consoleText = text;
   }
+
+  return new ContainerBuilder()
+    .setAccentColor(COLORS.PRIMARY)
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
+      )
+    )
+    .addTextDisplayComponents(text =>
+      text.setContent(`**${serverName}** — Console`)
+    )
+    .addSeparatorComponents(separator => separator)
+    .addTextDisplayComponents(text =>
+      text.setContent(consoleText)
+    )
+    .addSeparatorComponents(separator => separator)
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        new ButtonBuilder().setCustomId("send-command").setLabel("Send Command").setStyle(ButtonStyle.Primary)
+      )
+    );
+}
+
+function buildSettingsView(serverName, isSuspended) {
+  return new ContainerBuilder()
+    .setAccentColor(COLORS.PRIMARY)
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
+      )
+    )
+    .addTextDisplayComponents(text =>
+      text.setContent(`**${serverName}** — Settings`)
+    )
+    .addSeparatorComponents(separator => separator)
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        new ButtonBuilder().setCustomId("edit-server-name").setLabel("Edit Name").setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId("edit-server-memory").setLabel("Edit Memory").setStyle(ButtonStyle.Primary)
+      )
+    )
+    .addSeparatorComponents(separator => separator)
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        isSuspended
+          ? new ButtonBuilder().setCustomId("unsuspend-server").setLabel("Unsuspend Server").setStyle(ButtonStyle.Success)
+          : new ButtonBuilder().setCustomId("suspend-server").setLabel("Suspend Server").setStyle(ButtonStyle.Danger)
+      )
+    )
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        new ButtonBuilder().setCustomId("delete-server").setLabel("Delete Server").setStyle(ButtonStyle.Danger)
+      )
+    );
 }
 
 module.exports = {
   buildServerSelectMenu,
   buildMainServerView,
+  buildConsoleView,
 
   data: new SlashCommandBuilder()
     .setName("servers")
@@ -256,90 +270,78 @@ module.exports = {
       let currentSelectedServer = null;
       let currentServerResourceInfo = null;
       let currentView = "main";
-      let autoRefreshInterval = null;
+      let activeWs = null;
+      let lastDiscordEditTime = 0;
+      let consoleBuffer = [];
 
-      const clearAutoRefresh = () => {
-        if (autoRefreshInterval) {
-          clearInterval(autoRefreshInterval);
-          autoRefreshInterval = null;
+      const disconnectWebSocket = () => {
+        if (activeWs) {
+          activeWs.close();
+          activeWs = null;
         }
       };
 
-      const startAutoRefresh = async () => {
-        clearAutoRefresh();
+      const connectWebSocket = serverId => {
+        disconnectWebSocket();
 
-        if (!currentSelectedServer || currentView !== "main") {
-          return;
-        }
+        if (!currentSelectedServer || !currentServerResourceInfo) return;
 
-        const refreshServerInfo = async () => {
-          try {
-            if (!currentSelectedServer || currentView !== "main") {
-              clearAutoRefresh();
-              return;
+        const ws = new PterodactylWebSocket(serverId, interaction.user.id);
+        activeWs = ws;
+
+        ws.on("stats", async resourceInfo => {
+          currentServerResourceInfo = resourceInfo;
+          const now = Date.now();
+          if (now - lastDiscordEditTime < WS_THROTTLE_MS || currentView !== "main") return;
+          lastDiscordEditTime = now;
+          await interaction.editReply({
+            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(() => disconnectWebSocket());
+        });
+
+        ws.on("consoleLine", async line => {
+          // eslint-disable-next-line no-control-regex
+          const stripped = line.replace(/\x1b\[[0-9;]*m/g, "");
+          consoleBuffer.push(stripped);
+          if (consoleBuffer.length > CONSOLE_MAX_LINES) consoleBuffer.shift();
+
+          const now = Date.now();
+          if (now - lastDiscordEditTime < WS_THROTTLE_MS || currentView !== "console") return;
+          lastDiscordEditTime = now;
+          await interaction.editReply({
+            components: [ buildConsoleView(currentSelectedServer.attributes.name, consoleBuffer) ],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(() => disconnectWebSocket());
+        });
+
+        ws.on("powerStateChange", async state => {
+          if (currentServerResourceInfo?.attributes) {
+            currentServerResourceInfo.attributes.current_state = state;
+            if (state === "offline") {
+              currentServerResourceInfo.attributes.resources.cpu_absolute = 0;
+              currentServerResourceInfo.attributes.resources.memory_bytes = 0;
             }
-
-            const selectedServerId = currentSelectedServer.attributes.identifier;
-            const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
-
-            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-              const newResourceInfo = await serverResourceApi.body.json();
-              currentServerResourceInfo = newResourceInfo;
-
-              const updatedContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo);
-
-              await interaction.editReply({
-                components: [ updatedContainer ],
-                flags: MessageFlags.IsComponentsV2
-              }).catch(() => {
-                clearAutoRefresh();
-              });
-
-              const currentState = newResourceInfo.attributes.current_state;
-              const isSuspended = newResourceInfo.attributes.is_suspended;
-              const currentInterval = currentState === "running"
-                ? AUTO_REFRESH_INTERVALS.RUNNING
-                : AUTO_REFRESH_INTERVALS.OFFLINE;
-
-              if (isSuspended || currentInterval === null) {
-                clearAutoRefresh();
-              } else if (autoRefreshInterval && autoRefreshInterval._interval !== currentInterval) {
-                clearAutoRefresh();
-                autoRefreshInterval = setInterval(refreshServerInfo, currentInterval);
-              }
-            } else {
-              currentServerResourceInfo = null;
-              clearAutoRefresh();
-
-              const updatedContainer = buildMainServerView(serverObjects, currentSelectedServer, null);
-              await interaction.editReply({
-                components: [ updatedContainer ],
-                flags: MessageFlags.IsComponentsV2
-              }).catch(() => {});
-            }
-          } catch (error) {
-            msgLog.error(`Auto-refresh error: ${error.message}`);
-            clearAutoRefresh();
           }
-        };
+          if (currentView !== "main") return;
+          await interaction.editReply({
+            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(() => disconnectWebSocket());
+        });
 
-        let refreshInterval = AUTO_REFRESH_INTERVALS.OFFLINE;
+        ws.on("error", err => {
+          msgLog.error(`[server-menu] WS error for ${serverId}: ${err.message}`);
+        });
 
-        if (currentServerResourceInfo) {
-          const isSuspended = currentServerResourceInfo.attributes.is_suspended;
-          if (isSuspended) {
-            return;
-          }
+        ws.on("close", () => {
+          if (activeWs === ws) activeWs = null;
+        });
 
-          const currentState = currentServerResourceInfo.attributes.current_state;
-          refreshInterval = currentState === "running"
-            ? AUTO_REFRESH_INTERVALS.RUNNING
-            : AUTO_REFRESH_INTERVALS.OFFLINE;
-        }
-
-        if (refreshInterval !== null) {
-          autoRefreshInterval = setInterval(refreshServerInfo, refreshInterval);
-        }
+        ws.connect().catch(err => {
+          msgLog.error(`[server-menu] WS connect failed for ${serverId}: ${err.message}`);
+          activeWs = null;
+        });
       };
 
       const createDisabledMenu = errorKey => {
@@ -363,8 +365,7 @@ module.exports = {
             .addSeparatorComponents(separator => separator)
             .addActionRowComponents(actionRow =>
               actionRow.setComponents(
-                new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary).setDisabled(true),
-                new ButtonBuilder().setCustomId("refresh").setLabel("Refresh").setStyle(ButtonStyle.Secondary).setDisabled(true)
+                new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary).setDisabled(true)
               )
             )
             .addActionRowComponents(actionRow =>
@@ -386,10 +387,32 @@ module.exports = {
         msgLog.log(`${i.user.username}/${i.user.id} | [server-menu] ${action}${serverCtx}${extra ? ` | ${extra}` : ""}`);
       };
 
+      const refreshCurrentServer = async serverId => {
+        const res = await getServerInfoById(serverId, interaction.user.id);
+        if (res.statusCode === HTTP_STATUS_CODES.OK) {
+          const updated = await res.body.json();
+          const idx = serverObjects.data.findIndex(s => s.attributes.identifier === serverId);
+          if (idx !== -1) serverObjects.data[idx] = updated;
+          currentSelectedServer = updated;
+        }
+      };
+
+      const buildModalErrorView = message => new ContainerBuilder()
+        .setAccentColor(COLORS.PRIMARY)
+        .addActionRowComponents(actionRow =>
+          actionRow.setComponents(
+            new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
+          )
+        )
+        .addTextDisplayComponents(text =>
+          text.setContent(`**Server Settings**\n\n${message}`)
+        );
+
       collector.on("collect", async i => {
         try {
           if (i.customId === "server-selection") {
-            clearAutoRefresh();
+            disconnectWebSocket();
+            consoleBuffer = [];
 
             const selectedServerId = i.values[0];
             msgLog.debugExtended(`${i.user.username}/${i.user.id} | [servers] select-server | ${selectedServerId}`);
@@ -401,11 +424,9 @@ module.exports = {
               return;
             }
 
-            const selectedServer = serverObjects.data.find(
+            currentSelectedServer = serverObjects.data.find(
               server => server.attributes.identifier === selectedServerId
             );
-
-            currentSelectedServer = selectedServer;
 
             const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
             if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
@@ -414,18 +435,16 @@ module.exports = {
               currentServerResourceInfo = null;
             }
 
-            const updatedContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo);
-
             currentView = "main";
 
             await i.update({
-              components: [ updatedContainer ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
-            startAutoRefresh();
+            connectWebSocket(selectedServerId);
           } else if (i.customId === "server-settings") {
-            clearAutoRefresh();
+            disconnectWebSocket();
 
             await i.deferUpdate();
 
@@ -439,173 +458,33 @@ module.exports = {
               currentServerResourceInfo = null;
             }
 
-            const settingsContainer = new ContainerBuilder()
-              .setAccentColor(COLORS.PRIMARY)
-              .addActionRowComponents(actionRow =>
-                actionRow.setComponents(
-                  new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
-                )
-              )
-              .addTextDisplayComponents(text =>
-                text.setContent(`**${currentSelectedServer.attributes.name}** settings\n\n`)
-              )
-              .addActionRowComponents(actionRow =>
-                actionRow.setComponents(
-                  new ButtonBuilder().setCustomId("edit-server-name").setLabel("Edit Name").setStyle(ButtonStyle.Primary),
-                  new ButtonBuilder().setCustomId("edit-server-memory").setLabel("Edit Memory").setStyle(ButtonStyle.Primary)
-                )
-              )
-              .addSeparatorComponents(separator => separator)
-              .addActionRowComponents(actionRow =>
-                actionRow.setComponents(
-                  isSuspended
-                    ? new ButtonBuilder().setCustomId("unsuspend-server").setLabel("Unsuspend Server").setStyle(ButtonStyle.Success)
-                    : new ButtonBuilder().setCustomId("suspend-server").setLabel("Suspend Server").setStyle(ButtonStyle.Danger)
-                )
-              )
-              .addActionRowComponents(actionRow =>
-                actionRow.setComponents(
-                  new ButtonBuilder().setCustomId("delete-server").setLabel("Delete Server").setStyle(ButtonStyle.Danger)
-                )
-              );
-
             currentView = "settings";
 
             await i.editReply({
-              components: [ settingsContainer ],
+              components: [ buildSettingsView(currentSelectedServer.attributes.name, isSuspended) ],
               flags: MessageFlags.IsComponentsV2
             });
-          } else if (i.customId === "power-start") {
-            logMenuAction(i, "power-start");
+          } else if ([ "power-start", "power-restart", "power-stop" ].includes(i.customId)) {
+            const action = i.customId.replace("power-", "");
+            logMenuAction(i, i.customId);
             await i.deferUpdate();
 
-            const loadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, "Starting server.");
+            const apiResult = await setServerPowerState(
+              currentSelectedServer.attributes.identifier,
+              interaction.user.id,
+              action
+            );
+
+            const message = apiResult.statusCode === HTTP_STATUS_CODES.NO_CONTENT
+              ? `${action.charAt(0).toUpperCase() + action.slice(1)} command sent.`
+              : `Failed to send ${action} command (status ${apiResult.statusCode}).`;
+
             await i.editReply({
-              components: [ loadingContainer ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
-            const updateLoadingMessage = async message => {
-              const updatedLoadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message);
-              await i.editReply({
-                components: [ updatedLoadingContainer ],
-                flags: MessageFlags.IsComponentsV2
-              }).catch(() => {});
-            };
-
-            const result = await handlePowerAction("start", currentSelectedServer, interaction.user.id, updateLoadingMessage);
-
-            if (result.resourceInfo) {
-              currentServerResourceInfo = result.resourceInfo;
-            }
-
-            const statusMessage = result.success ? `${result.message}` : `${result.message}`;
-            const updatedContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, statusMessage);
-
-            await i.editReply({
-              components: [ updatedContainer ],
-              flags: MessageFlags.IsComponentsV2
-            });
-
-            startAutoRefresh();
-          } else if (i.customId === "power-restart") {
-            logMenuAction(i, "power-restart");
-            await i.deferUpdate();
-
-            const loadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, "Restarting server.");
-            await i.editReply({
-              components: [ loadingContainer ],
-              flags: MessageFlags.IsComponentsV2
-            });
-
-            const updateLoadingMessage = async message => {
-              const updatedLoadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message);
-              await i.editReply({
-                components: [ updatedLoadingContainer ],
-                flags: MessageFlags.IsComponentsV2
-              }).catch(() => {});
-            };
-
-            const result = await handlePowerAction("restart", currentSelectedServer, interaction.user.id, updateLoadingMessage);
-
-            if (result.resourceInfo) {
-              currentServerResourceInfo = result.resourceInfo;
-            }
-
-            const statusMessage = result.success ? `${result.message}` : `${result.message}`;
-            const updatedContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, statusMessage);
-
-            await i.editReply({
-              components: [ updatedContainer ],
-              flags: MessageFlags.IsComponentsV2
-            });
-
-            startAutoRefresh();
-          } else if (i.customId === "power-stop") {
-            logMenuAction(i, "power-stop");
-            await i.deferUpdate();
-
-            const loadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, "Stopping server.");
-            await i.editReply({
-              components: [ loadingContainer ],
-              flags: MessageFlags.IsComponentsV2
-            });
-
-            const updateLoadingMessage = async message => {
-              const updatedLoadingContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message);
-              await i.editReply({
-                components: [ updatedLoadingContainer ],
-                flags: MessageFlags.IsComponentsV2
-              }).catch(() => {});
-            };
-
-            const result = await handlePowerAction("stop", currentSelectedServer, interaction.user.id, updateLoadingMessage);
-
-            if (result.resourceInfo) {
-              currentServerResourceInfo = result.resourceInfo;
-            }
-
-            const statusMessage = result.success ? `${result.message}` : `${result.message}`;
-            const updatedContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, statusMessage);
-
-            await i.editReply({
-              components: [ updatedContainer ],
-              flags: MessageFlags.IsComponentsV2
-            });
-
-            startAutoRefresh();
-          } else if (i.customId === "refresh") {
-            await i.deferUpdate();
-
-            const selectedServerId = currentSelectedServer.attributes.identifier;
-            const selectedServerObject = await getServerInfoById(selectedServerId, interaction.user.id);
-
-            if (selectedServerObject.statusCode === HTTP_STATUS_CODES.OK) {
-              const updatedServerData = await selectedServerObject.body.json();
-              const serverIndex = serverObjects.data.findIndex(
-                server => server.attributes.identifier === selectedServerId
-              );
-              if (serverIndex !== -1) {
-                serverObjects.data[serverIndex] = updatedServerData;
-                currentSelectedServer = updatedServerData;
-              }
-            }
-
-            const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
-            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-              currentServerResourceInfo = await serverResourceApi.body.json();
-            } else {
-              currentServerResourceInfo = null;
-            }
-
-            const refreshedContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo);
-
-            await i.editReply({
-              components: [ refreshedContainer ],
-              flags: MessageFlags.IsComponentsV2
-            });
-
-            startAutoRefresh();
+            connectWebSocket(currentSelectedServer.attributes.identifier);
           } else if (i.customId === "edit-server-name") {
             const nameModal = new ModalBuilder()
               .setCustomId("edit-name-modal")
@@ -638,19 +517,8 @@ module.exports = {
               logMenuAction(i, "edit-server-name:submit", `new name: ${newName}`);
 
               if (!newName || newName.length === 0) {
-                const errorContainer = new ContainerBuilder()
-                  .setAccentColor(COLORS.PRIMARY)
-                  .addActionRowComponents(actionRow =>
-                    actionRow.setComponents(
-                      new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
-                    )
-                  )
-                  .addTextDisplayComponents(text =>
-                    text.setContent(`**Server Settings**\n\n${getErrorMessage("INVALID_SERVER_NAME")}`)
-                  );
-
                 await modalSubmit.editReply({
-                  components: [ errorContainer ],
+                  components: [ buildModalErrorView(getErrorMessage("INVALID_SERVER_NAME")) ],
                   flags: MessageFlags.IsComponentsV2
                 });
                 return;
@@ -664,35 +532,20 @@ module.exports = {
 
               let message;
               if (updateStatusCode === HTTP_STATUS_CODES.OK) {
-                message = `Server name updated to **${newName}**!`;
-
-                const selectedServerId = currentSelectedServer.attributes.identifier;
-                const selectedServerObject = await getServerInfoById(selectedServerId, interaction.user.id);
-
-                if (selectedServerObject.statusCode === HTTP_STATUS_CODES.OK) {
-                  const updatedServerData = await selectedServerObject.body.json();
-                  const serverIndex = serverObjects.data.findIndex(
-                    server => server.attributes.identifier === selectedServerId
-                  );
-                  if (serverIndex !== -1) {
-                    serverObjects.data[serverIndex] = updatedServerData;
-                    currentSelectedServer = updatedServerData;
-                  }
-                }
+                message = `Server name updated to **${newName}**.`;
+                await refreshCurrentServer(currentSelectedServer.attributes.identifier);
               } else {
                 message = getErrorMessage("SERVER_NAME_UPDATE_FAILED");
               }
 
-              const resultContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message);
-
               currentView = "main";
 
               await modalSubmit.editReply({
-                components: [ resultContainer ],
+                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
                 flags: MessageFlags.IsComponentsV2
               });
 
-              startAutoRefresh();
+              connectWebSocket(currentSelectedServer.attributes.identifier);
             } catch (error) {
               msgLog.error(`Name edit modal error: ${error.message}`);
             }
@@ -701,14 +554,12 @@ module.exports = {
               .setCustomId("edit-memory-modal")
               .setTitle("Edit Server Memory");
 
-            const currentMemoryMB = currentSelectedServer.attributes.limits.memory;
-
             const memoryInput = new TextInputBuilder()
               .setCustomId("server-memory-input")
               .setLabel("Memory (MB)")
               .setStyle(TextInputStyle.Short)
               .setPlaceholder("Enter memory in MB")
-              .setValue(currentMemoryMB.toString())
+              .setValue(currentSelectedServer.attributes.limits.memory.toString())
               .setRequired(true);
 
             memoryModal.addComponents(
@@ -730,19 +581,8 @@ module.exports = {
               const newMemory = parseInt(newMemoryStr);
 
               if (isNaN(newMemory) || newMemory <= 0) {
-                const errorContainer = new ContainerBuilder()
-                  .setAccentColor(COLORS.PRIMARY)
-                  .addActionRowComponents(actionRow =>
-                    actionRow.setComponents(
-                      new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
-                    )
-                  )
-                  .addTextDisplayComponents(text =>
-                    text.setContent(`**Server Settings**\n\n${getErrorMessage("INVALID_MEMORY_VALUE")}`)
-                  );
-
                 await modalSubmit.editReply({
-                  components: [ errorContainer ],
+                  components: [ buildModalErrorView(getErrorMessage("INVALID_MEMORY_VALUE")) ],
                   flags: MessageFlags.IsComponentsV2
                 });
                 return;
@@ -756,35 +596,20 @@ module.exports = {
 
               let message;
               if (updateStatusCode === HTTP_STATUS_CODES.OK) {
-                message = `Server memory updated to **${newMemory} MB**!`;
-
-                const selectedServerId = currentSelectedServer.attributes.identifier;
-                const selectedServerObject = await getServerInfoById(selectedServerId, interaction.user.id);
-
-                if (selectedServerObject.statusCode === HTTP_STATUS_CODES.OK) {
-                  const updatedServerData = await selectedServerObject.body.json();
-                  const serverIndex = serverObjects.data.findIndex(
-                    server => server.attributes.identifier === selectedServerId
-                  );
-                  if (serverIndex !== -1) {
-                    serverObjects.data[serverIndex] = updatedServerData;
-                    currentSelectedServer = updatedServerData;
-                  }
-                }
+                message = `Server memory updated to **${newMemory} MB**.`;
+                await refreshCurrentServer(currentSelectedServer.attributes.identifier);
               } else {
                 message = getErrorMessage("SERVER_MEMORY_UPDATE_FAILED");
               }
 
-              const resultContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message);
-
               currentView = "main";
 
               await modalSubmit.editReply({
-                components: [ resultContainer ],
+                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
                 flags: MessageFlags.IsComponentsV2
               });
 
-              startAutoRefresh();
+              connectWebSocket(currentSelectedServer.attributes.identifier);
             } catch (error) {
               msgLog.error(`Memory edit modal error: ${error.message}`);
             }
@@ -795,19 +620,8 @@ module.exports = {
             const serverIsSuspended = await isServerSuspended(currentSelectedServer.attributes.identifier, interaction.user.id);
 
             if (serverIsSuspended) {
-              const errorContainer = new ContainerBuilder()
-                .setAccentColor(COLORS.PRIMARY)
-                .addActionRowComponents(actionRow =>
-                  actionRow.setComponents(
-                    new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
-                  )
-                )
-                .addTextDisplayComponents(text =>
-                  text.setContent(`**Server Settings**\n\n\`${currentSelectedServer.attributes.name}\`\n\n${getErrorMessage("SERVER_SUSPEND_FAILED_ALREADY_SUSPENDED")}`)
-                );
-
               await i.editReply({
-                components: [ errorContainer ],
+                components: [ buildModalErrorView(`\`${currentSelectedServer.attributes.name}\`\n\n${getErrorMessage("SERVER_SUSPEND_FAILED_ALREADY_SUSPENDED")}`) ],
                 flags: MessageFlags.IsComponentsV2
               });
               return;
@@ -816,18 +630,7 @@ module.exports = {
             const suspensionStatusCode = await suspendServer(currentSelectedServer.attributes.internal_id);
 
             const selectedServerId = currentSelectedServer.attributes.identifier;
-            const selectedServerObject = await getServerInfoById(selectedServerId, interaction.user.id);
-
-            if (selectedServerObject.statusCode === HTTP_STATUS_CODES.OK) {
-              const updatedServerData = await selectedServerObject.body.json();
-              const serverIndex = serverObjects.data.findIndex(
-                server => server.attributes.identifier === selectedServerId
-              );
-              if (serverIndex !== -1) {
-                serverObjects.data[serverIndex] = updatedServerData;
-                currentSelectedServer = updatedServerData;
-              }
-            }
+            await refreshCurrentServer(selectedServerId);
 
             const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
             if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
@@ -837,19 +640,17 @@ module.exports = {
             }
 
             const message = suspensionStatusCode === HTTP_STATUS_CODES.NO_CONTENT
-              ? "Server suspended successfully!"
+              ? "Server suspended."
               : getErrorMessage("SERVER_SUSPEND_FAILED");
-
-            const resultContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message);
 
             currentView = "main";
 
             await i.editReply({
-              components: [ resultContainer ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
-            clearAutoRefresh();
+            disconnectWebSocket();
           } else if (i.customId === "unsuspend-server") {
             logMenuAction(i, "unsuspend-server");
             await i.deferUpdate();
@@ -857,19 +658,8 @@ module.exports = {
             const serverIsSuspended = await isServerSuspended(currentSelectedServer.attributes.identifier, interaction.user.id);
 
             if (!serverIsSuspended) {
-              const errorContainer = new ContainerBuilder()
-                .setAccentColor(COLORS.PRIMARY)
-                .addActionRowComponents(actionRow =>
-                  actionRow.setComponents(
-                    new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
-                  )
-                )
-                .addTextDisplayComponents(text =>
-                  text.setContent(`**Server Settings**\n\n\`${currentSelectedServer.attributes.name}\`\n\n${getErrorMessage("SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE")}`)
-                );
-
               await i.editReply({
-                components: [ errorContainer ],
+                components: [ buildModalErrorView(`\`${currentSelectedServer.attributes.name}\`\n\n${getErrorMessage("SERVER_UNSUSPEND_FAILED_ALREADY_ACTIVE")}`) ],
                 flags: MessageFlags.IsComponentsV2
               });
               return;
@@ -880,19 +670,8 @@ module.exports = {
 
             if (availableMemory !== -1 && availableMemory - serverMemory < 0) {
               const memoryToFree = (availableMemory - serverMemory) * -1;
-              const errorContainer = new ContainerBuilder()
-                .setAccentColor(COLORS.PRIMARY)
-                .addActionRowComponents(actionRow =>
-                  actionRow.setComponents(
-                    new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
-                  )
-                )
-                .addTextDisplayComponents(text =>
-                  text.setContent(`**Server Settings**\n\n\`${currentSelectedServer.attributes.name}\`\n\n${getErrorMessage("SERVER_UNSUSPENSION_FAILED_MEMORY", memoryToFree)}`)
-                );
-
               await i.editReply({
-                components: [ errorContainer ],
+                components: [ buildModalErrorView(`\`${currentSelectedServer.attributes.name}\`\n\n${getErrorMessage("SERVER_UNSUSPENSION_FAILED_MEMORY", memoryToFree)}`) ],
                 flags: MessageFlags.IsComponentsV2
               });
               return;
@@ -901,18 +680,7 @@ module.exports = {
             const suspensionStatusCode = await unsuspendServer(currentSelectedServer.attributes.internal_id);
 
             const selectedServerId = currentSelectedServer.attributes.identifier;
-            const selectedServerObject = await getServerInfoById(selectedServerId, interaction.user.id);
-
-            if (selectedServerObject.statusCode === HTTP_STATUS_CODES.OK) {
-              const updatedServerData = await selectedServerObject.body.json();
-              const serverIndex = serverObjects.data.findIndex(
-                server => server.attributes.identifier === selectedServerId
-              );
-              if (serverIndex !== -1) {
-                serverObjects.data[serverIndex] = updatedServerData;
-                currentSelectedServer = updatedServerData;
-              }
-            }
+            await refreshCurrentServer(selectedServerId);
 
             const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
             if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
@@ -922,19 +690,17 @@ module.exports = {
             }
 
             const message = suspensionStatusCode === HTTP_STATUS_CODES.NO_CONTENT
-              ? "Server unsuspended successfully!"
+              ? "Server unsuspended."
               : getErrorMessage("SERVER_UNSUSPEND_FAILED");
-
-            const resultContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message);
 
             currentView = "main";
 
             await i.editReply({
-              components: [ resultContainer ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
-            startAutoRefresh();
+            connectWebSocket(currentSelectedServer.attributes.identifier);
           } else if (i.customId === "delete-server") {
             await i.deferUpdate();
 
@@ -943,10 +709,10 @@ module.exports = {
               .addTextDisplayComponents(text =>
                 text.setContent(
                   "**Delete Server**\n\n" +
-                            `Are you sure you want to delete \`${currentSelectedServer.attributes.name}\`?\n\n` +
-                            "**This action cannot be undone!**\n" +
-                            "All server data will be permanently lost.\n" +
-                            "If you are just trying to free up memory, consider suspending the server instead."
+                  `Are you sure you want to delete \`${currentSelectedServer.attributes.name}\`?\n\n` +
+                  "**This action cannot be undone!**\n" +
+                  "All server data will be permanently lost.\n" +
+                  "If you are just trying to free up memory, consider suspending the server instead."
                 )
               )
               .addSeparatorComponents(separator => separator)
@@ -990,7 +756,7 @@ module.exports = {
               resultContainer = new ContainerBuilder()
                 .setAccentColor(COLORS.PRIMARY)
                 .addTextDisplayComponents(text =>
-                  text.setContent(`**Server Deleted Successfully**\n\n\`${currentSelectedServer.attributes.name}\` has been permanently deleted.`)
+                  text.setContent(`**Server Deleted**\n\n\`${currentSelectedServer.attributes.name}\` has been permanently deleted.`)
                 );
 
               currentSelectedServer = null;
@@ -1031,46 +797,48 @@ module.exports = {
               currentServerResourceInfo = null;
             }
 
-            const settingsContainer = new ContainerBuilder()
-              .setAccentColor(COLORS.PRIMARY)
-              .addActionRowComponents(actionRow =>
-                actionRow.setComponents(
-                  new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
-                )
-              )
-              .addSeparatorComponents(separator => separator)
-              .addTextDisplayComponents(text =>
-                text.setContent(`**${currentSelectedServer.attributes.name}** settings\n\n`)
-              )
-              .addSeparatorComponents(separator => separator)
-              .addActionRowComponents(actionRow =>
-                actionRow.setComponents(
-                  isSuspended
-                    ? new ButtonBuilder().setCustomId("unsuspend-server").setLabel("Unsuspend Server").setStyle(ButtonStyle.Success)
-                    : new ButtonBuilder().setCustomId("suspend-server").setLabel("Suspend Server").setStyle(ButtonStyle.Danger)
-                )
-              )
-              .addActionRowComponents(actionRow =>
-                actionRow.setComponents(
-                  new ButtonBuilder().setCustomId("delete-server").setLabel("Delete Server").setStyle(ButtonStyle.Danger)
+            await i.editReply({
+              components: [ buildSettingsView(currentSelectedServer.attributes.name, isSuspended) ],
+              flags: MessageFlags.IsComponentsV2
+            });
+          } else if (i.customId === "console-view") {
+            await i.deferUpdate();
+            currentView = "console";
+            await interaction.editReply({
+              components: [ buildConsoleView(currentSelectedServer.attributes.name, consoleBuffer) ],
+              flags: MessageFlags.IsComponentsV2
+            });
+          } else if (i.customId === "send-command") {
+            const cmdModal = new ModalBuilder()
+              .setCustomId("send-command-modal")
+              .setTitle("Send Console Command")
+              .addComponents(
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId("command-input")
+                    .setLabel("Command")
+                    .setStyle(TextInputStyle.Short)
+                    .setMaxLength(512)
+                    .setRequired(true)
                 )
               );
 
-            await i.editReply({
-              components: [ settingsContainer ],
-              flags: MessageFlags.IsComponentsV2
-            });
-          } else if (i.customId === "back") {
-            const backContainer = buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo);
+            await i.showModal(cmdModal);
 
+            const submitted = await i.awaitModalSubmit({ time: 60_000 }).catch(() => null);
+            if (!submitted) return;
+            await submitted.deferUpdate();
+            const cmd = submitted.fields.getTextInputValue("command-input").trim();
+            if (activeWs) activeWs.sendCommand(cmd);
+          } else if (i.customId === "back") {
             currentView = "main";
 
             await i.update({
-              components: [ backContainer ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
-            startAutoRefresh();
+            connectWebSocket(currentSelectedServer.attributes.identifier);
           }
         } catch (error) {
           msgLog.error(`Error handling interaction: ${error.message}`);
@@ -1088,7 +856,7 @@ module.exports = {
       });
 
       collector.on("end", async (collected, reason) => {
-        clearAutoRefresh();
+        disconnectWebSocket();
 
         if (reason === "idle") {
           await interaction.editReply({

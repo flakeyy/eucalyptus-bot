@@ -684,7 +684,7 @@ async function runInstallation(i, state, interaction) {
       return `- [${name}](https://www.curseforge.com/projects/${f.modId})`;
     });
     if (overflow > 0) lines.push(`- *...and ${overflow} more (see logs)*`);
-    doneContent += `\n\n**Warning: ${unavailableMods.length} mod(s) could not be downloaded** (CurseForge API distribution disabled — install manually):\n${lines.join("\n")}`;
+    doneContent += `\n\n**Warning: ${unavailableMods.length} mod(s) could not be retrieved** (API download disabled, must install manually):\n${lines.join("\n")}`;
   }
 
   const doneContainer = new ContainerBuilder()
