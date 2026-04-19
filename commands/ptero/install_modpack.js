@@ -16,6 +16,60 @@ const { analyzeModrinthFiles, getClientOnlyBySlugs } = require("../../utility/mo
 const AdmZip = require("adm-zip");
 const config = require("../../config.json");
 
+function isServerStarterZip(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    return zip.getEntry("server-setup-config.yaml") !== null;
+  } catch {
+    return false;
+  }
+}
+
+function parseServerStarterConfig(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    const entry = zip.getEntry("server-setup-config.yaml");
+    if (!entry) return null;
+    const text = zip.readAsText(entry);
+    const lines = text.split(/\r?\n/);
+
+    let modpackUrl = null;
+    const ignoreProject = [];
+    let inIgnoreProject = false;
+    let ignoreProjectIndent = -1;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      const urlMatch = trimmed.match(/^modpackUrl:\s*(\S+)$/);
+      if (urlMatch) {
+        modpackUrl = urlMatch[1];
+        continue;
+      }
+
+      const ignoreProjMatch = line.match(/^(\s*)ignoreProject:\s*$/);
+      if (ignoreProjMatch) {
+        inIgnoreProject = true;
+        ignoreProjectIndent = ignoreProjMatch[1].length;
+        continue;
+      }
+
+      if (inIgnoreProject) {
+        const itemMatch = line.match(/^(\s*)-\s+(\d+)/);
+        if (itemMatch && itemMatch[1].length > ignoreProjectIndent) {
+          ignoreProject.push(parseInt(itemMatch[2], 10));
+        } else if (trimmed && !trimmed.startsWith("#")) {
+          inIgnoreProject = false;
+        }
+      }
+    }
+
+    return { modpackUrl, ignoreProject };
+  } catch {
+    return null;
+  }
+}
+
 function detectMCVersion(modpack, targetFile) {
   if (targetFile?.sortableGameVersions) {
     const ver = targetFile.sortableGameVersions
@@ -286,7 +340,7 @@ async function updateProgress(i, message) {
   await i.editReply({ components: [ container ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
 }
 
-async function runManifestSteps(i, serverId, userId, buffer, manifest) {
+async function runManifestSteps(i, serverId, userId, buffer, manifest, ignoreProjects = []) {
   // Resolve files and mod metadata first so we can filter overrides
   const requiredEntries = (manifest.files || []).filter(f => f.required);
   await updateProgress(i,
@@ -303,7 +357,7 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest) {
   const slugByModId = new Map(allCfMods.filter(m => m.slug).map(m => [ m.id, m.slug ]));
 
   const modWhitelist = new Set((config.mod_whitelist || []).map(Number));
-  const modBlacklist = new Set((config.mod_blacklist || []).map(Number));
+  const modBlacklist = new Set([ ...(config.mod_blacklist || []).map(Number), ...ignoreProjects.map(Number) ]);
 
   // The manifest projectID and the modId returned by the files API can differ (e.g. mod transfers).
   // Build a set of fileIds that are blacklisted via manifest projectID so both paths are checked.
@@ -635,16 +689,43 @@ async function runInstallation(i, state, interaction) {
     return;
   }
 
-  const buffer = Buffer.concat(chunks);
+  let buffer = Buffer.concat(chunks);
   let unavailableMods = [];
+  let ignoreProjects = [];
 
+  if (isServerStarterZip(buffer)) {
+    const ssConfig = parseServerStarterConfig(buffer);
+    if (!ssConfig?.modpackUrl) {
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+      return;
+    }
+    ignoreProjects = ssConfig.ignoreProject || [];
+    if (ignoreProjects.length > 0) {
+      msgLog.log(`[install-modpack] ServerStarter: ignoring ${ignoreProjects.length} project(s) from ignoreProject`);
+    }
+    await updateProgress(i, "Downloading modpack from ServerStarter URL...");
+    try {
+      ({ chunks, fileSize } = await downloadFileToBuffer(ssConfig.modpackUrl, (dl, total) => {
+        const pct = Math.round((dl / total) * 100);
+        updateProgress(i, `Downloading modpack from ServerStarter URL... ${pct}%`).catch(() => {});
+      }));
+    } catch (err) {
+      msgLog.error(`[install-modpack] ServerStarter modpackUrl download failed: ${err.message}`);
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+      return;
+    }
+    buffer = Buffer.concat(chunks);
+  }
+
+  let usedManifest = false;
   if (isManifestZip(buffer)) {
+    usedManifest = true;
     const manifest = parseManifestFromZip(buffer);
     if (!manifest) {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
       return;
     }
-    unavailableMods = await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest);
+    unavailableMods = await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest, ignoreProjects);
   } else {
     const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
     if (!uploadUrl) {
@@ -671,7 +752,7 @@ async function runInstallation(i, state, interaction) {
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
   msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
 
-  if (usingClientPack) {
+  if (usingClientPack || usedManifest) {
     doneContent += "\n\n**Reminder:** A client modpack/manifest install was used. You may be required to manually add/remove certain client-sided mods to fix crashing/client-server compatibility issues.";
   }
 
@@ -957,23 +1038,6 @@ module.exports = {
                   new ButtonBuilder().setCustomId("cancel").setLabel("Close").setStyle(ButtonStyle.Secondary)
                 ));
               await i.editReply({ components: [ noFileContainer ], flags: MessageFlags.IsComponentsV2 });
-              return;
-            }
-
-            if (usingClientPack) {
-              const noPackContainer = new ContainerBuilder()
-                .setAccentColor(COLORS.PRIMARY)
-                .addTextDisplayComponents(text => text.setContent(
-                  `**Install Modpack**\n**${modpackName}**.\n\n` +
-                  "**WARNING:** Client modpack selected.\n" +
-                  "It is recommended that you use a dedicated server pack. The modpack may not install correctly."
-                ))
-                .addSeparatorComponents(sep => sep)
-                .addActionRowComponents(row => row.setComponents(
-                  new ButtonBuilder().setCustomId("no-pack-continue").setLabel("Yes, Continue").setStyle(ButtonStyle.Danger),
-                  new ButtonBuilder().setCustomId("cancel").setLabel("No, Cancel").setStyle(ButtonStyle.Secondary)
-                ));
-              await i.editReply({ components: [ noPackContainer ], flags: MessageFlags.IsComponentsV2 });
               return;
             }
 

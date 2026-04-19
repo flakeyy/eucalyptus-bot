@@ -115,12 +115,20 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
       .addSeparatorComponents(separator => separator);
 
     if (consoleLines.length > 0) {
-      const preview = consoleLines.slice(-CONSOLE_PREVIEW_LINES);
-      container
-        .addTextDisplayComponents(text =>
-          text.setContent("```\n" + preview.join("\n") + "\n```")
-        )
-        .addSeparatorComponents(separator => separator);
+      const subset = consoleLines.slice(-CONSOLE_PREVIEW_LINES);
+      let previewText;
+      do {
+        previewText = "```\n" + subset.join("\n") + "\n```";
+        if (previewText.length <= 4000) break;
+        subset.shift();
+      } while (subset.length > 0);
+      if (subset.length > 0) {
+        container
+          .addTextDisplayComponents(text =>
+            text.setContent(previewText)
+          )
+          .addSeparatorComponents(separator => separator);
+      }
     }
 
     container
@@ -303,7 +311,8 @@ module.exports = {
         ws.on("consoleLine", async line => {
           // eslint-disable-next-line no-control-regex
           const stripped = line.replace(/\x1b\[[0-9;]*m/g, "");
-          consoleBuffer.push(stripped);
+          const truncated = stripped.length > 300 ? stripped.slice(0, 300) + "…" : stripped;
+          consoleBuffer.push(truncated);
           if (consoleBuffer.length > CONSOLE_MAX_LINES) consoleBuffer.shift();
 
           const now = Date.now();
