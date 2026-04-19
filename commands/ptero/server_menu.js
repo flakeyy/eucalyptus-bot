@@ -13,6 +13,8 @@ const COLORS = {
 
 const COLLECTOR_IDLE_TIMEOUT = 300_000;
 const WS_THROTTLE_MS = 3000;
+const CONSOLE_MAX_LINES = 20;
+const CONSOLE_PREVIEW_LINES = 5;
 
 const HTTP_STATUS_CODES = {
   OK: 200,
@@ -54,7 +56,7 @@ function buildServerSelectMenu(serverObjects, selectedServerId = null, disabled 
   return selectMenu;
 }
 
-function buildMainServerView(serverObjects, currentSelectedServer, serverResourceInfo = null, statusMessage = null) {
+function buildMainServerView(serverObjects, currentSelectedServer, serverResourceInfo = null, statusMessage = null, consoleLines = []) {
   const selectMenu = buildServerSelectMenu(
     serverObjects,
     currentSelectedServer?.attributes?.identifier
@@ -110,10 +112,22 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
       .addTextDisplayComponents(text =>
         text.setContent(detailsText)
       )
-      .addSeparatorComponents(separator => separator)
+      .addSeparatorComponents(separator => separator);
+
+    if (consoleLines.length > 0) {
+      const preview = consoleLines.slice(-CONSOLE_PREVIEW_LINES);
+      container
+        .addTextDisplayComponents(text =>
+          text.setContent("```\n" + preview.join("\n") + "\n```")
+        )
+        .addSeparatorComponents(separator => separator);
+    }
+
+    container
       .addActionRowComponents(actionRow =>
         actionRow.setComponents(
-          new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary)
+          new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary),
+          new ButtonBuilder().setCustomId("console-view").setLabel("Console").setStyle(ButtonStyle.Secondary).setDisabled(isSuspended)
         )
       )
       .addActionRowComponents(actionRow =>
@@ -126,6 +140,41 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
   }
 
   return container;
+}
+
+function buildConsoleView(serverName, lines) {
+  let consoleText = "No output yet.";
+  if (lines.length > 0) {
+    const subset = lines.slice();
+    let text;
+    do {
+      text = "```\n" + subset.join("\n") + "\n```";
+      if (text.length <= 4000) break;
+      subset.shift();
+    } while (subset.length > 0);
+    if (subset.length > 0) consoleText = text;
+  }
+
+  return new ContainerBuilder()
+    .setAccentColor(COLORS.PRIMARY)
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        new ButtonBuilder().setCustomId("back").setLabel("← Back").setStyle(ButtonStyle.Secondary)
+      )
+    )
+    .addTextDisplayComponents(text =>
+      text.setContent(`**${serverName}** — Console`)
+    )
+    .addSeparatorComponents(separator => separator)
+    .addTextDisplayComponents(text =>
+      text.setContent(consoleText)
+    )
+    .addSeparatorComponents(separator => separator)
+    .addActionRowComponents(actionRow =>
+      actionRow.setComponents(
+        new ButtonBuilder().setCustomId("send-command").setLabel("Send Command").setStyle(ButtonStyle.Primary)
+      )
+    );
 }
 
 function buildSettingsView(serverName, isSuspended) {
@@ -164,6 +213,7 @@ function buildSettingsView(serverName, isSuspended) {
 module.exports = {
   buildServerSelectMenu,
   buildMainServerView,
+  buildConsoleView,
 
   data: new SlashCommandBuilder()
     .setName("servers")
@@ -222,6 +272,7 @@ module.exports = {
       let currentView = "main";
       let activeWs = null;
       let lastDiscordEditTime = 0;
+      let consoleBuffer = [];
 
       const disconnectWebSocket = () => {
         if (activeWs) {
@@ -233,7 +284,7 @@ module.exports = {
       const connectWebSocket = serverId => {
         disconnectWebSocket();
 
-        if (!currentSelectedServer || currentView !== "main" || !currentServerResourceInfo) return;
+        if (!currentSelectedServer || !currentServerResourceInfo) return;
 
         const ws = new PterodactylWebSocket(serverId, interaction.user.id);
         activeWs = ws;
@@ -244,7 +295,22 @@ module.exports = {
           if (now - lastDiscordEditTime < WS_THROTTLE_MS || currentView !== "main") return;
           lastDiscordEditTime = now;
           await interaction.editReply({
-            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo) ],
+            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+            flags: MessageFlags.IsComponentsV2
+          }).catch(() => disconnectWebSocket());
+        });
+
+        ws.on("consoleLine", async line => {
+          // eslint-disable-next-line no-control-regex
+          const stripped = line.replace(/\x1b\[[0-9;]*m/g, "");
+          consoleBuffer.push(stripped);
+          if (consoleBuffer.length > CONSOLE_MAX_LINES) consoleBuffer.shift();
+
+          const now = Date.now();
+          if (now - lastDiscordEditTime < WS_THROTTLE_MS || currentView !== "console") return;
+          lastDiscordEditTime = now;
+          await interaction.editReply({
+            components: [ buildConsoleView(currentSelectedServer.attributes.name, consoleBuffer) ],
             flags: MessageFlags.IsComponentsV2
           }).catch(() => disconnectWebSocket());
         });
@@ -252,10 +318,14 @@ module.exports = {
         ws.on("powerStateChange", async state => {
           if (currentServerResourceInfo?.attributes) {
             currentServerResourceInfo.attributes.current_state = state;
+            if (state === "offline") {
+              currentServerResourceInfo.attributes.resources.cpu_absolute = 0;
+              currentServerResourceInfo.attributes.resources.memory_bytes = 0;
+            }
           }
           if (currentView !== "main") return;
           await interaction.editReply({
-            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo) ],
+            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
             flags: MessageFlags.IsComponentsV2
           }).catch(() => disconnectWebSocket());
         });
@@ -342,6 +412,7 @@ module.exports = {
         try {
           if (i.customId === "server-selection") {
             disconnectWebSocket();
+            consoleBuffer = [];
 
             const selectedServerId = i.values[0];
             msgLog.debugExtended(`${i.user.username}/${i.user.id} | [servers] select-server | ${selectedServerId}`);
@@ -367,7 +438,7 @@ module.exports = {
             currentView = "main";
 
             await i.update({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo) ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -409,7 +480,7 @@ module.exports = {
               : `Failed to send ${action} command (status ${apiResult.statusCode}).`;
 
             await i.editReply({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message) ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -470,7 +541,7 @@ module.exports = {
               currentView = "main";
 
               await modalSubmit.editReply({
-                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message) ],
+                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
                 flags: MessageFlags.IsComponentsV2
               });
 
@@ -534,7 +605,7 @@ module.exports = {
               currentView = "main";
 
               await modalSubmit.editReply({
-                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message) ],
+                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
                 flags: MessageFlags.IsComponentsV2
               });
 
@@ -575,7 +646,7 @@ module.exports = {
             currentView = "main";
 
             await i.editReply({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message) ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -625,7 +696,7 @@ module.exports = {
             currentView = "main";
 
             await i.editReply({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message) ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -730,11 +801,40 @@ module.exports = {
               components: [ buildSettingsView(currentSelectedServer.attributes.name, isSuspended) ],
               flags: MessageFlags.IsComponentsV2
             });
+          } else if (i.customId === "console-view") {
+            await i.deferUpdate();
+            currentView = "console";
+            await interaction.editReply({
+              components: [ buildConsoleView(currentSelectedServer.attributes.name, consoleBuffer) ],
+              flags: MessageFlags.IsComponentsV2
+            });
+          } else if (i.customId === "send-command") {
+            const cmdModal = new ModalBuilder()
+              .setCustomId("send-command-modal")
+              .setTitle("Send Console Command")
+              .addComponents(
+                new ActionRowBuilder().addComponents(
+                  new TextInputBuilder()
+                    .setCustomId("command-input")
+                    .setLabel("Command")
+                    .setStyle(TextInputStyle.Short)
+                    .setMaxLength(512)
+                    .setRequired(true)
+                )
+              );
+
+            await i.showModal(cmdModal);
+
+            const submitted = await i.awaitModalSubmit({ time: 60_000 }).catch(() => null);
+            if (!submitted) return;
+            await submitted.deferUpdate();
+            const cmd = submitted.fields.getTextInputValue("command-input").trim();
+            if (activeWs) activeWs.sendCommand(cmd);
           } else if (i.customId === "back") {
             currentView = "main";
 
             await i.update({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo) ],
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
               flags: MessageFlags.IsComponentsV2
             });
 

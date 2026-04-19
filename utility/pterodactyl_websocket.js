@@ -94,6 +94,10 @@ class PterodactylWebSocket extends EventEmitter {
       this.emit("powerStateChange", msg.args[0]);
       break;
 
+    case "console output":
+      this.emit("consoleLine", msg.args[0]);
+      break;
+
     case "token expiring":
       this._refreshToken();
       break;
@@ -119,6 +123,12 @@ class PterodactylWebSocket extends EventEmitter {
     } catch (err) {
       msgLog.error(`[PteroWS:${this._serverId}] token refresh failed: ${err.message}`);
       this.emit("error", err);
+    }
+  }
+
+  sendCommand(command) {
+    if (this._ws && this._ws.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify({ event: "send command", args: [ command ] }));
     }
   }
 
