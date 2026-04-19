@@ -183,4 +183,4 @@ Both lists apply during manifest installs. `ignoreProject` entries from a Server
 
 ## License
 
-[MIT](https://choosealicense.com/licenses/mit/)
+[ISC](https://choosealicense.com/licenses/isc/)
