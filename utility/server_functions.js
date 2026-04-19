@@ -289,6 +289,28 @@ async function pullServerFile(serverId, discordId, url, directory, filename) {
   if (!validatedId) return -1;
   const body = JSON.stringify({ url, directory, filename, use_header: false, foreground: false });
   const apiResult = await clientApiCall(`client/servers/${validatedId}/files/pull`, "POST", body, discordId);
+  if (apiResult.statusCode !== 204) {
+    try {
+      const responseBody = await apiResult.body.text();
+      msgLog.debugExtended(`[pullServerFile] ${apiResult.statusCode} for ${filename}: ${responseBody}`);
+    } catch { /* ignore */ }
+  }
+  return apiResult.statusCode;
+}
+
+async function chmodServerFiles(serverId, discordId, root, files) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return -1;
+  const body = JSON.stringify({ root, files });
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/chmod`, "POST", body, discordId);
+  return apiResult.statusCode;
+}
+
+async function createServerDirectory(serverId, discordId, root, name) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return -1;
+  const body = JSON.stringify({ root, name });
+  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/create-folder`, "POST", body, discordId);
   return apiResult.statusCode;
 }
 
@@ -384,6 +406,8 @@ module.exports = {
   listServerFiles,
   deleteServerFiles,
   getFileUploadUrl,
+  chmodServerFiles,
+  createServerDirectory,
   decompressFile,
   pullServerFile,
   changeServerEgg,

@@ -8,10 +8,12 @@ const msgLog = require("../../utility/logger.js");
 const { getUserId, reconstructCommand, userHasClientApiKey, applicationApiCall } = require("../../utility/helper_functions.js");
 const {
   getClientServers, setServerPowerState, getServerResourceInfoById,
-  changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile
+  changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile, chmodServerFiles
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-const { getModpackById, getModpackFiles, detectLoaderType, getFileById, parseProjectId } = require("../../utility/curseforge.js");
+const { getModpackById, getModpackFiles, detectLoaderType, getFileById, getFilesByIds, getModsByIds, parseProjectId, isManifestZip, parseManifestFromZip } = require("../../utility/curseforge.js");
+const { analyzeModrinthFiles, getClientOnlyBySlugs } = require("../../utility/modrinth.js");
+const AdmZip = require("adm-zip");
 const config = require("../../config.json");
 
 function detectMCVersion(modpack, targetFile) {
@@ -63,10 +65,7 @@ function getJavaImageForMCVersion(mcVersion) {
 }
 
 /* global TextEncoder, ReadableStream */
-// Phase 1: downloads the full file into memory (tracking download progress).
-// Phase 2: streams buffered chunks to Wings via a pull-based ReadableStream (tracking upload progress).
-// The push-based approach buffered in the ReadableStream queue anyway, so memory usage is equivalent.
-async function streamModpackToServer(uploadUrl, downloadUrl, filename, onProgress) {
+async function downloadFileToBuffer(downloadUrl, onDownloadProgress) {
   const dlResponse = await fetch(downloadUrl);
   if (!dlResponse.ok) throw Object.assign(new Error(`Download failed: HTTP ${dlResponse.status}`), { isDownload: true });
 
@@ -75,16 +74,6 @@ async function streamModpackToServer(uploadUrl, downloadUrl, filename, onProgres
   let lastProgressAt = 0;
   const THROTTLE_MS = 2500;
 
-  function fireProgress(dl, ul) {
-    if (!onProgress || !hasSize) return;
-    const now = Date.now();
-    if (now - lastProgressAt >= THROTTLE_MS) {
-      lastProgressAt = now;
-      onProgress(dl, ul, fileSize);
-    }
-  }
-
-  // Phase 1 — buffer download, fire download progress
   const chunks = [];
   let downloadBytes = 0;
   const dlReader = dlResponse.body.getReader();
@@ -93,13 +82,23 @@ async function streamModpackToServer(uploadUrl, downloadUrl, filename, onProgres
     if (done) break;
     chunks.push(value);
     downloadBytes += value.length;
-    fireProgress(downloadBytes, 0);
+    if (onDownloadProgress && hasSize) {
+      const now = Date.now();
+      if (now - lastProgressAt >= THROTTLE_MS) {
+        lastProgressAt = now;
+        onDownloadProgress(downloadBytes, fileSize);
+      }
+    }
   }
-  // Snap to 100% download before upload begins
-  lastProgressAt = 0;
-  fireProgress(fileSize, 0);
+  if (onDownloadProgress && hasSize) onDownloadProgress(fileSize, fileSize);
+  return { chunks, fileSize };
+}
 
-  // Phase 2 — stream buffered chunks to Wings, fire upload progress via pull-based ReadableStream
+async function uploadBufferToServer(uploadUrl, filename, chunks, fileSize, onProgress) {
+  const hasSize = fileSize > 0;
+  let lastProgressAt = 0;
+  const THROTTLE_MS = 2500;
+
   const boundary = `WingsBoundary${Date.now()}`;
   const enc = new TextEncoder();
   const partHeader = enc.encode(
@@ -124,7 +123,13 @@ async function streamModpackToServer(uploadUrl, downloadUrl, filename, onProgres
       } else if (chunkIdx < chunks.length) {
         const chunk = chunks[chunkIdx++];
         uploadBytes += chunk.length;
-        fireProgress(fileSize, uploadBytes);
+        if (onProgress && hasSize) {
+          const now = Date.now();
+          if (now - lastProgressAt >= THROTTLE_MS) {
+            lastProgressAt = now;
+            onProgress(fileSize, uploadBytes, fileSize);
+          }
+        }
         controller.enqueue(chunk);
       } else {
         controller.enqueue(partFooter);
@@ -135,6 +140,15 @@ async function streamModpackToServer(uploadUrl, downloadUrl, filename, onProgres
 
   const uploadResponse = await fetch(uploadUrl, { method: "POST", headers: uploadHeaders, body, duplex: "half" });
   if (!uploadResponse.ok) throw Object.assign(new Error(`Upload failed: HTTP ${uploadResponse.status}`), { isUpload: true });
+}
+
+function buildManifestProgressBar(downloaded, installed, total, width = 20) {
+  const half = Math.floor(width / 2);
+  const dlPct = total > 0 ? Math.min(downloaded / total, 1) : 0;
+  const ulPct = total > 0 ? Math.min(installed / total, 1) : 0;
+  const dlBar = "█".repeat(Math.round(dlPct * half)) + "░".repeat(half - Math.round(dlPct * half));
+  const ulBar = "█".repeat(Math.round(ulPct * half)) + "░".repeat(half - Math.round(ulPct * half));
+  return `\`[${dlBar}↓${ulBar}↑]\` ↓ ${Math.round(dlPct * 100)}% · ↑ ${Math.round(ulPct * 100)}% · ${total} mods`;
 }
 
 function buildProgressBar(downloadBytes, uploadBytes, fileSize, width = 20) {
@@ -156,6 +170,7 @@ const COLORS = {
 const COLLECTOR_IDLE_TIMEOUT = 300_000;
 const HTTP_STATUS_CODES = { OK: 200, NO_CONTENT: 204 };
 const STOP_POLL = { MAX_ATTEMPTS: 60, INTERVAL: 2000 };
+const MANIFEST_MOD_BATCH = 20;
 
 function buildServerSelectContainer(servers, nestMap, statusNote = null, disabled = false) {
   const selectMenu = new StringSelectMenuBuilder()
@@ -203,8 +218,9 @@ function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId) {
     const loaderKw = /java|forge|fabric|neoforge|quilt/i;
     const mcVer = file.gameVersions?.find(v => /^\d+\.\d+/.test(v) && !loaderKw.test(v));
     const date = file.fileDate?.slice(0, 10) ?? "";
-    const packType = file.serverPackFileId ? "Server pack" : "Client only";
-    const description = [ mcVer, date, packType ].filter(Boolean).join(" · ").slice(0, 100);
+    const packType = file.isServerPack ? "Server pack" : "Client pack";
+    const sizeMb = file.fileLength ? `${(file.fileLength / 1_048_576).toFixed(1)} MB` : null;
+    const description = [ mcVer, date, sizeMb, packType ].filter(Boolean).join(" · ").slice(0, 100);
 
     menu.addOptions(
       new StringSelectMenuOptionBuilder()
@@ -220,7 +236,7 @@ function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId) {
     .addTextDisplayComponents(text => text.setContent(
       `**Install Modpack — Select Version**\n\n**Modpack:** ${modpackName}\n\n` +
       "The recommended version is pre-selected. Change it if needed.\n" +
-      "_Versions with a server pack are preferred._"
+      "_Versions are sorted latest first. Use a server pack where available._"
     ))
     .addSeparatorComponents(sep => sep)
     .addActionRowComponents(row => row.setComponents(menu))
@@ -270,6 +286,295 @@ async function updateProgress(i, message) {
   await i.editReply({ components: [ container ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
 }
 
+async function runManifestSteps(i, serverId, userId, buffer, manifest) {
+  // Resolve files and mod metadata first so we can filter overrides
+  const requiredEntries = (manifest.files || []).filter(f => f.required);
+  await updateProgress(i,
+    "No direct server pack download was available. Installing from manifest — this may take longer than usual.\n\nResolving mod list..."
+  );
+  const resolvedFiles = await getFilesByIds(requiredEntries.map(f => f.fileID)).catch(() => []);
+
+  const nameByModId = new Map(resolvedFiles.map(f => [ f.modId, f.displayName ?? f.fileName ?? String(f.modId) ]));
+
+  // Fetch mod metadata for all resolved files — used for classId filtering and slug-based client-only fallback
+  const allModIds = [ ...new Set(resolvedFiles.map(f => f.modId)) ];
+  const allCfMods = await getModsByIds(allModIds);
+  const classIdByModId = new Map(allCfMods.map(m => [ m.id, m.classId ]));
+  const slugByModId = new Map(allCfMods.filter(m => m.slug).map(m => [ m.id, m.slug ]));
+
+  const modWhitelist = new Set((config.mod_whitelist || []).map(Number));
+  const modBlacklist = new Set((config.mod_blacklist || []).map(Number));
+
+  // The manifest projectID and the modId returned by the files API can differ (e.g. mod transfers).
+  // Build a set of fileIds that are blacklisted via manifest projectID so both paths are checked.
+  const blacklistedFileIds = new Set(
+    requiredEntries
+      .filter(e => modBlacklist.has(e.projectID) && !modWhitelist.has(e.projectID))
+      .map(e => e.fileID)
+  );
+
+  // Build a set of filenames to exclude from overrides/mods/ (blacklisted + non-mod classIds)
+  const CF_MOD_CLASS_ID = 6;
+  const overrideModExclude = new Set();
+  for (const f of resolvedFiles) {
+    if (!f.fileName) continue;
+    const classId = classIdByModId.get(f.modId);
+    const isNonMod = classId !== undefined && classId !== CF_MOD_CLASS_ID;
+    const isBlacklisted = (modBlacklist.has(f.modId) || blacklistedFileIds.has(f.id)) && !modWhitelist.has(f.modId);
+    if (isNonMod || isBlacklisted) overrideModExclude.add(f.fileName);
+  }
+
+  // Upload overrides content (strip the "overrides/" prefix so files land at server root)
+  await updateProgress(i, "Preparing overrides...");
+  const srcZip = new AdmZip(buffer);
+  const overrideEntries = srcZip.getEntries().filter(e => {
+    if (!e.entryName.startsWith("overrides/") || e.isDirectory) return false;
+    if (e.entryName.startsWith("overrides/mods/")) {
+      const filename = e.entryName.slice("overrides/mods/".length);
+      if (overrideModExclude.has(filename)) {
+        msgLog.debugExtended(`[install-modpack] skip override (blacklisted/non-mod): ${filename}`);
+        return false;
+      }
+    }
+    return true;
+  });
+  if (overrideEntries.length > 0) {
+    const overridesZip = new AdmZip();
+    for (const entry of overrideEntries) {
+      const stripped = entry.entryName.slice("overrides/".length);
+      overridesZip.addFile(stripped, entry.getData(), "", 0o100644 << 16);
+    }
+    const overridesBuf = overridesZip.toBuffer();
+    const uploadUrl = await getFileUploadUrl(serverId, userId);
+    if (uploadUrl) {
+      const overridesFilename = "overrides.zip";
+      const enc = new TextEncoder();
+      const boundary = `WingsBoundary${Date.now()}`;
+      const partHeader = enc.encode(
+        `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${overridesFilename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+      );
+      const partFooter = enc.encode(`\r\n--${boundary}--\r\n`);
+      const bodyBuf = Buffer.concat([ partHeader, overridesBuf, partFooter ]);
+      await fetch(uploadUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": `multipart/form-data; boundary=${boundary}`,
+          "Content-Length": String(bodyBuf.length)
+        },
+        body: bodyBuf
+      });
+      await decompressFile(serverId, userId, "/", overridesFilename);
+      await chmodServerFiles(serverId, userId, "/", overrideEntries.map(e => ({
+        file: e.entryName.slice("overrides/".length),
+        mode: "644"
+      }))).catch(() => {});
+    }
+  }
+
+  // Filter out non-mod entries (resource packs classId=12, shaders classId=6552, worlds classId=17, etc.)
+  let nonModSkipped = 0;
+  const modFiles = resolvedFiles.filter(f => {
+    const classId = classIdByModId.get(f.modId);
+    if (classId !== undefined && classId !== CF_MOD_CLASS_ID) {
+      nonModSkipped++;
+      msgLog.debugExtended(`[install-modpack] skip (non-mod classId=${classId}): ${nameByModId.get(f.modId)}`);
+      return false;
+    }
+    return true;
+  });
+  if (nonModSkipped > 0) {
+    msgLog.log(`[install-modpack] skipped ${nonModSkipped} non-mod file(s) from manifest (resource packs, shaders, etc.)`);
+  }
+
+  const downloadable = modFiles.filter(f => f.downloadUrl);
+  const noUrl = modFiles.filter(f => !f.downloadUrl);
+
+  // Build SHA1 map across all mod files for a single combined Modrinth lookup
+  const sha1ToFile = new Map();
+  for (const f of modFiles) {
+    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
+    if (sha1) sha1ToFile.set(sha1, f);
+  }
+
+  await updateProgress(i, `Installing from manifest — checking ${sha1ToFile.size} mod(s) against Modrinth...`);
+  const { clientOnlyHashes, fallbackUrls, foundHashes } = await analyzeModrinthFiles([ ...sha1ToFile.keys() ]);
+
+  // Filter out client-only mods from the downloadable set
+  const skippedProjectIds = new Set();
+  for (const f of downloadable) {
+    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
+    if (sha1 && clientOnlyHashes.has(sha1)) {
+      if (modWhitelist.has(f.modId)) {
+        msgLog.debugExtended(`[install-modpack] whitelist override (client-only): ${nameByModId.get(f.modId)}`);
+      } else {
+        skippedProjectIds.add(f.modId);
+        msgLog.debugExtended(`[install-modpack] skip (client-only): ${nameByModId.get(f.modId)}`);
+      }
+    }
+  }
+  // Slug-based fallback for mods whose CurseForge and Modrinth builds differ (different SHA1)
+  const unmatchedMods = downloadable.filter(f => {
+    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
+    return !skippedProjectIds.has(f.modId) && !blacklistedFileIds.has(f.id) && (!sha1 || !foundHashes.has(sha1));
+  });
+  if (unmatchedMods.length > 0) {
+    const slugToModId = new Map(
+      unmatchedMods.filter(f => slugByModId.has(f.modId)).map(f => [ slugByModId.get(f.modId), f.modId ])
+    );
+    const clientOnlySlugs = await getClientOnlyBySlugs([ ...slugToModId.keys() ]);
+    for (const slug of clientOnlySlugs) {
+      const modId = slugToModId.get(slug);
+      if (modId) {
+        if (modWhitelist.has(modId)) {
+          msgLog.debugExtended(`[install-modpack] whitelist override (client-only via slug): ${nameByModId.get(modId)}`);
+        } else {
+          skippedProjectIds.add(modId);
+          msgLog.debugExtended(`[install-modpack] skip (client-only via slug): ${nameByModId.get(modId)}`);
+        }
+      }
+    }
+  }
+
+  // Apply blacklist
+  for (const modId of modBlacklist) {
+    if (!skippedProjectIds.has(modId)) {
+      skippedProjectIds.add(modId);
+      msgLog.debugExtended(`[install-modpack] skip (blacklisted): ${nameByModId.get(modId) ?? modId}`);
+    }
+  }
+
+  if (skippedProjectIds.size > 0) {
+    msgLog.log(`[install-modpack] skipped ${skippedProjectIds.size} client-only/blacklisted mod(s) from manifest`);
+  }
+
+  // Recover mods with no CurseForge download URL using Modrinth fallback URLs
+  const unavailable = [];
+  const modrinthFallbacks = [];
+  for (const f of noUrl) {
+    if (modBlacklist.has(f.modId) || blacklistedFileIds.has(f.id)) {
+      msgLog.debugExtended(`[install-modpack] skip (blacklisted, no CF url): ${nameByModId.get(f.modId) ?? f.modId}`);
+      continue;
+    }
+    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
+    const fallback = sha1 ? fallbackUrls.get(sha1) : null;
+    if (fallback) {
+      modrinthFallbacks.push({ downloadUrl: fallback.url, displayName: nameByModId.get(f.modId) });
+      msgLog.debugExtended(`[install-modpack] Modrinth fallback: ${nameByModId.get(f.modId)}`);
+    } else {
+      unavailable.push(f);
+      msgLog.debugExtended(`[install-modpack] no download URL: ${nameByModId.get(f.modId)} (modId: ${f.modId})`);
+    }
+  }
+  if (modrinthFallbacks.length > 0) {
+    msgLog.log(`[install-modpack] recovered ${modrinthFallbacks.length} mod(s) via Modrinth fallback`);
+  }
+  if (unavailable.length > 0) {
+    msgLog.log(`[install-modpack] ${unavailable.length} mod(s) have no download URL on CurseForge or Modrinth`);
+  }
+
+  const mods = [
+    ...downloadable.filter(f => !skippedProjectIds.has(f.modId) && !blacklistedFileIds.has(f.id)),
+    ...modrinthFallbacks
+  ];
+  const total = mods.length;
+  let installed = 0;
+  let downloaded = 0;
+  let downloadFailed = 0;
+
+  // Download mods in batches, zip each batch, upload and decompress into /mods/
+  for (let start = 0; start < mods.length; start += MANIFEST_MOD_BATCH) {
+    const batchIdx = Math.floor(start / MANIFEST_MOD_BATCH) + 1;
+    const batch = mods.slice(start, start + MANIFEST_MOD_BATCH);
+
+    await updateProgress(i,
+      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(downloaded, installed, total)}`
+    );
+
+    const downloads = await Promise.all(batch.map(async mod => {
+      const filename = decodeURIComponent(mod.downloadUrl.split("/").pop());
+      try {
+        const res = await fetch(mod.downloadUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const chunks = [];
+        const reader = res.body.getReader();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          chunks.push(value);
+        }
+        return { filename, buffer: Buffer.concat(chunks) };
+      } catch (e) {
+        msgLog.debugExtended(`[install-modpack] mod download failed: ${filename}: ${e.message}`);
+        downloadFailed++;
+        return null;
+      }
+    }));
+
+    const successful = downloads.filter(Boolean);
+    downloaded += batch.length;
+    if (successful.length === 0) continue;
+
+    await updateProgress(i,
+      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(downloaded, installed, total)}`
+    );
+
+    // Bundle mods into a zip with a mods/ prefix so it extracts to /mods/
+    const batchZip = new AdmZip();
+    for (const { filename, buffer } of successful) {
+      batchZip.addFile(`mods/${filename}`, buffer, "", 0o100644 << 16);
+    }
+    const zipBuf = batchZip.toBuffer();
+    const zipFilename = `_mods_batch_${batchIdx}.zip`;
+
+    const uploadUrl = await getFileUploadUrl(serverId, userId);
+    if (!uploadUrl) {
+      msgLog.error(`[install-modpack] no upload URL for mod batch ${batchIdx}`);
+      downloadFailed += successful.length;
+      continue;
+    }
+
+    const enc = new TextEncoder();
+    const boundary = `WingsBoundary${Date.now()}`;
+    const partHeader = enc.encode(
+      `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${zipFilename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
+    );
+    const partFooter = enc.encode(`\r\n--${boundary}--\r\n`);
+    const bodyBuf = Buffer.concat([ partHeader, zipBuf, partFooter ]);
+    const uploadRes = await fetch(uploadUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": `multipart/form-data; boundary=${boundary}`,
+        "Content-Length": String(bodyBuf.length)
+      },
+      body: bodyBuf
+    });
+
+    if (!uploadRes.ok) {
+      msgLog.error(`[install-modpack] mod batch ${batchIdx} upload failed: HTTP ${uploadRes.status}`);
+      downloadFailed += successful.length;
+      continue;
+    }
+
+    await decompressFile(serverId, userId, "/", zipFilename);
+    await chmodServerFiles(serverId, userId, "/mods/", successful.map(({ filename }) => ({
+      file: filename,
+      mode: "644"
+    }))).catch(() => {});
+    await deleteServerFiles(serverId, userId, [ zipFilename ]).catch(() => {});
+
+    installed += successful.length;
+    await updateProgress(i,
+      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(downloaded, installed, total)}`
+    );
+  }
+
+  if (downloadFailed > 0) {
+    msgLog.warn(`[install-modpack] manifest install: ${installed}/${total} mods installed, ${downloadFailed} unavailable`);
+  }
+
+  return unavailable;
+}
+
 async function runInstallation(i, state, interaction) {
   const { serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
 
@@ -316,33 +621,70 @@ async function runInstallation(i, state, interaction) {
     }
   }
 
-  // e. Stream modpack from CurseForge → Wings (no full-file buffering)
-  await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
-  const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
-  if (!uploadUrl) {
-    await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-    return;
-  }
+  // e. Download modpack file, detect manifest, then either manifest-install or direct upload+extract
+  await updateProgress(i, `Downloading **${targetFile.displayName}**...`);
+  let chunks, fileSize;
   try {
-    await streamModpackToServer(uploadUrl, targetFile.downloadUrl, targetFile.displayName, (dl, ul, total) => {
-      updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar(dl, ul, total)}`).catch(() => {});
-    });
+    ({ chunks, fileSize } = await downloadFileToBuffer(targetFile.downloadUrl, (dl, total) => {
+      const pct = Math.round((dl / total) * 100);
+      updateProgress(i, `Downloading **${targetFile.displayName}**... ${pct}%`).catch(() => {});
+    }));
   } catch (err) {
-    msgLog.error(`[install-modpack] stream failed: ${err.message}`);
-    const code = err.isUpload ? "MODPACK_FILE_UPLOAD_FAILED" : "MODPACK_FILE_DOWNLOAD_FAILED";
-    await updateProgress(i, getErrorMessage(code));
+    msgLog.error(`[install-modpack] download failed: ${err.message}`);
+    await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
     return;
   }
 
-  // f. Extract
-  await updateProgress(i, "Extracting files...");
-  await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+  const buffer = Buffer.concat(chunks);
+  let unavailableMods = [];
+
+  if (isManifestZip(buffer)) {
+    const manifest = parseManifestFromZip(buffer);
+    if (!manifest) {
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+      return;
+    }
+    unavailableMods = await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest);
+  } else {
+    const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
+    if (!uploadUrl) {
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+      return;
+    }
+    await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
+    try {
+      await uploadBufferToServer(uploadUrl, targetFile.displayName, chunks, fileSize, (dl, ul, total) => {
+        updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar(dl, ul, total)}`).catch(() => {});
+      });
+    } catch (err) {
+      msgLog.error(`[install-modpack] upload failed: ${err.message}`);
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+      return;
+    }
+
+    // f. Extract
+    await updateProgress(i, "Extracting files...");
+    await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+  }
 
   // g. Done
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
   msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
+
   if (usingClientPack) {
-    doneContent += "\n\n**Reminder:** A client modpack was used. The server may not function correctly without a dedicated server pack.";
+    doneContent += "\n\n**Reminder:** A client modpack/manifest install was used. You may be required to manually add/remove certain client-sided mods to fix crashing/client-server compatibility issues.";
+  }
+
+  if (unavailableMods.length > 0) {
+    const MAX_SHOWN = 10;
+    const shown = unavailableMods.slice(0, MAX_SHOWN);
+    const overflow = unavailableMods.length - shown.length;
+    const lines = shown.map(f => {
+      const name = f.displayName ?? f.fileName ?? `Mod ${f.modId}`;
+      return `- [${name}](https://www.curseforge.com/projects/${f.modId})`;
+    });
+    if (overflow > 0) lines.push(`- *...and ${overflow} more (see logs)*`);
+    doneContent += `\n\n**Warning: ${unavailableMods.length} mod(s) could not be downloaded** (CurseForge API distribution disabled — install manually):\n${lines.join("\n")}`;
   }
 
   const doneContainer = new ContainerBuilder()
@@ -539,13 +881,13 @@ module.exports = {
                 msgLog.warn(`[install-modpack] getModpackFiles failed: ${e.message}`);
               }
 
-              // Build top-10 list of selectable versions (non-server-pack files, most recent first)
-              const clientFiles = (files || [])
+              // Client files sorted by date, latest first (server packs aren't in the main list)
+              const sortedClientFiles = (files || [])
                 .filter(f => !f.isServerPack && f.downloadUrl)
                 .sort((a, b) => new Date(b.fileDate) - new Date(a.fileDate))
                 .slice(0, 10);
 
-              if (clientFiles.length === 0) {
+              if (sortedClientFiles.length === 0) {
                 const noFileContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
                   .addTextDisplayComponents(text => text.setContent(
@@ -559,9 +901,23 @@ module.exports = {
                 return;
               }
 
-              fileOptions = clientFiles;
-              // Auto-select: most recent file that has a linked server pack, else most recent overall
-              const autoFile = clientFiles.find(f => f.serverPackFileId) || clientFiles[0];
+              // Fetch linked server packs in parallel
+              const serverPacks = await Promise.all(
+                sortedClientFiles.map(f => f.serverPackFileId
+                  ? getFileById(f.modId, f.serverPackFileId).catch(() => null)
+                  : null
+                )
+              );
+
+              // Interleave: server pack (if available) then client file, per version
+              fileOptions = [];
+              for (let idx = 0; idx < sortedClientFiles.length; idx++) {
+                const sp = serverPacks[idx];
+                if (sp?.downloadUrl) fileOptions.push(sp);
+                fileOptions.push(sortedClientFiles[idx]);
+              }
+
+              const autoFile = fileOptions[0];
               selectedFileId = autoFile.id;
 
               await modalSubmit.editReply({
@@ -570,7 +926,7 @@ module.exports = {
               });
 
             } catch (modalErr) {
-              msgLog.debug(`[install-modpack] modal dismissed: ${modalErr.message}`);
+              msgLog.debugExtended(`[install-modpack] modal dismissed: ${modalErr.message}`);
             }
 
           } else if (i.customId === "file-select") {
@@ -586,26 +942,9 @@ module.exports = {
             const chosenFile = fileOptions?.find(f => f.id === selectedFileId);
             if (!chosenFile) return;
 
-            const loadingContainer = new ContainerBuilder()
-              .setAccentColor(COLORS.PRIMARY)
-              .addTextDisplayComponents(text => text.setContent("**Install Modpack**\n\nLooking up selected version..."));
-            await i.editReply({ components: [ loadingContainer ], flags: MessageFlags.IsComponentsV2 });
-
-            // Resolve linked server pack if available
-            let serverPackFile = null;
-            if (chosenFile.serverPackFileId) {
-              serverPackFile = await getFileById(chosenFile.modId, chosenFile.serverPackFileId).catch(() => null);
-            }
-
-            if (serverPackFile) {
-              targetFile = { id: serverPackFile.id, displayName: serverPackFile.displayName, downloadUrl: serverPackFile.downloadUrl };
-              mcVersion = detectMCVersion(modpackData, serverPackFile);
-              usingClientPack = false;
-            } else {
-              targetFile = { id: chosenFile.id, displayName: chosenFile.displayName, downloadUrl: chosenFile.downloadUrl };
-              mcVersion = detectMCVersion(modpackData, chosenFile);
-              usingClientPack = true;
-            }
+            targetFile = { id: chosenFile.id, displayName: chosenFile.displayName, downloadUrl: chosenFile.downloadUrl };
+            mcVersion = detectMCVersion(modpackData, chosenFile);
+            usingClientPack = !chosenFile.isServerPack;
 
             if (!targetFile?.downloadUrl) {
               const noFileContainer = new ContainerBuilder()

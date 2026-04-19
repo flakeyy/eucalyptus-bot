@@ -2,6 +2,7 @@ require("dotenv").config();
 
 const CURSEFORGE_BASE_URL = "https://api.curseforge.com/v1";
 const msgLog = require("./logger.js");
+const AdmZip = require("adm-zip");
 
 const LOADER_MAP = {
   1: "forge",
@@ -28,7 +29,8 @@ async function getModpackById(projectId) {
     `${CURSEFORGE_BASE_URL}/mods/${projectId}`,
     { headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json" } }
   );
-  msgLog.debug(`API: GET /curse/mods/${projectId} | Status Code: ${response.status}`);
+  msgLog.debugExtended(`API: GET /curse/mods/${projectId} | Status Code: ${response.status}`);
+  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`CurseForge API error: HTTP ${response.status}`);
   const data = await response.json();
   if (!data.data) return null;
@@ -42,7 +44,7 @@ async function getModpackFiles(modId) {
     `${CURSEFORGE_BASE_URL}/mods/${modId}/files`,
     { headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json" } }
   );
-  msgLog.debug(`API: GET /curse/mods/${modId}/files | Status Code: ${response.status}`);
+  msgLog.debugExtended(`API: GET /curse/mods/${modId}/files | Status Code: ${response.status}`);
   if (!response.ok) throw new Error(`CurseForge API error: HTTP ${response.status}`);
   const data = await response.json();
   return data.data || [];
@@ -81,18 +83,78 @@ function findLinkedServerPackId(files) {
   return null;
 }
 
+async function getModsByIds(modIds) {
+  if (!modIds || modIds.length === 0) return [];
+  const response = await fetch(
+    `${CURSEFORGE_BASE_URL}/mods`,
+    {
+      method: "POST",
+      headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ modIds })
+    }
+  );
+  msgLog.debugExtended(`API: POST /curse/mods (${modIds.length} ids) | Status Code: ${response.status}`);
+  if (!response.ok) return [];
+  const data = await response.json();
+  return data.data || [];
+}
+
+async function getFilesByIds(fileIds) {
+  if (!fileIds || fileIds.length === 0) return [];
+  const response = await fetch(
+    `${CURSEFORGE_BASE_URL}/mods/files`,
+    {
+      method: "POST",
+      headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ fileIds })
+    }
+  );
+  msgLog.debugExtended(`API: POST /curse/mods/files (${fileIds.length} ids) | Status Code: ${response.status}`);
+  if (!response.ok) throw new Error(`CurseForge API error: HTTP ${response.status}`);
+  const data = await response.json();
+  return data.data || [];
+}
+
 async function getFileById(modId, fileId) {
   const response = await fetch(
     `${CURSEFORGE_BASE_URL}/mods/${modId}/files/${fileId}`,
     { headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json" } }
   );
-  msgLog.debug(`API: GET /curse/mods/${modId}/files/${fileId} | Status Code: ${response.status}`);
+  msgLog.debugExtended(`API: GET /curse/mods/${modId}/files/${fileId} | Status Code: ${response.status}`);
   if (!response.ok) return null;
   const data = await response.json();
   return data.data || null;
 }
 
+function isManifestZip(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    return zip.getEntry("manifest.json") !== null;
+  } catch {
+    return false;
+  }
+}
+
+function parseManifestFromZip(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    const entry = zip.getEntry("manifest.json");
+    if (!entry) return null;
+    return JSON.parse(zip.readAsText(entry));
+  } catch {
+    return null;
+  }
+}
+
+function parseManifestLoaderType(manifest) {
+  const loaders = manifest?.minecraft?.modLoaders;
+  const primary = loaders?.find(l => l.primary) ?? loaders?.[0];
+  const match = primary?.id?.match(/^(forge|fabric|neoforge|quilt)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
 module.exports = {
   getModpackById, getModpackFiles, detectLoaderType, findServerPack,
-  findLinkedServerPackId, getFileById, parseProjectId, LOADER_MAP
+  findLinkedServerPackId, getFileById, getFilesByIds, getModsByIds, parseProjectId, LOADER_MAP,
+  isManifestZip, parseManifestFromZip, parseManifestLoaderType
 };

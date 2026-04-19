@@ -392,7 +392,7 @@ module.exports = {
             clearAutoRefresh();
 
             const selectedServerId = i.values[0];
-            msgLog.debug(`${i.user.username}/${i.user.id} | [servers] select-server | ${selectedServerId}`);
+            msgLog.debugExtended(`${i.user.username}/${i.user.id} | [servers] select-server | ${selectedServerId}`);
 
             const selectedServerObject = await getServerInfoById(selectedServerId, interaction.user.id);
 
