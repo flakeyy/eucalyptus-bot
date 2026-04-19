@@ -149,6 +149,18 @@ Once confirmed, the bot performs these steps automatically:
 - **Server pack** (preferred) — downloaded and extracted directly to the server root.
 - **Client pack / manifest** — used when no server pack is available, or if you choose to override. The bot extracts the `overrides/` directory to the server root, then resolves and downloads each required mod individually. A warning is shown on completion reminding you to check for client-only mod compatibility.
 
+### ServerStarter support
+
+Some CurseForge server packs use the [ServerStarter](https://github.com/BloodyMods/ServerStarter) spec instead of bundling the modpack directly. These zips contain a `server-setup-config.yaml` that points to the actual modpack download.
+
+When the bot detects this file, it:
+
+1. Reads `install.modpackUrl` from the config and downloads the real modpack from that URL.
+2. Reads `install.formatSpecific.ignoreProject` — a list of CurseForge project IDs to exclude. These are treated identically to `mod_blacklist` entries (skipped from both mod downloads and override extraction).
+3. Continues with the normal manifest or direct-extract flow on the downloaded modpack.
+
+All other ServerStarter fields (Java args, RAM, loader installer, etc.) are ignored — those are handled at the server level, not by the bot.
+
 ### Manifest mod resolution
 
 When installing from a manifest, the bot:
@@ -166,6 +178,8 @@ You can override the automatic client-only detection per mod using CurseForge mo
 
 - **`mod_whitelist`** — mods that are always installed, even if detected as client-only.
 - **`mod_blacklist`** — mods that are always skipped, regardless of Modrinth detection.
+
+Both lists apply during manifest installs. `ignoreProject` entries from a ServerStarter config are merged with `mod_blacklist` at install time and have the same effect.
 
 ## License
 
