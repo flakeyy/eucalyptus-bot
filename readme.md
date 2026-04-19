@@ -8,6 +8,7 @@ A Discord bot integration for the Pterodactyl/Pyrodactyl Panel.
 ## Description
 
 A simple discord bot that allows administrators and users to manage their servers from within Discord. Made to extend functionality currently unavailable natively within the panel.
+
 This bot is made to work with [Pyrodactyl](https://github.com/pyrohost/pyrodactyl) + [Elytra](https://github.com/pyrohost/elytra) primarily, although it should work fine with [Pterodactyl](https://github.com/pterodactyl/panel) + [Wings](https://github.com/pterodactyl/wings) instances.
 
 ## Features
