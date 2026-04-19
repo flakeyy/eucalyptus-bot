@@ -1,5 +1,6 @@
 const fs = require("fs").promises;
 const path = require("path");
+const config = require("../config.json");
 
 const logDir = path.join(__dirname, "../logs");
 
@@ -39,5 +40,6 @@ module.exports = {
   log: (...args) => msgLog("info", ...args),
   warn: (...args) => msgLog("warn", ...args),
   error: (...args) => msgLog("error", ...args),
-  debug: (...args) => msgLog("debug", ...args)
+  debug: (...args) => msgLog("debug", ...args),
+  debugExtended: (...args) => { if (config.debug_extended) msgLog("debug", ...args); }
 };

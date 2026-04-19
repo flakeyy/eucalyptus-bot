@@ -111,7 +111,7 @@ const ERROR_MESSAGES = {
   },
   CURSEFORGE_MODPACK_NOT_FOUND: {
     id: -29,
-    text: "No modpack was found at that URL.\nPlease check the URL and try again."
+    text: "No modpack was found with that Project ID.\nPlease check the ID and try again."
   },
   CURSEFORGE_API_ERROR: {
     id: -30,

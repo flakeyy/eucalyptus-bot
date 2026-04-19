@@ -1,5 +1,6 @@
 {
     "debug": false,
+    "debug_extended": false,
     "minecraft_nest_id": 1,
     "default_overhead_mb": 256,
     "java_overhead_mb": 2048,
@@ -16,6 +17,8 @@
         "17": "ghcr.io/pterodactyl/yolks:java_17",
         "21": "ghcr.io/pterodactyl/yolks:java_21"
     },
+    "mod_whitelist": [],
+    "mod_blacklist": [],
     "minecraft_java_map": {
         "1.21": 21,
         "1.20": 21,

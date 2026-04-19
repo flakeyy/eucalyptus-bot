@@ -5,6 +5,8 @@ node_modules
 logs
 .DS_Store
 .github
+.claude
+CLAUDE.md
 
 # SQLite database files
 *.db
@@ -14,3 +16,5 @@ logs
 # Legacy data files (migrated to SQLite)
 users.json
 blacklist.json
+
+test-docs/

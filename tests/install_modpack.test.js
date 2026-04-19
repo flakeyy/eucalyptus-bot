@@ -1,6 +1,7 @@
 jest.mock("../utility/logger.js", () => ({
   log: jest.fn(),
   debug: jest.fn(),
+  debugExtended: jest.fn(),
   warn: jest.fn(),
   error: jest.fn()
 }));
@@ -190,10 +191,17 @@ describe("CurseForge API helpers", () => {
       expect(result).toBeNull();
     });
 
-    test("throws on HTTP error", async () => {
+    test("returns null on 404", async () => {
       global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 404 });
 
-      await expect(curseforge.getModpackById(99999)).rejects.toThrow("CurseForge API error: HTTP 404");
+      const result = await curseforge.getModpackById(99999);
+      expect(result).toBeNull();
+    });
+
+    test("throws on non-404 HTTP error", async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 });
+
+      await expect(curseforge.getModpackById(99999)).rejects.toThrow("CurseForge API error: HTTP 500");
     });
   });
 

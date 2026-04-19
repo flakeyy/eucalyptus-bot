@@ -65,6 +65,8 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `mc_version_variable` | Panel egg variable name for the Minecraft version (e.g. `MC_VERSION`) |
 | `java_images` | Docker image map keyed by Java version (8, 11, 17, 21) |
 | `minecraft_java_map` | Map of Minecraft version prefixes to required Java version |
+| `mod_whitelist` | Array of CurseForge mod IDs that are always installed, even if detected as client-only |
+| `mod_blacklist` | Array of CurseForge mod IDs that are always skipped during manifest installs |
 
 ## First-run setup
 
@@ -120,6 +122,50 @@ The user created via `/init` is granted a hidden Immunity flag (value `131072`) 
 - `/admin user edit` — Interactively edit a user's bot profile.
 - `/admin user delete` — Remove a user from the bot database.
 - `/admin servers` — Manage a user's servers as admin (bypasses memory limits).
+
+## install-modpack
+
+`/install-modpack` walks through an interactive multi-step flow to fully replace a Minecraft server's contents with a CurseForge modpack.
+
+### Flow
+
+1. **Select server** — lists your Minecraft servers (non-Minecraft servers are excluded).
+2. **Enter CurseForge Project ID** — found in the *About Project* section on the modpack's CurseForge page.
+3. **Select version** — up to 10 recent versions are shown, latest first. Server packs are interleaved above their matching client version and pre-selected where available.
+4. **Confirm** — two confirmation steps warn that all existing server files will be permanently deleted.
+
+### Installation steps
+
+Once confirmed, the bot performs these steps automatically:
+
+1. Stops the server and waits for it to go offline.
+2. Deletes all existing server files.
+3. Switches the server egg to match the modpack's loader (`forge`, `fabric`, `neoforge`, or `quilt`), sets `MC_VERSION`, and selects the correct Java Docker image.
+4. Reinstalls the server and waits for the reinstall to finish.
+5. Downloads and installs the modpack (see below).
+
+### Server pack vs. client pack
+
+- **Server pack** (preferred) — downloaded and extracted directly to the server root.
+- **Client pack / manifest** — used when no server pack is available, or if you choose to override. The bot extracts the `overrides/` directory to the server root, then resolves and downloads each required mod individually. A warning is shown on completion reminding you to check for client-only mod compatibility.
+
+### Manifest mod resolution
+
+When installing from a manifest, the bot:
+
+- Resolves download URLs for all required mods via the CurseForge batch API.
+- Cross-references every mod against Modrinth by SHA1 hash to detect client-only mods. A slug-based fallback is used for mods whose CurseForge and Modrinth builds have different hashes.
+- Skips client-only mods automatically — they are not installed on the server.
+- For mods with no CurseForge download URL (distribution disabled), attempts a Modrinth fallback URL via SHA1 match.
+- Mods that cannot be downloaded from either source are listed at the end with links to their CurseForge pages.
+- Downloads mods in parallel batches, bundles each batch into a zip, and uploads it to `/mods/`.
+
+### Mod whitelist / blacklist
+
+You can override the automatic client-only detection per mod using CurseForge mod IDs in `config.json`:
+
+- **`mod_whitelist`** — mods that are always installed, even if detected as client-only.
+- **`mod_blacklist`** — mods that are always skipped, regardless of Modrinth detection.
 
 ## License
 
