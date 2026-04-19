@@ -16,7 +16,8 @@ const msgLog = require("../../utility/logger.js");
 const db = require("../../utility/database.js");
 const {
   reconstructCommand,
-  userHasClientApiKey
+  userHasClientApiKey,
+  applicationApiCall
 } = require("../../utility/helper_functions.js");
 const {
   getClientServers,
@@ -1097,6 +1098,119 @@ async function handleAdminServers(interaction) {
   });
 }
 
+// ─── Admin servers view ───────────────────────────────────────────────────────
+
+async function handleAdminServersView(interaction) {
+  const filter = interaction.options.getString("filter") ?? "online";
+  const SERVERS_PER_PAGE = 10;
+
+  const appApi = await applicationApiCall("application/servers?per_page=100&include=user", "GET");
+  if (appApi.statusCode !== HTTP_STATUS_CODES.OK) {
+    await interaction.editReply(getErrorMessage("PANEL_UNREACHABLE"));
+    return;
+  }
+  const appData = await appApi.body.json();
+  const allServers = appData?.data ?? [];
+
+  const servers = [];
+  await Promise.all(allServers.map(async server => {
+    const owner = db.getUserByPanelId(server.attributes.user);
+
+    let state = "unknown";
+    let memoryUsed = 0;
+    let cpuUsage = 0;
+
+    if (owner?.panelAPIKey) {
+      const resourceApi = await getServerResourceInfoById(server.attributes.identifier, owner.discordId);
+      if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
+        const resourceData = await resourceApi.body.json();
+        state = resourceData?.attributes?.current_state ?? "unknown";
+        memoryUsed = resourceData.attributes.resources.memory_bytes;
+        cpuUsage = resourceData.attributes.resources.cpu_absolute;
+      }
+    }
+
+    if (filter === "online" && state !== "running") return;
+
+    servers.push({
+      name: server.attributes.name,
+      owner: owner?.panelUsername ?? `panel:${server.attributes.relationships?.user?.attributes?.username ?? server.attributes.user}`,
+      state,
+      memoryUsed,
+      memoryLimit: server.attributes.limits.memory,
+      cpuUsage
+    });
+  }));
+
+  servers.sort((a, b) => {
+    if (a.state === "running" && b.state !== "running") return -1;
+    if (a.state !== "running" && b.state === "running") return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const totalPages = Math.max(1, Math.ceil(servers.length / SERVERS_PER_PAGE));
+  let page = 0;
+
+  const buildView = p => {
+    const pageServers = servers.slice(p * SERVERS_PER_PAGE, (p + 1) * SERVERS_PER_PAGE);
+    const filterLabel = filter === "online" ? "Online Servers" : "All Servers";
+    let content = `**${filterLabel}** (${servers.length} total)\n\n`;
+
+    if (pageServers.length === 0) {
+      content += "No servers found.";
+    } else {
+      for (const s of pageServers) {
+        const memMB = (s.memoryUsed / UNIT_CONVERSIONS.BYTES_TO_MB).toFixed(0);
+        const cpu = s.cpuUsage.toFixed(1);
+        const stateLabel = filter === "all" ? ` — \`${s.state}\`` : "";
+        content += `**${s.name}**${stateLabel} — ${s.owner}\nMemory: ${memMB}/${s.memoryLimit} MB | CPU: ${cpu}%\n\n`;
+      }
+    }
+
+    if (totalPages > 1) {
+      content += `Page ${p + 1}/${totalPages}`;
+    }
+
+    const container = new ContainerBuilder()
+      .setAccentColor(COLORS.ADMIN)
+      .addTextDisplayComponents(text => text.setContent(content.trimEnd()));
+
+    if (totalPages > 1) {
+      container
+        .addSeparatorComponents(sep => sep)
+        .addActionRowComponents(row =>
+          row.setComponents(
+            new ButtonBuilder().setCustomId("admin-sv-prev").setLabel("◀").setStyle(ButtonStyle.Secondary).setDisabled(p === 0),
+            new ButtonBuilder().setCustomId("admin-sv-next").setLabel("▶").setStyle(ButtonStyle.Secondary).setDisabled(p >= totalPages - 1)
+          )
+        );
+    }
+
+    return container;
+  };
+
+  await interaction.editReply({ components: [ buildView(page) ], flags: MessageFlags.IsComponentsV2 });
+
+  if (totalPages <= 1) return;
+
+  const message = await interaction.fetchReply();
+  const collector = message.createMessageComponentCollector({ idle: COLLECTOR_IDLE_TIMEOUT });
+
+  collector.on("collect", async i => {
+    if (i.user.id !== interaction.user.id) {
+      await i.reply({ content: "This is not your menu.", flags: MessageFlags.Ephemeral });
+      return;
+    }
+    if (i.customId === "admin-sv-next") page = Math.min(page + 1, totalPages - 1);
+    else if (i.customId === "admin-sv-prev") page = Math.max(page - 1, 0);
+    await i.update({ components: [ buildView(page) ], flags: MessageFlags.IsComponentsV2 });
+  });
+
+  collector.on("end", async () => {
+    await interaction.editReply({ components: [ buildView(page) ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
+  });
+}
+
 // ─── Command definition ───────────────────────────────────────────────────────
 
 module.exports = {
@@ -1152,12 +1266,32 @@ module.exports = {
             )
         )
     )
-    .addSubcommand(sub =>
-      sub
+    .addSubcommandGroup(group =>
+      group
         .setName("servers")
-        .setDescription("Manage a user's servers as admin (bypasses memory limits).")
-        .addUserOption(opt =>
-          opt.setName("user").setDescription("The Discord user whose servers to manage.").setRequired(true)
+        .setDescription("Admin server management.")
+        .addSubcommand(sub =>
+          sub
+            .setName("view")
+            .setDescription("View servers.")
+            .addStringOption(opt =>
+              opt
+                .setName("filter")
+                .setDescription("Which servers to show. Default: online only.")
+                .setRequired(false)
+                .addChoices(
+                  { name: "Online only", value: "online" },
+                  { name: "All servers", value: "all" }
+                )
+            )
+        )
+        .addSubcommand(sub =>
+          sub
+            .setName("manage")
+            .setDescription("Manage a user's servers as admin (bypasses memory limits).")
+            .addUserOption(opt =>
+              opt.setName("user").setDescription("The Discord user whose servers to manage.").setRequired(true)
+            )
         )
     ),
 
@@ -1184,8 +1318,9 @@ module.exports = {
         else if (subcommand === "create") await handleUserCreate(interaction);
         else if (subcommand === "edit") await handleUserEdit(interaction);
         else if (subcommand === "delete") await handleUserDelete(interaction);
-      } else if (subcommand === "servers") {
-        await handleAdminServers(interaction);
+      } else if (subcommandGroup === "servers") {
+        if (subcommand === "view") await handleAdminServersView(interaction);
+        else if (subcommand === "manage") await handleAdminServers(interaction);
       }
     } catch (error) {
       msgLog.error(`Error in admin command (${subcommandGroup}/${subcommand}): ${error.message}`);
