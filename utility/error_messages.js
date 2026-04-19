@@ -39,7 +39,7 @@ const ERROR_MESSAGES = {
   },
   API_REQUEST_FAILED: {
     id: -11,
-    format: statusCode => `The API responded but returned an error, please check your request or try again later. HTTP Code: ${statusCode}\n<@${ADMIN_DISCORD_ID}>`
+    format: statusCode => `The API responded but returned an error, please check your request or try again later. HTTP Code: ${statusCode}`
   },
   SERVER_CREATION_TIMEOUT: {
     id: -12,
