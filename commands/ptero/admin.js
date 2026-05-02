@@ -32,6 +32,7 @@ const {
   getAvailableUserMemory
 } = require("../../utility/server_functions.js");
 const { buildServerSelectMenu } = require("./server_menu.js");
+const { PterodactylWebSocket } = require("../../utility/pterodactyl_websocket.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 const COLORS = {
@@ -41,12 +42,6 @@ const COLORS = {
 };
 
 const COLLECTOR_IDLE_TIMEOUT = 300_000;
-
-const AUTO_REFRESH_INTERVALS = {
-  RUNNING: 5000,
-  OFFLINE: null,
-  SUSPENDED: null
-};
 
 const POWER_ACTION_CONFIG = {
   MAX_ATTEMPTS: 30,
@@ -241,7 +236,7 @@ async function handleUserEdit(interaction) {
     return;
   }
 
-  if (existing.permissions & PERMISSIONS.IMMUNITY) {
+  if ((existing.permissions & PERMISSIONS.IMMUNITY) && interaction.user.id !== targetUser.id) {
     await interaction.editReply({
       content: "This user's account is protected and cannot be modified.",
       flags: MessageFlags.Ephemeral
@@ -428,7 +423,7 @@ async function handleUserEdit(interaction) {
 
     } else if (i.customId === "admin-perm-save") {
       if (pendingPermissions === null) return;
-      const safePermissions = pendingPermissions & ~PERMISSIONS.IMMUNITY;
+      const safePermissions = i.user.id === targetUser.id ? pendingPermissions : pendingPermissions & ~PERMISSIONS.IMMUNITY;
       logAdminUserAction(i, "perm-save", `bitmask: ${safePermissions} (0x${safePermissions.toString(16).toUpperCase()})`);
       await i.deferUpdate();
       try {
@@ -575,7 +570,7 @@ async function handleAdminServers(interaction) {
     return;
   }
 
-  if (targetDbUser.permissions & PERMISSIONS.IMMUNITY) {
+  if ((targetDbUser.permissions & PERMISSIONS.IMMUNITY) && interaction.user.id !== targetDiscordId) {
     await interaction.editReply({
       content: "This user's account is protected and cannot be modified.",
       flags: MessageFlags.Ephemeral
@@ -623,13 +618,108 @@ async function handleAdminServers(interaction) {
   let currentSelectedServer = null;
   let currentServerResourceInfo = null;
   let currentView = "main";
-  let autoRefreshInterval = null;
+  let activeWs = null;
+  let lastDiscordEditTime = 0;
+  let consoleBuffer = [];
 
-  const clearAutoRefresh = () => {
-    if (autoRefreshInterval) {
-      clearInterval(autoRefreshInterval);
-      autoRefreshInterval = null;
+  const WS_THROTTLE_MS = 3000;
+  const CONSOLE_MAX_LINES = 20;
+  const CONSOLE_PREVIEW_LINES = 5;
+
+  const disconnectWebSocket = () => {
+    if (activeWs) {
+      activeWs.close();
+      activeWs = null;
     }
+  };
+
+  const connectWebSocket = serverId => {
+    disconnectWebSocket();
+    if (!currentSelectedServer || !currentServerResourceInfo) return;
+
+    const ws = new PterodactylWebSocket(serverId, targetDiscordId);
+    activeWs = ws;
+
+    ws.on("stats", async resourceInfo => {
+      currentServerResourceInfo = resourceInfo;
+      const now = Date.now();
+      if (now - lastDiscordEditTime < WS_THROTTLE_MS || currentView !== "main") return;
+      lastDiscordEditTime = now;
+      await interaction.editReply({
+        components: [ buildFullAdminMainView() ],
+        flags: MessageFlags.IsComponentsV2
+      }).catch(() => disconnectWebSocket());
+    });
+
+    ws.on("consoleLine", async line => {
+      // eslint-disable-next-line no-control-regex
+      const stripped = line.replace(/\x1b\[[0-9;]*m/g, "");
+      const truncated = stripped.length > 300 ? stripped.slice(0, 300) + "…" : stripped;
+      consoleBuffer.push(truncated);
+      if (consoleBuffer.length > CONSOLE_MAX_LINES) consoleBuffer.shift();
+
+      const now = Date.now();
+      if (now - lastDiscordEditTime < WS_THROTTLE_MS || currentView !== "console") return;
+      lastDiscordEditTime = now;
+      await interaction.editReply({
+        components: [ buildAdminConsoleView(currentSelectedServer.attributes.name, consoleBuffer) ],
+        flags: MessageFlags.IsComponentsV2
+      }).catch(() => disconnectWebSocket());
+    });
+
+    ws.on("powerStateChange", async state => {
+      if (currentServerResourceInfo?.attributes) {
+        currentServerResourceInfo.attributes.current_state = state;
+        if (state === "offline") {
+          currentServerResourceInfo.attributes.resources.cpu_absolute = 0;
+          currentServerResourceInfo.attributes.resources.memory_bytes = 0;
+        }
+      }
+      if (currentView !== "main") return;
+      await interaction.editReply({
+        components: [ buildFullAdminMainView() ],
+        flags: MessageFlags.IsComponentsV2
+      }).catch(() => disconnectWebSocket());
+    });
+
+    ws.on("error", err => {
+      msgLog.error(`[admin-server-menu] WS error for ${serverId}: ${err.message}`);
+    });
+
+    ws.on("close", () => {
+      if (activeWs === ws) activeWs = null;
+    });
+
+    ws.connect().catch(err => {
+      msgLog.error(`[admin-server-menu] WS connect failed for ${serverId}: ${err.message}`);
+      activeWs = null;
+    });
+  };
+
+  const buildAdminConsoleView = (serverName, lines) => {
+    let consoleText = "No output yet.";
+    if (lines.length > 0) {
+      const subset = lines.slice();
+      let text;
+      do {
+        text = "```\n" + subset.join("\n") + "\n```";
+        if (text.length <= 4000) break;
+        subset.shift();
+      } while (subset.length > 0);
+      if (subset.length > 0) consoleText = text;
+    }
+    return new ContainerBuilder()
+      .setAccentColor(COLORS.ADMIN)
+      .addActionRowComponents(row =>
+        row.setComponents(new ButtonBuilder().setCustomId("admin-back").setLabel("← Back").setStyle(ButtonStyle.Secondary))
+      )
+      .addTextDisplayComponents(text => text.setContent(`**[ADMIN] ${serverName}** — Console`))
+      .addSeparatorComponents(sep => sep)
+      .addTextDisplayComponents(text => text.setContent(consoleText))
+      .addSeparatorComponents(sep => sep)
+      .addActionRowComponents(row =>
+        row.setComponents(new ButtonBuilder().setCustomId("admin-send-command").setLabel("Send Command").setStyle(ButtonStyle.Primary))
+      );
   };
 
   const buildFullAdminMainView = (statusMessage = null) => {
@@ -642,36 +732,61 @@ async function handleAdminServers(interaction) {
       );
 
     if (currentSelectedServer) {
+      const limits = currentSelectedServer.attributes.limits;
       let detailsText = "";
       if (currentServerResourceInfo && currentServerResourceInfo.attributes) {
         const memUsageMB = (currentServerResourceInfo.attributes.resources.memory_bytes / UNIT_CONVERSIONS.BYTES_TO_MB).toFixed(0);
         const diskUsageGB = (currentServerResourceInfo.attributes.resources.disk_bytes / UNIT_CONVERSIONS.BYTES_TO_GB).toFixed(2);
         const cpuUsage = (currentServerResourceInfo.attributes.resources.cpu_absolute).toFixed(2);
+        const diskLimitGB = limits.disk > 0 ? `${(limits.disk / 1024).toFixed(2)} GB` : null;
+        const diskText = diskLimitGB ? `${diskUsageGB} / ${diskLimitGB}` : `${diskUsageGB} GB`;
         const state = currentServerResourceInfo.attributes.is_suspended
           ? "Suspended"
-          : `Active, ${currentServerResourceInfo.attributes.current_state}`;
+          : `Active — ${currentServerResourceInfo.attributes.current_state}`;
         detailsText =
           `**Status:** ${state}\n` +
           `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-          `**Memory:** ${memUsageMB}/${currentSelectedServer.attributes.limits.memory} MB\n` +
-          `**Disk:** ${diskUsageGB} GB\n` +
-          `**CPU:** ${cpuUsage}/${(currentSelectedServer.attributes.limits.cpu).toFixed(2)}%\n` +
+          `**Memory:** ${memUsageMB} / ${limits.memory} MB\n` +
+          `**Disk:** ${diskText}\n` +
+          `**CPU:** ${cpuUsage}%\n` +
           `**Node:** ${currentSelectedServer.attributes.node}`;
       } else {
+        const diskLimitGB = limits.disk > 0 ? `${(limits.disk / 1024).toFixed(2)} GB` : null;
+        const diskText = diskLimitGB ? `— / ${diskLimitGB}` : "—";
         detailsText =
           "**Status:** Suspended\n" +
           `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-          `**Memory Limit:** ${currentSelectedServer.attributes.limits.memory} MB\n` +
+          `**Memory:** — / ${limits.memory} MB\n` +
+          `**Disk:** ${diskText}\n` +
+          "**CPU:** —\n" +
           `**Node:** ${currentSelectedServer.attributes.node}`;
       }
       if (statusMessage) detailsText += `\n\n${statusMessage}`;
 
       container
         .addTextDisplayComponents(text => text.setContent(detailsText))
-        .addSeparatorComponents(sep => sep)
+        .addSeparatorComponents(sep => sep);
+
+      if (consoleBuffer.length > 0) {
+        const subset = consoleBuffer.slice(-CONSOLE_PREVIEW_LINES);
+        let previewText;
+        do {
+          previewText = "```\n" + subset.join("\n") + "\n```";
+          if (previewText.length <= 4000) break;
+          subset.shift();
+        } while (subset.length > 0);
+        if (subset.length > 0) {
+          container
+            .addTextDisplayComponents(text => text.setContent(previewText))
+            .addSeparatorComponents(sep => sep);
+        }
+      }
+
+      container
         .addActionRowComponents(row =>
           row.setComponents(
             new ButtonBuilder().setCustomId("admin-server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId("admin-console-view").setLabel("Console").setStyle(ButtonStyle.Secondary).setDisabled(isSuspended),
             new ButtonBuilder().setCustomId("admin-refresh").setLabel("Refresh").setStyle(ButtonStyle.Secondary)
           )
         )
@@ -685,45 +800,6 @@ async function handleAdminServers(interaction) {
     }
 
     return container;
-  };
-
-  const startAutoRefresh = async () => {
-    clearAutoRefresh();
-    if (!currentSelectedServer || currentView !== "main") return;
-
-    const refreshServerInfo = async () => {
-      try {
-        if (!currentSelectedServer || currentView !== "main") { clearAutoRefresh(); return; }
-        const resourceApi = await getServerResourceInfoById(currentSelectedServer.attributes.identifier, targetDiscordId);
-        if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-          currentServerResourceInfo = await resourceApi.body.json();
-          await interaction.editReply({
-            components: [ buildFullAdminMainView() ],
-            flags: MessageFlags.IsComponentsV2
-          }).catch(() => clearAutoRefresh());
-          const state = currentServerResourceInfo.attributes.current_state;
-          const isSuspended = currentServerResourceInfo.attributes.is_suspended;
-          if (isSuspended || state !== "running") clearAutoRefresh();
-        } else {
-          currentServerResourceInfo = null;
-          clearAutoRefresh();
-          await interaction.editReply({
-            components: [ buildFullAdminMainView() ],
-            flags: MessageFlags.IsComponentsV2
-          }).catch(() => {});
-        }
-      } catch (err) {
-        msgLog.error(`Admin auto-refresh error: ${err.message}`);
-        clearAutoRefresh();
-      }
-    };
-
-    if (currentServerResourceInfo && !currentServerResourceInfo.attributes.is_suspended) {
-      const state = currentServerResourceInfo.attributes.current_state;
-      if (state === "running") {
-        autoRefreshInterval = setInterval(refreshServerInfo, AUTO_REFRESH_INTERVALS.RUNNING);
-      }
-    }
   };
 
   const createDisabledAdminMenu = errorKey => {
@@ -749,7 +825,8 @@ async function handleAdminServers(interaction) {
   collector.on("collect", async i => {
     try {
       if (i.customId === "server-selection") {
-        clearAutoRefresh();
+        disconnectWebSocket();
+        consoleBuffer = [];
         const selectedServerId = i.values[0];
         const selectedServerObject = await getServerInfoById(selectedServerId, targetDiscordId);
 
@@ -767,7 +844,7 @@ async function handleAdminServers(interaction) {
 
         currentView = "main";
         await i.update({ components: [ buildFullAdminMainView() ], flags: MessageFlags.IsComponentsV2 });
-        startAutoRefresh();
+        connectWebSocket(selectedServerId);
 
       } else if (i.customId === "admin-refresh") {
         await i.deferUpdate();
@@ -783,10 +860,10 @@ async function handleAdminServers(interaction) {
           ? await resourceApi.body.json()
           : null;
         await i.editReply({ components: [ buildFullAdminMainView() ], flags: MessageFlags.IsComponentsV2 });
-        startAutoRefresh();
+        connectWebSocket(selectedServerId);
 
       } else if (i.customId === "admin-server-settings") {
-        clearAutoRefresh();
+        disconnectWebSocket();
         await i.deferUpdate();
 
         let isSuspended = false;
@@ -831,10 +908,9 @@ async function handleAdminServers(interaction) {
         await i.editReply({ components: [ settingsContainer ], flags: MessageFlags.IsComponentsV2 });
 
       } else if (i.customId === "admin-back") {
-        const backContainer = buildFullAdminMainView();
         currentView = "main";
-        await i.update({ components: [ backContainer ], flags: MessageFlags.IsComponentsV2 });
-        startAutoRefresh();
+        await i.update({ components: [ buildFullAdminMainView() ], flags: MessageFlags.IsComponentsV2 });
+        connectWebSocket(currentSelectedServer.attributes.identifier);
 
       } else if (i.customId === "admin-power-start" || i.customId === "admin-power-restart" || i.customId === "admin-power-stop") {
         const action = i.customId === "admin-power-start" ? "start" : i.customId === "admin-power-restart" ? "restart" : "stop";
@@ -852,7 +928,7 @@ async function handleAdminServers(interaction) {
         if (result.resourceInfo) currentServerResourceInfo = result.resourceInfo;
 
         await i.editReply({ components: [ buildFullAdminMainView(result.message) ], flags: MessageFlags.IsComponentsV2 });
-        startAutoRefresh();
+        connectWebSocket(currentSelectedServer.attributes.identifier);
 
       } else if (i.customId === "admin-edit-name") {
         const nameModal = new ModalBuilder()
@@ -897,7 +973,7 @@ async function handleAdminServers(interaction) {
           }
           currentView = "main";
           await submit.editReply({ components: [ buildFullAdminMainView(message) ], flags: MessageFlags.IsComponentsV2 });
-          startAutoRefresh();
+          connectWebSocket(currentSelectedServer.attributes.identifier);
         } catch { /* modal timed out */ }
 
       } else if (i.customId === "admin-edit-memory") {
@@ -942,7 +1018,7 @@ async function handleAdminServers(interaction) {
           }
           currentView = "main";
           await submit.editReply({ components: [ buildFullAdminMainView(message) ], flags: MessageFlags.IsComponentsV2 });
-          startAutoRefresh();
+          connectWebSocket(currentSelectedServer.attributes.identifier);
         } catch { /* modal timed out */ }
 
       } else if (i.customId === "admin-suspend-server") {
@@ -970,7 +1046,7 @@ async function handleAdminServers(interaction) {
         const message = statusCode === HTTP_STATUS_CODES.NO_CONTENT ? "Server suspended successfully!" : getErrorMessage("SERVER_SUSPEND_FAILED");
         currentView = "main";
         await i.editReply({ components: [ buildFullAdminMainView(message) ], flags: MessageFlags.IsComponentsV2 });
-        clearAutoRefresh();
+        disconnectWebSocket();
 
       } else if (i.customId === "admin-unsuspend-server") {
         logAdminServerAction(i, "unsuspend-server");
@@ -999,7 +1075,7 @@ async function handleAdminServers(interaction) {
         const message = statusCode === HTTP_STATUS_CODES.NO_CONTENT ? "Server unsuspended successfully!" : getErrorMessage("SERVER_UNSUSPEND_FAILED");
         currentView = "main";
         await i.editReply({ components: [ buildFullAdminMainView(message) ], flags: MessageFlags.IsComponentsV2 });
-        startAutoRefresh();
+        connectWebSocket(currentSelectedServer.attributes.identifier);
 
       } else if (i.customId === "admin-delete-server") {
         await i.deferUpdate();
@@ -1046,6 +1122,37 @@ async function handleAdminServers(interaction) {
         }
         await i.editReply({ components: [ resultContainer ], flags: MessageFlags.IsComponentsV2 });
 
+      } else if (i.customId === "admin-console-view") {
+        await i.deferUpdate();
+        currentView = "console";
+        await interaction.editReply({
+          components: [ buildAdminConsoleView(currentSelectedServer.attributes.name, consoleBuffer) ],
+          flags: MessageFlags.IsComponentsV2
+        });
+
+      } else if (i.customId === "admin-send-command") {
+        const cmdModal = new ModalBuilder()
+          .setCustomId("admin-send-command-modal")
+          .setTitle("Send Console Command")
+          .addComponents(
+            new ActionRowBuilder().addComponents(
+              new TextInputBuilder()
+                .setCustomId("admin-command-input")
+                .setLabel("Command")
+                .setStyle(TextInputStyle.Short)
+                .setMaxLength(512)
+                .setRequired(true)
+            )
+          );
+
+        await i.showModal(cmdModal);
+
+        const submitted = await i.awaitModalSubmit({ time: 60_000 }).catch(() => null);
+        if (!submitted) return;
+        await submitted.deferUpdate();
+        const cmd = submitted.fields.getTextInputValue("admin-command-input").trim();
+        if (activeWs) activeWs.sendCommand(cmd);
+
       } else if (i.customId === "admin-cancel-delete-server") {
         await i.deferUpdate();
         let isSuspended = false;
@@ -1089,7 +1196,7 @@ async function handleAdminServers(interaction) {
   });
 
   collector.on("end", async (collected, reason) => {
-    clearAutoRefresh();
+    disconnectWebSocket();
     if (reason === "idle") {
       await interaction.editReply({ components: [ createDisabledAdminMenu("USER_TIMEOUT") ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
     } else if (reason === "unauthorized") {
