@@ -786,22 +786,22 @@ module.exports = {
 
     const hasReadServers = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_SERVERS);
     if (hasReadServers === -1) {
-      await interaction.reply(getErrorMessage("USER_NOT_FOUND"));
+      await interaction.reply({ content: getErrorMessage("USER_NOT_FOUND"), flags: MessageFlags.Ephemeral });
       return;
     }
     if (!hasReadServers) {
-      await interaction.reply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      await interaction.reply({ content: getErrorMessage("INSUFFICIENT_PERMISSIONS"), flags: MessageFlags.Ephemeral });
       return;
     }
     if (!userHasClientApiKey(interaction.user.id)) {
-      await interaction.reply(getErrorMessage("API_KEY_NOT_SET"));
+      await interaction.reply({ content: getErrorMessage("API_KEY_NOT_SET"), flags: MessageFlags.Ephemeral });
       return;
     }
 
     try {
       const serverObjects = await getClientServers(interaction.user.id);
       if (!serverObjects || !serverObjects.data) {
-        await interaction.reply(getErrorMessage("CLIENT_API_FAILURE"));
+        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -823,7 +823,7 @@ module.exports = {
       }
 
       const initialContainer = buildServerSelectContainer(serverObjects.data, nestMap);
-      await interaction.reply({ components: [ initialContainer ], flags: MessageFlags.IsComponentsV2 });
+      await interaction.reply({ components: [ initialContainer ], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
 
       const response = await interaction.fetchReply();
       const collector = response.createMessageComponentCollector({
