@@ -50,19 +50,15 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `PROD_DISCORD_TOKEN` | Discord bot token (production) |
 | `DEV_DISCORD_TOKEN` | Discord bot token (dev environment) |
 | `PANEL_API_KEY` | Application API key from the panel |
-
 | `ENCRYPTION_KEY` | 64-char hex key for AES-256-GCM encryption of stored client API keys. Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
-| `ADMIN_DISCORD_ID` | Discord User ID for the Panel/Bot administrator
-| `PROD_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (prod)
-| `PROD_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (prod)
-| `DEV_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (dev, not needed)
-| `DEV_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (dev, not needed)
-
+| `ADMIN_DISCORD_ID` | Discord User ID for the Panel/Bot administrator |
+| `PROD_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (prod) |
+| `PROD_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (prod) |
+| `DEV_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (dev, not needed) |
+| `DEV_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (dev, not needed) |
 | `PANEL_URL` | Full URL of your Pterodactyl/Pyrodactyl panel |
-
 | `UPTIME_URL` | *(optional)* Uptime Kuma base URL |
 | `UPTIME_SLUG` | *(optional)* Uptime Kuma status page slug |
-
 | `CURSEFORGE_API_KEY` | *(required for /install-modpack command)* API key for the [Curseforge API](https://console.curseforge.com/?#/api-keys)
 
 ### config.json fields
