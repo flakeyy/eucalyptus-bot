@@ -1,7 +1,7 @@
 # eucalyptus/bot
 
-[![CI Tests - main](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml/badge.svg?branch=main)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml)
-[![CI Tests - dev](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml/badge.svg?branch=dev)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml)
+[![CI Tests - main](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml/badge.svg?branch=main)](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml)
+[![CI Tests - dev](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml/badge.svg?branch=dev)](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml)
 
 A Discord bot integration for the Pyrodactyl/Pterodactyl Panel.
 
@@ -24,7 +24,7 @@ This bot is made to work with [Pyrodactyl](https://github.com/pyrohost-oss/pyrod
 
 1. Clone the repository
 ```bash
-git clone https://github.com/flakeyy/pterobot.git
+git clone https://github.com/flakeyy/eucalyptus-bot.git
 ```
 
 2. Install dependencies
