@@ -1,4 +1,4 @@
-# Eucalyptus/Bot
+# eucalyptus/bot
 
 [![CI Tests - main](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml/badge.svg?branch=main)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml)
 [![CI Tests - dev](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml/badge.svg?branch=dev)](https://github.com/flakeyy/pterobot/actions/workflows/nodejs-tests.yml)
