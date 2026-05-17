@@ -1,5 +1,5 @@
 const ADMIN_DISCORD_ID = process.env.ADMIN_DISCORD_ID;
-const PANEL_URL = process.env.PANEL_URL;
+const PANEL_URL = (process.env.PANEL_URL || "").replace(/\/$/, "");
 
 const ERROR_MESSAGES = {
   USER_NOT_FOUND: {
@@ -84,7 +84,7 @@ const ERROR_MESSAGES = {
   },
   API_KEY_NOT_SET: {
     id: -22,
-    text: `You must set your client API key before using this command.\nPlease use /set-client-key to set your API key.\nYou can generate one at ${PANEL_URL}account/api`
+    text: `You must set your client API key before using this command.\nPlease use /set-client-key to set your API key.\nYou can generate one at ${PANEL_URL}/account/api`
   },
   SERVER_NOT_FOUND: {
     id: -23,

@@ -12,7 +12,7 @@ module.exports = {
     .setDescription("Sets your client API key required for certain commands.")
     .addStringOption(option =>
       option.setName("api-key")
-        .setDescription(`A valid client API key, generated from ${process.env.PANEL_URL}account/api`)
+        .setDescription(`A valid client API key, generated from ${(process.env.PANEL_URL || "").replace(/\/$/, "")}/account/api`)
         .setRequired(true)
     ),
   async execute(interaction) {

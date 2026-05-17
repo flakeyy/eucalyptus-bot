@@ -436,7 +436,7 @@ module.exports = {
                     "**Server created successfully!**\n\n" +
                     `**Name:** ${apiResult.attributes.name}\n` +
                     "**Status:** Installing\n\n" +
-                    `View your server at:\n${process.env.PANEL_URL}server/${apiResult.attributes.identifier}`
+                    `View your server at:\n${process.env.PANEL_URL.replace(/\/$/, "")}/server/${apiResult.attributes.identifier}`
                   )
                 );
             } else if (typeof apiResult === "string") {
