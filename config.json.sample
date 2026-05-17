@@ -1,6 +1,8 @@
 {
     "debug": false,
     "debug_extended": false,
+    "bot_name": "pyrodactyl bot",
+    "show_credit": false,
     "minecraft_nest_id": 1,
     "default_overhead_mb": 256,
     "java_overhead_mb": 2048,
