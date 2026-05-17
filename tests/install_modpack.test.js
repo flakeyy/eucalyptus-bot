@@ -253,7 +253,9 @@ describe("install-modpack command", () => {
 
     await execute(interaction);
 
-    expect(interaction.reply).toHaveBeenCalledWith("Error: USER_NOT_FOUND");
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Error: USER_NOT_FOUND" })
+    );
   });
 
   test("shows INSUFFICIENT_PERMISSIONS when user lacks READ_SERVERS", async () => {
@@ -261,7 +263,9 @@ describe("install-modpack command", () => {
 
     await execute(interaction);
 
-    expect(interaction.reply).toHaveBeenCalledWith("Error: INSUFFICIENT_PERMISSIONS");
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Error: INSUFFICIENT_PERMISSIONS" })
+    );
   });
 
   test("shows API_KEY_NOT_SET when no client API key is configured", async () => {
@@ -270,7 +274,9 @@ describe("install-modpack command", () => {
 
     await execute(interaction);
 
-    expect(interaction.reply).toHaveBeenCalledWith("Error: API_KEY_NOT_SET");
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Error: API_KEY_NOT_SET" })
+    );
     // No API calls should be made before the key check
     expect(serverFunctions.getClientServers).not.toHaveBeenCalled();
   });
@@ -285,7 +291,9 @@ describe("install-modpack command", () => {
 
     await execute(interaction);
 
-    expect(interaction.reply).toHaveBeenCalledWith("Error: CLIENT_API_FAILURE");
+    expect(interaction.reply).toHaveBeenCalledWith(
+      expect.objectContaining({ content: "Error: CLIENT_API_FAILURE" })
+    );
   });
 
   test("replies with server select UI on successful load", async () => {
