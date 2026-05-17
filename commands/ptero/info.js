@@ -1,5 +1,6 @@
 const { ContainerBuilder, SlashCommandBuilder, MessageFlags } = require("discord.js");
 const msgLog = require("../../utility/logger.js");
+const config = require("../../config.json");
 const { reconstructCommand, getMonitorUptime } = require("../../utility/helper_functions.js");
 
 const COLORS = {
@@ -24,16 +25,19 @@ module.exports = {
           : `${process.env.UPTIME_URL}/status/${process.env.UPTIME_SLUG}`)
         : null;
 
+      const botName = config.bot_name || "cathost/pyrodactyl bot";
+      const showCredit = config.show_credit !== false;
+
       const infoText =
-        "**cathost/pyrodactyl bot**\n" +
+        `**${botName}**\n` +
         `v${global.version}/${global.commitHash}\n\n` +
         `**Hosting:** ${global.serverCount} servers for ${global.userCount} users\n` +
         `**Panel:** ${process.env.PANEL_URL}\n` +
         (uptimeStatusUrl ? `**Uptime:** ${uptimeStatusUrl}\n` : "") +
         `  • Panel: ${panelUptime !== null ? panelUptime + "%" : "Unavailable"} (24 hrs)\n` +
         `  • Server Node: ${nodeUptime !== null ? nodeUptime + "%" : "Unavailable"} (24 hrs)\n\n` +
-        "/service for more specific service information.\n\n" +
-        "_developed by flakey_";
+        "/service for more specific service information." +
+        (showCredit ? "\n\n_developed by flakey_" : "");
 
       const container = new ContainerBuilder()
         .setAccentColor(COLORS.PRIMARY)
