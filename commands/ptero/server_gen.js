@@ -117,16 +117,16 @@ module.exports = {
 
     const authenticated = authenticateUserForPermission(interaction.user.id, PERMISSIONS.CREATE_SERVER);
     if (authenticated === -1) {
-      await interaction.reply(getErrorMessage("USER_NOT_FOUND"));
+      await interaction.reply({ content: getErrorMessage("USER_NOT_FOUND"), flags: MessageFlags.Ephemeral });
       return;
     }
     if (!authenticated) {
-      await interaction.reply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      await interaction.reply({ content: getErrorMessage("INSUFFICIENT_PERMISSIONS"), flags: MessageFlags.Ephemeral });
       return;
     }
 
     if (!userHasClientApiKey(interaction.user.id)) {
-      await interaction.reply(getErrorMessage("API_KEY_NOT_SET"));
+      await interaction.reply({ content: getErrorMessage("API_KEY_NOT_SET"), flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -188,7 +188,7 @@ module.exports = {
 
       await interaction.reply({
         components: [ initialContainer ],
-        flags: MessageFlags.IsComponentsV2
+        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
       });
 
       const response = await interaction.fetchReply();
@@ -436,7 +436,7 @@ module.exports = {
                     "**Server created successfully!**\n\n" +
                     `**Name:** ${apiResult.attributes.name}\n` +
                     "**Status:** Installing\n\n" +
-                    `View your server at:\n${process.env.PANEL_URL}server/${apiResult.attributes.identifier}`
+                    `View your server at:\n${process.env.PANEL_URL.replace(/\/$/, "")}/server/${apiResult.attributes.identifier}`
                   )
                 );
             } else if (typeof apiResult === "string") {

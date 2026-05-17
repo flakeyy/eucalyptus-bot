@@ -17,13 +17,16 @@ module.exports = {
       const panelUptime = await getMonitorUptime("panel");
       const nodeUptime = await getMonitorUptime("node");
 
+      const provider = (process.env.UPTIME_PROVIDER || "kuma").toLowerCase();
       const uptimeStatusUrl = process.env.UPTIME_URL && process.env.UPTIME_SLUG
-        ? `${process.env.UPTIME_URL}/status/${process.env.UPTIME_SLUG}`
+        ? (provider === "custom"
+          ? `${process.env.UPTIME_URL}/p/${process.env.UPTIME_SLUG}`
+          : `${process.env.UPTIME_URL}/status/${process.env.UPTIME_SLUG}`)
         : null;
 
       const infoText =
         "**cathost/pyrodactyl bot**\n" +
-        `v${global.version}/${global.commitHash}${(global.isDev ? " | dev" : " | prod")}\n\n` +
+        `v${global.version}/${global.commitHash}\n\n` +
         `**Hosting:** ${global.serverCount} servers for ${global.userCount} users\n` +
         `**Panel:** ${process.env.PANEL_URL}\n` +
         (uptimeStatusUrl ? `**Uptime:** ${uptimeStatusUrl}\n` : "") +

@@ -47,18 +47,19 @@ The bot creates a `pterobot.db` SQLite database on first run.
 
 | Variable | Description |
 |---|---|
-| `PROD_DISCORD_TOKEN` | Discord bot token (production) |
-| `DEV_DISCORD_TOKEN` | Discord bot token (dev environment) |
+| `DISCORD_TOKEN` | Discord bot token |
 | `PANEL_API_KEY` | Application API key from the panel |
 | `ENCRYPTION_KEY` | 64-char hex key for AES-256-GCM encryption of stored client API keys. Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `ADMIN_DISCORD_ID` | Discord User ID for the Panel/Bot administrator |
-| `PROD_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (prod) |
-| `PROD_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (prod) |
-| `DEV_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (dev, not needed) |
-| `DEV_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (dev, not needed) |
+| `CLIENT_ID` | Discord application/client ID for the bot |
+| `GUILD_ID` | *(optional)* If set, `deploy.js` registers slash commands to this guild only (instant updates). Leave blank to deploy globally. |
 | `PANEL_URL` | Full URL of your Pterodactyl/Pyrodactyl panel |
-| `UPTIME_URL` | *(optional)* Uptime Kuma base URL |
-| `UPTIME_SLUG` | *(optional)* Uptime Kuma status page slug |
+| `UPTIME_PROVIDER` | *(optional)* `kuma` (default) |
+| `UPTIME_URL` | *(optional)* Base URL of the status host |
+| `UPTIME_SLUG` | *(optional)* Status page slug — `/status/<slug>` for Kuma |
+| `UPTIME_PANEL_MONITOR_ID` | *(Kuma only)* Monitor ID for the panel |
+| `UPTIME_NODE_MONITOR_ID` | *(Kuma only)* Monitor ID for the node |
+| `UPTIME_API_KEY` | *(custom provider only)* Bearer token for the custom status API |
 | `CURSEFORGE_API_KEY` | *(required for /install-modpack command)* API key for the [Curseforge API](https://console.curseforge.com/?#/api-keys)
 
 ### config.json fields
@@ -73,8 +74,7 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `mc_version_variable` | Panel egg variable name for the Minecraft version (e.g. `MC_VERSION`) |
 | `java_images` | Docker image map keyed by Java version (8, 11, 17, 21) |
 | `minecraft_java_map` | Map of Minecraft version prefixes to required Java version |
-| `mod_whitelist` | Array of CurseForge mod IDs that are always installed, even if detected as client-only |
-| `mod_blacklist` | Array of CurseForge mod IDs that are always skipped during manifest installs |
+| `mod_id_blocklist` | Array of mod IDs as declared inside the mod's own metadata (e.g. `"drippyloadingscreen"`), not CurseForge project IDs. Mods matching an entry are always skipped during manifest installs. |
 
 ## First-run setup
 
@@ -130,6 +130,7 @@ The user created via `/init` is granted a hidden Immunity flag (value `131072`) 
 - `/admin user edit` — Interactively edit a user's bot profile.
 - `/admin user delete` — Remove a user from the bot database.
 - `/admin servers` — Manage a user's servers as admin (bypasses memory limits).
+
 
 ## License
 

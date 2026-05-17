@@ -12,7 +12,8 @@ const {
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { getModpackById, getModpackFiles, detectLoaderType, getFileById, getFilesByIds, getModsByIds, parseProjectId, isManifestZip, parseManifestFromZip } = require("../../utility/curseforge.js");
-const { analyzeModrinthFiles, getClientOnlyBySlugs } = require("../../utility/modrinth.js");
+const { analyzeModrinthFiles } = require("../../utility/modrinth.js");
+const { inspectModJarCached, extractModDeps } = require("../../utility/mod_inspector.js");
 const AdmZip = require("adm-zip");
 const config = require("../../config.json");
 
@@ -340,7 +341,7 @@ async function updateProgress(i, message) {
   await i.editReply({ components: [ container ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
 }
 
-async function runManifestSteps(i, serverId, userId, buffer, manifest, ignoreProjects = []) {
+async function runManifestSteps(i, serverId, userId, buffer, manifest, loaderType = null) {
   // Resolve files and mod metadata first so we can filter overrides
   const requiredEntries = (manifest.files || []).filter(f => f.required);
   await updateProgress(i,
@@ -350,32 +351,19 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
 
   const nameByModId = new Map(resolvedFiles.map(f => [ f.modId, f.displayName ?? f.fileName ?? String(f.modId) ]));
 
-  // Fetch mod metadata for all resolved files — used for classId filtering and slug-based client-only fallback
+  // Fetch mod metadata for all resolved files — used for classId filtering
   const allModIds = [ ...new Set(resolvedFiles.map(f => f.modId)) ];
   const allCfMods = await getModsByIds(allModIds);
   const classIdByModId = new Map(allCfMods.map(m => [ m.id, m.classId ]));
-  const slugByModId = new Map(allCfMods.filter(m => m.slug).map(m => [ m.id, m.slug ]));
 
-  const modWhitelist = new Set((config.mod_whitelist || []).map(Number));
-  const modBlacklist = new Set([ ...(config.mod_blacklist || []).map(Number), ...ignoreProjects.map(Number) ]);
-
-  // The manifest projectID and the modId returned by the files API can differ (e.g. mod transfers).
-  // Build a set of fileIds that are blacklisted via manifest projectID so both paths are checked.
-  const blacklistedFileIds = new Set(
-    requiredEntries
-      .filter(e => modBlacklist.has(e.projectID) && !modWhitelist.has(e.projectID))
-      .map(e => e.fileID)
-  );
-
-  // Build a set of filenames to exclude from overrides/mods/ (blacklisted + non-mod classIds)
+  // Build a set of filenames to exclude from overrides/mods/ (non-mod classIds only)
   const CF_MOD_CLASS_ID = 6;
   const overrideModExclude = new Set();
   for (const f of resolvedFiles) {
     if (!f.fileName) continue;
     const classId = classIdByModId.get(f.modId);
     const isNonMod = classId !== undefined && classId !== CF_MOD_CLASS_ID;
-    const isBlacklisted = (modBlacklist.has(f.modId) || blacklistedFileIds.has(f.id)) && !modWhitelist.has(f.modId);
-    if (isNonMod || isBlacklisted) overrideModExclude.add(f.fileName);
+    if (isNonMod) overrideModExclude.add(f.fileName);
   }
 
   // Upload overrides content (strip the "overrides/" prefix so files land at server root)
@@ -386,7 +374,7 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
     if (e.entryName.startsWith("overrides/mods/")) {
       const filename = e.entryName.slice("overrides/mods/".length);
       if (overrideModExclude.has(filename)) {
-        msgLog.debugExtended(`[install-modpack] skip override (blacklisted/non-mod): ${filename}`);
+        msgLog.debugExtended(`[install-modpack] skip override (non-mod): ${filename}`);
         return false;
       }
     }
@@ -443,76 +431,24 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
   const downloadable = modFiles.filter(f => f.downloadUrl);
   const noUrl = modFiles.filter(f => !f.downloadUrl);
 
-  // Build SHA1 map across all mod files for a single combined Modrinth lookup
+  // Build SHA1 map across all mod files for a single combined Modrinth lookup (used for fallback URLs only)
   const sha1ToFile = new Map();
   for (const f of modFiles) {
     const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
     if (sha1) sha1ToFile.set(sha1, f);
   }
 
-  await updateProgress(i, `Installing from manifest — checking ${sha1ToFile.size} mod(s) against Modrinth...`);
-  const { clientOnlyHashes, fallbackUrls, foundHashes } = await analyzeModrinthFiles([ ...sha1ToFile.keys() ]);
-
-  // Filter out client-only mods from the downloadable set
-  const skippedProjectIds = new Set();
-  for (const f of downloadable) {
-    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
-    if (sha1 && clientOnlyHashes.has(sha1)) {
-      if (modWhitelist.has(f.modId)) {
-        msgLog.debugExtended(`[install-modpack] whitelist override (client-only): ${nameByModId.get(f.modId)}`);
-      } else {
-        skippedProjectIds.add(f.modId);
-        msgLog.debugExtended(`[install-modpack] skip (client-only): ${nameByModId.get(f.modId)}`);
-      }
-    }
-  }
-  // Slug-based fallback for mods whose CurseForge and Modrinth builds differ (different SHA1)
-  const unmatchedMods = downloadable.filter(f => {
-    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
-    return !skippedProjectIds.has(f.modId) && !blacklistedFileIds.has(f.id) && (!sha1 || !foundHashes.has(sha1));
-  });
-  if (unmatchedMods.length > 0) {
-    const slugToModId = new Map(
-      unmatchedMods.filter(f => slugByModId.has(f.modId)).map(f => [ slugByModId.get(f.modId), f.modId ])
-    );
-    const clientOnlySlugs = await getClientOnlyBySlugs([ ...slugToModId.keys() ]);
-    for (const slug of clientOnlySlugs) {
-      const modId = slugToModId.get(slug);
-      if (modId) {
-        if (modWhitelist.has(modId)) {
-          msgLog.debugExtended(`[install-modpack] whitelist override (client-only via slug): ${nameByModId.get(modId)}`);
-        } else {
-          skippedProjectIds.add(modId);
-          msgLog.debugExtended(`[install-modpack] skip (client-only via slug): ${nameByModId.get(modId)}`);
-        }
-      }
-    }
-  }
-
-  // Apply blacklist
-  for (const modId of modBlacklist) {
-    if (!skippedProjectIds.has(modId)) {
-      skippedProjectIds.add(modId);
-      msgLog.debugExtended(`[install-modpack] skip (blacklisted): ${nameByModId.get(modId) ?? modId}`);
-    }
-  }
-
-  if (skippedProjectIds.size > 0) {
-    msgLog.log(`[install-modpack] skipped ${skippedProjectIds.size} client-only/blacklisted mod(s) from manifest`);
-  }
+  await updateProgress(i, "Installing from manifest — resolving download URLs...");
+  const { fallbackUrls } = await analyzeModrinthFiles([ ...sha1ToFile.keys() ]);
 
   // Recover mods with no CurseForge download URL using Modrinth fallback URLs
   const unavailable = [];
   const modrinthFallbacks = [];
   for (const f of noUrl) {
-    if (modBlacklist.has(f.modId) || blacklistedFileIds.has(f.id)) {
-      msgLog.debugExtended(`[install-modpack] skip (blacklisted, no CF url): ${nameByModId.get(f.modId) ?? f.modId}`);
-      continue;
-    }
     const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
     const fallback = sha1 ? fallbackUrls.get(sha1) : null;
     if (fallback) {
-      modrinthFallbacks.push({ downloadUrl: fallback.url, displayName: nameByModId.get(f.modId) });
+      modrinthFallbacks.push({ downloadUrl: fallback.url, displayName: nameByModId.get(f.modId), sha1 });
       msgLog.debugExtended(`[install-modpack] Modrinth fallback: ${nameByModId.get(f.modId)}`);
     } else {
       unavailable.push(f);
@@ -527,24 +463,22 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
   }
 
   const mods = [
-    ...downloadable.filter(f => !skippedProjectIds.has(f.modId) && !blacklistedFileIds.has(f.id)),
+    ...downloadable.map(f => ({ ...f, sha1: (f.hashes || []).find(h => h.algo === 1)?.value ?? null })),
     ...modrinthFallbacks
   ];
-  const total = mods.length;
-  let installed = 0;
-  let downloaded = 0;
   let downloadFailed = 0;
 
-  // Download mods in batches, zip each batch, upload and decompress into /mods/
+  // Phase 1: Download all mods and build dependency metadata.
+  // Buffers are kept in memory so we can propagate dependency chains before uploading anything.
+  await updateProgress(i,
+    `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(0, 0, mods.length)}`
+  );
+
+  const modInfos = []; // { filename, buffer, sha1, isClientOnly, source, modId, requiredDeps }
+
   for (let start = 0; start < mods.length; start += MANIFEST_MOD_BATCH) {
-    const batchIdx = Math.floor(start / MANIFEST_MOD_BATCH) + 1;
     const batch = mods.slice(start, start + MANIFEST_MOD_BATCH);
-
-    await updateProgress(i,
-      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(downloaded, installed, total)}`
-    );
-
-    const downloads = await Promise.all(batch.map(async mod => {
+    const results = await Promise.all(batch.map(async mod => {
       const filename = decodeURIComponent(mod.downloadUrl.split("/").pop());
       try {
         const res = await fetch(mod.downloadUrl);
@@ -556,7 +490,7 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
           if (done) break;
           chunks.push(value);
         }
-        return { filename, buffer: Buffer.concat(chunks) };
+        return { filename, buffer: Buffer.concat(chunks), sha1: mod.sha1 ?? null };
       } catch (e) {
         msgLog.debugExtended(`[install-modpack] mod download failed: ${filename}: ${e.message}`);
         downloadFailed++;
@@ -564,17 +498,53 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
       }
     }));
 
-    const successful = downloads.filter(Boolean);
-    downloaded += batch.length;
-    if (successful.length === 0) continue;
+    for (const r of results) {
+      if (!r) continue;
+      let { isClientOnly, source } = inspectModJarCached(r.sha1, r.buffer, loaderType);
+      const { modId, requiredDeps } = extractModDeps(r.buffer, loaderType);
+      if (!isClientOnly && modId !== null && (config.mod_id_blocklist ?? []).includes(modId)) {
+        isClientOnly = true;
+        source = "blocklist";
+      }
+      if (isClientOnly) msgLog.debugExtended(`[install-modpack] skip (client-only, ${source}): ${r.filename}`);
+      modInfos.push({ ...r, isClientOnly, source, modId, requiredDeps });
+    }
 
     await updateProgress(i,
-      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(downloaded, installed, total)}`
+      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(modInfos.length + downloadFailed, 0, mods.length)}`
+    );
+  }
+
+  // Propagate client-only status: if a mod's required dependency was skipped, skip the mod too.
+  const skippedModIds = new Set(modInfos.filter(m => m.isClientOnly && m.modId).map(m => m.modId));
+  let propagated = true;
+  while (propagated) {
+    propagated = false;
+    for (const info of modInfos) {
+      if (!info.isClientOnly && info.requiredDeps.some(dep => skippedModIds.has(dep))) {
+        info.isClientOnly = true;
+        if (info.modId) { skippedModIds.add(info.modId); propagated = true; }
+        msgLog.debugExtended(`[install-modpack] skip (client-dep chain): ${info.filename}`);
+      }
+    }
+  }
+
+  // Phase 2: Upload non-skipped mods in batches.
+  const toInstallAll = modInfos.filter(m => !m.isClientOnly);
+  const total = toInstallAll.length;
+  let installed = 0;
+
+  for (let start = 0; start < toInstallAll.length; start += MANIFEST_MOD_BATCH) {
+    const batchIdx = Math.floor(start / MANIFEST_MOD_BATCH) + 1;
+    const batch = toInstallAll.slice(start, start + MANIFEST_MOD_BATCH);
+
+    await updateProgress(i,
+      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(mods.length, installed, mods.length)}`
     );
 
     // Bundle mods into a zip with a mods/ prefix so it extracts to /mods/
     const batchZip = new AdmZip();
-    for (const { filename, buffer } of successful) {
+    for (const { filename, buffer } of batch) {
       batchZip.addFile(`mods/${filename}`, buffer, "", 0o100644 << 16);
     }
     const zipBuf = batchZip.toBuffer();
@@ -583,7 +553,7 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
     const uploadUrl = await getFileUploadUrl(serverId, userId);
     if (!uploadUrl) {
       msgLog.error(`[install-modpack] no upload URL for mod batch ${batchIdx}`);
-      downloadFailed += successful.length;
+      downloadFailed += batch.length;
       continue;
     }
 
@@ -605,20 +575,20 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, ignorePro
 
     if (!uploadRes.ok) {
       msgLog.error(`[install-modpack] mod batch ${batchIdx} upload failed: HTTP ${uploadRes.status}`);
-      downloadFailed += successful.length;
+      downloadFailed += batch.length;
       continue;
     }
 
     await decompressFile(serverId, userId, "/", zipFilename);
-    await chmodServerFiles(serverId, userId, "/mods/", successful.map(({ filename }) => ({
+    await chmodServerFiles(serverId, userId, "/mods/", batch.map(({ filename }) => ({
       file: filename,
       mode: "644"
     }))).catch(() => {});
     await deleteServerFiles(serverId, userId, [ zipFilename ]).catch(() => {});
 
-    installed += successful.length;
+    installed += batch.length;
     await updateProgress(i,
-      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(downloaded, installed, total)}`
+      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(mods.length, installed, mods.length)}`
     );
   }
 
@@ -691,17 +661,12 @@ async function runInstallation(i, state, interaction) {
 
   let buffer = Buffer.concat(chunks);
   let unavailableMods = [];
-  let ignoreProjects = [];
 
   if (isServerStarterZip(buffer)) {
     const ssConfig = parseServerStarterConfig(buffer);
     if (!ssConfig?.modpackUrl) {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
       return;
-    }
-    ignoreProjects = ssConfig.ignoreProject || [];
-    if (ignoreProjects.length > 0) {
-      msgLog.log(`[install-modpack] ServerStarter: ignoring ${ignoreProjects.length} project(s) from ignoreProject`);
     }
     await updateProgress(i, "Downloading modpack from ServerStarter URL...");
     try {
@@ -725,7 +690,7 @@ async function runInstallation(i, state, interaction) {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
       return;
     }
-    unavailableMods = await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest, ignoreProjects);
+    unavailableMods = await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest, loaderType);
   } else {
     const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
     if (!uploadUrl) {
@@ -753,7 +718,7 @@ async function runInstallation(i, state, interaction) {
   msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
 
   if (usingClientPack || usedManifest) {
-    doneContent += "\n\n**Reminder:** A client modpack/manifest install was used. You may be required to manually add/remove certain client-sided mods to fix crashing/client-server compatibility issues.";
+    doneContent += `\n\n**Reminder:** A client modpack/manifest install was used, please report to <@${process.env.ADMIN_DISCORD_ID}> if you encounter a crash at server boot.`;
   }
 
   if (unavailableMods.length > 0) {
@@ -786,22 +751,22 @@ module.exports = {
 
     const hasReadServers = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_SERVERS);
     if (hasReadServers === -1) {
-      await interaction.reply(getErrorMessage("USER_NOT_FOUND"));
+      await interaction.reply({ content: getErrorMessage("USER_NOT_FOUND"), flags: MessageFlags.Ephemeral });
       return;
     }
     if (!hasReadServers) {
-      await interaction.reply(getErrorMessage("INSUFFICIENT_PERMISSIONS"));
+      await interaction.reply({ content: getErrorMessage("INSUFFICIENT_PERMISSIONS"), flags: MessageFlags.Ephemeral });
       return;
     }
     if (!userHasClientApiKey(interaction.user.id)) {
-      await interaction.reply(getErrorMessage("API_KEY_NOT_SET"));
+      await interaction.reply({ content: getErrorMessage("API_KEY_NOT_SET"), flags: MessageFlags.Ephemeral });
       return;
     }
 
     try {
       const serverObjects = await getClientServers(interaction.user.id);
       if (!serverObjects || !serverObjects.data) {
-        await interaction.reply(getErrorMessage("CLIENT_API_FAILURE"));
+        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), flags: MessageFlags.Ephemeral });
         return;
       }
 
@@ -823,7 +788,7 @@ module.exports = {
       }
 
       const initialContainer = buildServerSelectContainer(serverObjects.data, nestMap);
-      await interaction.reply({ components: [ initialContainer ], flags: MessageFlags.IsComponentsV2 });
+      await interaction.reply({ components: [ initialContainer ], flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral });
 
       const response = await interaction.fetchReply();
       const collector = response.createMessageComponentCollector({

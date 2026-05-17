@@ -1,15 +1,13 @@
 {
   "name": "pterobot",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "a discord bot that interacts with pterodactyls API",
   "main": "index.js",
   "author": "flakey",
   "license": "ISC",
   "scripts": {
     "start": "node index.js",
-    "start:dev": "node index.js --dev",
     "deploy": "node deploy.js",
-    "deploy:dev": "node deploy.js --dev",
     "lint": "eslint .",
     "test": "jest --runInBand"
   },

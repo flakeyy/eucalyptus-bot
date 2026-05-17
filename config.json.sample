@@ -17,8 +17,11 @@
         "17": "ghcr.io/pterodactyl/yolks:java_17",
         "21": "ghcr.io/pterodactyl/yolks:java_21"
     },
-    "mod_whitelist": [],
-    "mod_blacklist": [],
+    "mod_id_blocklist": [
+        "drippyloadingscreen",
+        "fancymenu",
+        "notenoughanimations"
+    ],
     "minecraft_java_map": {
         "1.21": 21,
         "1.20": 21,
