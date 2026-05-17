@@ -26,7 +26,7 @@ module.exports = {
 
       const infoText =
         "**cathost/pyrodactyl bot**\n" +
-        `v${global.version}/${global.commitHash}${(global.isDev ? " | dev" : " | prod")}\n\n` +
+        `v${global.version}/${global.commitHash}\n\n` +
         `**Hosting:** ${global.serverCount} servers for ${global.userCount} users\n` +
         `**Panel:** ${process.env.PANEL_URL}\n` +
         (uptimeStatusUrl ? `**Uptime:** ${uptimeStatusUrl}\n` : "") +

@@ -14,8 +14,7 @@ const { generateBootstrapToken } = require("./utility/bootstrap.js");
 const dClient = new discordClient({ intents: [ GatewayIntentBits.Guilds ] });
 const msgLog = require("./utility/logger.js");
 
-const useDev = process.argv[2] === "--dev";
-const DISCORD_TOKEN = useDev ? process.env.DEV_DISCORD_TOKEN : process.env.PROD_DISCORD_TOKEN;
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const API_KEY = process.env.PANEL_API_KEY;
 
 if (!DISCORD_TOKEN || !API_KEY) {
@@ -52,7 +51,6 @@ if (getAllUsers().length === 0) {
   msgLog.log("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 }
 
-global.isDev = useDev;
 global.version = require("./package.json").version;
 
 try {
@@ -86,7 +84,7 @@ async function setPresence() {
 }
 
 dClient.once(Events.ClientReady, readyClient => {
-  msgLog.log(`${readyClient.user.tag} is live | v${global.version}/${global.commitHash}${useDev ? " | dev" : ""}`);
+  msgLog.log(`${readyClient.user.tag} is live | v${global.version}/${global.commitHash}`);
   setPresence();
   setInterval(setPresence, 300000);
 });

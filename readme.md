@@ -47,15 +47,12 @@ The bot creates a `pterobot.db` SQLite database on first run.
 
 | Variable | Description |
 |---|---|
-| `PROD_DISCORD_TOKEN` | Discord bot token (production) |
-| `DEV_DISCORD_TOKEN` | Discord bot token (dev environment) |
+| `DISCORD_TOKEN` | Discord bot token |
 | `PANEL_API_KEY` | Application API key from the panel |
 | `ENCRYPTION_KEY` | 64-char hex key for AES-256-GCM encryption of stored client API keys. Generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
 | `ADMIN_DISCORD_ID` | Discord User ID for the Panel/Bot administrator |
-| `PROD_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (prod) |
-| `PROD_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (prod) |
-| `DEV_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (dev, not needed) |
-| `DEV_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (dev, not needed) |
+| `CLIENT_ID` | Discord application/client ID for the bot |
+| `GUILD_ID` | *(optional)* If set, `deploy.js` registers slash commands to this guild only (instant updates). Leave blank to deploy globally. |
 | `PANEL_URL` | Full URL of your Pterodactyl/Pyrodactyl panel |
 | `UPTIME_PROVIDER` | *(optional)* `kuma` (default) |
 | `UPTIME_URL` | *(optional)* Base URL of the status host |

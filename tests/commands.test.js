@@ -91,7 +91,6 @@ describe("Pterobot Command Tests", () => {
     jest.clearAllMocks();
     global.version = "1.0.0";
     global.commitHash = "abc123";
-    global.isDev = false;
     global.serverCount = 10;
     global.userCount = 5;
   });
