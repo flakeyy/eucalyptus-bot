@@ -57,8 +57,12 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `DEV_CLIENT_ID` | Discord User ID for the Discord Bot executing the commands (dev, not needed) |
 | `DEV_GUILD_ID` | Discord Guild ID for the primary Discord guild the bot will exist in (dev, not needed) |
 | `PANEL_URL` | Full URL of your Pterodactyl/Pyrodactyl panel |
-| `UPTIME_URL` | *(optional)* Uptime Kuma base URL |
-| `UPTIME_SLUG` | *(optional)* Uptime Kuma status page slug |
+| `UPTIME_PROVIDER` | *(optional)* `kuma` (default) |
+| `UPTIME_URL` | *(optional)* Base URL of the status host |
+| `UPTIME_SLUG` | *(optional)* Status page slug — `/status/<slug>` for Kuma |
+| `UPTIME_PANEL_MONITOR_ID` | *(Kuma only)* Monitor ID for the panel |
+| `UPTIME_NODE_MONITOR_ID` | *(Kuma only)* Monitor ID for the node |
+| `UPTIME_API_KEY` | *(custom provider only)* Bearer token for the custom status API |
 | `CURSEFORGE_API_KEY` | *(required for /install-modpack command)* API key for the [Curseforge API](https://console.curseforge.com/?#/api-keys)
 
 ### config.json fields

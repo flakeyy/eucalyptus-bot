@@ -17,8 +17,11 @@ module.exports = {
       const panelUptime = await getMonitorUptime("panel");
       const nodeUptime = await getMonitorUptime("node");
 
+      const provider = (process.env.UPTIME_PROVIDER || "kuma").toLowerCase();
       const uptimeStatusUrl = process.env.UPTIME_URL && process.env.UPTIME_SLUG
-        ? `${process.env.UPTIME_URL}/status/${process.env.UPTIME_SLUG}`
+        ? (provider === "custom"
+          ? `${process.env.UPTIME_URL}/p/${process.env.UPTIME_SLUG}`
+          : `${process.env.UPTIME_URL}/status/${process.env.UPTIME_SLUG}`)
         : null;
 
       const infoText =

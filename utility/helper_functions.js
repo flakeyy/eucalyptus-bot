@@ -116,30 +116,77 @@ function reconstructCommand(interaction) {
 }
 
 async function getMonitorUptime(type) {
-  const URL = process.env.UPTIME_URL;
-  const SLUG = process.env.UPTIME_SLUG;
-  const MONITOR_ID = (type === "panel" ? 1 : (type === "node" ? 7 : null));
-
-  if (MONITOR_ID === null) {
+  if (type !== "panel" && type !== "node") {
     throw new Error("Invalid monitor type specified.");
   }
 
+  const provider = (process.env.UPTIME_PROVIDER || "kuma").toLowerCase();
+
   try {
-    const response = await fetch(`${URL}/api/status-page/heartbeat/${SLUG}`);
-    if (!response.ok) {
-      throw new Error(`HTTP error: ${response.status}`);
+    if (provider === "custom") {
+      return await getCustomUptime(type);
     }
-    const data = await response.json();
-    const key = `${MONITOR_ID}_24`;
-    if (data.uptimeList && data.uptimeList[key] !== undefined) {
-      const uptime24hr = (data.uptimeList[key] * 100).toFixed(2);
-      return uptime24hr;
-    }
+    return await getKumaUptime(type);
   } catch (error) {
     msgLog.error(`getMonitorUptime failed: ${error.message}`);
     return null;
   }
+}
 
+async function getKumaUptime(type) {
+  const URL = process.env.UPTIME_URL;
+  const SLUG = process.env.UPTIME_SLUG;
+  const MONITOR_ID = type === "panel"
+    ? process.env.UPTIME_PANEL_MONITOR_ID
+    : process.env.UPTIME_NODE_MONITOR_ID;
+
+  if (!MONITOR_ID) {
+    throw new Error(`Missing ${type === "panel" ? "UPTIME_PANEL_MONITOR_ID" : "UPTIME_NODE_MONITOR_ID"} env var`);
+  }
+
+  const response = await fetch(`${URL}/api/status-page/heartbeat/${SLUG}`);
+  if (!response.ok) {
+    throw new Error(`HTTP error: ${response.status}`);
+  }
+  const data = await response.json();
+  const key = `${MONITOR_ID}_24`;
+  if (data.uptimeList && data.uptimeList[key] !== undefined) {
+    return (data.uptimeList[key] * 100).toFixed(2);
+  }
+  return null;
+}
+
+async function getCustomUptime(type) {
+  const URL = process.env.UPTIME_URL;
+  const API_KEY = process.env.UPTIME_API_KEY;
+  const SLUG = process.env.UPTIME_SLUG;
+  const wantedType = type === "panel" ? "pterodactyl_panel" : "pterodactyl_node";
+
+  const endpoint = SLUG
+    ? `${URL}/api/status?page=${encodeURIComponent(SLUG)}`
+    : `${URL}/api/status`;
+  const response = await fetch(endpoint, {
+    headers: API_KEY ? { "Authorization": `Bearer ${API_KEY}` } : {}
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP error: ${response.status}`);
+  }
+  const data = await response.json();
+  const service = (data.services || []).find(s => s.type === wantedType);
+  if (!service || !Array.isArray(service.history24h)) {
+    return null;
+  }
+
+  let totalChecks = 0;
+  let upChecks = 0;
+  for (const bucket of service.history24h) {
+    totalChecks += bucket.total || 0;
+    upChecks += bucket.up || 0;
+  }
+  if (totalChecks === 0) {
+    return null;
+  }
+  return ((upChecks / totalChecks) * 100).toFixed(2);
 }
 
 function validateString(str, minLength = 1, maxLength = 32) {
