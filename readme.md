@@ -73,8 +73,7 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `mc_version_variable` | Panel egg variable name for the Minecraft version (e.g. `MC_VERSION`) |
 | `java_images` | Docker image map keyed by Java version (8, 11, 17, 21) |
 | `minecraft_java_map` | Map of Minecraft version prefixes to required Java version |
-| `mod_whitelist` | Array of CurseForge mod IDs that are always installed, even if detected as client-only |
-| `mod_blacklist` | Array of CurseForge mod IDs that are always skipped during manifest installs |
+| `mod_id_blocklist` | Array of mod IDs as declared inside the mod's own metadata (e.g. `"drippyloadingscreen"`), not CurseForge project IDs. Mods matching an entry are always skipped during manifest installs. |
 
 ## First-run setup
 
@@ -130,6 +129,7 @@ The user created via `/init` is granted a hidden Immunity flag (value `131072`) 
 - `/admin user edit` — Interactively edit a user's bot profile.
 - `/admin user delete` — Remove a user from the bot database.
 - `/admin servers` — Manage a user's servers as admin (bypasses memory limits).
+
 
 ## License
 
