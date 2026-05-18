@@ -49,7 +49,7 @@ jest.mock("../config.json", () => ({
 
 // curseforge.js is NOT mocked globally — pure functions tested directly
 const curseforge = require("../utility/curseforge.js");
-const { parseProjectId, detectLoaderType, findServerPack } = curseforge;
+const { parseProjectId, parseModpackSlug, detectLoaderType, findServerPack } = curseforge;
 
 const { execute, runInstallation } = require("../commands/ptero/install_modpack.js");
 const serverFunctions = require("../utility/server_functions.js");
@@ -75,6 +75,31 @@ describe("parseProjectId", () => {
     [ "null", null ]
   ])("returns null for %s", (_label, input) => {
     expect(parseProjectId(input)).toBeNull();
+  });
+});
+
+// ─── Modpack Slug Parsing ───────────────────────────────────────────────────
+
+describe("parseModpackSlug", () => {
+  test.each([
+    [ "https URL", "https://www.curseforge.com/minecraft/modpacks/star-technology", "star-technology" ],
+    [ "no scheme",  "www.curseforge.com/minecraft/modpacks/star-technology", "star-technology" ],
+    [ "no www",     "https://curseforge.com/minecraft/modpacks/all-the-mods-10", "all-the-mods-10" ],
+    [ "URL with trailing path", "https://www.curseforge.com/minecraft/modpacks/star-technology/files/12345", "star-technology" ],
+    [ "URL with whitespace", "  https://www.curseforge.com/minecraft/modpacks/star-technology  ", "star-technology" ],
+    [ "uppercase slug normalized", "https://www.curseforge.com/minecraft/modpacks/Star-Technology", "star-technology" ]
+  ])("parses %s", (_label, input, expected) => {
+    expect(parseModpackSlug(input)).toBe(expected);
+  });
+
+  test.each([
+    [ "bare numeric ID", "905765" ],
+    [ "non-modpacks URL", "https://www.curseforge.com/minecraft/mc-mods/jei" ],
+    [ "/projects/ URL", "https://www.curseforge.com/projects/905765" ],
+    [ "empty string", "" ],
+    [ "null", null ]
+  ])("returns null for %s", (_label, input) => {
+    expect(parseModpackSlug(input)).toBeNull();
   });
 });
 
@@ -196,6 +221,48 @@ describe("CurseForge API helpers", () => {
       global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 });
 
       await expect(curseforge.getModpackById(99999)).rejects.toThrow("CurseForge API error: HTTP 500");
+    });
+  });
+
+  describe("getModpackBySlug", () => {
+    test("returns the matching modpack when slug matches case-insensitively", async () => {
+      const mockModpack = { id: 905765, slug: "star-technology", name: "Star Technology", gameId: 432, classId: 4471 };
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: [
+          { id: 1, slug: "star-tech-fork" },
+          mockModpack
+        ] })
+      });
+
+      const result = await curseforge.getModpackBySlug("star-technology");
+      expect(result).toEqual(mockModpack);
+    });
+
+    test("returns null when no slug matches exactly", async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: [ { id: 1, slug: "star-tech-fork" } ] })
+      });
+
+      const result = await curseforge.getModpackBySlug("star-technology");
+      expect(result).toBeNull();
+    });
+
+    test("returns null when search yields no results", async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ data: [] })
+      });
+
+      const result = await curseforge.getModpackBySlug("does-not-exist");
+      expect(result).toBeNull();
+    });
+
+    test("throws on HTTP error", async () => {
+      global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 });
+
+      await expect(curseforge.getModpackBySlug("star-technology")).rejects.toThrow("CurseForge API error: HTTP 500");
     });
   });
 

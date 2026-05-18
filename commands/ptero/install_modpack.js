@@ -11,7 +11,7 @@ const {
   changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile, chmodServerFiles
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-const { getModpackById, getModpackFiles, detectLoaderType, getFileById, getFilesByIds, getModsByIds, parseProjectId, isManifestZip, parseManifestFromZip } = require("../../utility/curseforge.js");
+const { getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, getFileById, getFilesByIds, getModsByIds, parseProjectId, parseModpackSlug, isManifestZip, parseManifestFromZip } = require("../../utility/curseforge.js");
 const { analyzeModrinthFiles } = require("../../utility/modrinth.js");
 const { inspectModJarCached, extractModDeps } = require("../../utility/mod_inspector.js");
 const { validateExternalUrl } = require("../../utility/url_validation.js");
@@ -856,11 +856,11 @@ module.exports = {
 
             const urlInput = new TextInputBuilder()
               .setCustomId("modpack-url-input")
-              .setLabel("CurseForge Project ID")
+              .setLabel("CurseForge URL or Project ID")
               .setStyle(TextInputStyle.Short)
-              .setPlaceholder("e.g. 905765  (from the About Project section on CurseForge)")
+              .setPlaceholder("e.g. curseforge.com/minecraft/modpacks/star-technology  or  905765")
               .setRequired(true)
-              .setMaxLength(20);
+              .setMaxLength(200);
 
             urlModal.addComponents(new ActionRowBuilder().addComponents(urlInput));
             await i.showModal(urlModal);
@@ -874,12 +874,13 @@ module.exports = {
 
               const rawInput = modalSubmit.fields.getTextInputValue("modpack-url-input").trim();
               const projectId = parseProjectId(rawInput);
+              const slug = projectId ? null : parseModpackSlug(rawInput);
 
-              if (!projectId) {
+              if (!projectId && !slug) {
                 const errorContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
                   .addTextDisplayComponents(text => text.setContent(
-                    `**Install Modpack**\n\n${getErrorMessage("INVALID_INPUT")}\n\nEnter a numeric CurseForge Project ID.\nFind it in the **About Project** section on the modpack's CurseForge page.`
+                    `**Install Modpack**\n\n${getErrorMessage("INVALID_INPUT")}\n\nEnter a CurseForge modpack URL (e.g. \`curseforge.com/minecraft/modpacks/star-technology\`) or a numeric Project ID from the **About Project** section.`
                   ))
                   .addSeparatorComponents(sep => sep)
                   .addActionRowComponents(row => row.setComponents(
@@ -897,7 +898,7 @@ module.exports = {
 
               let modpack;
               try {
-                modpack = await getModpackById(projectId);
+                modpack = projectId ? await getModpackById(projectId) : await getModpackBySlug(slug);
               } catch {
                 const errContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
