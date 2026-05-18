@@ -25,7 +25,7 @@ module.exports = {
           : `${process.env.UPTIME_URL}/status/${process.env.UPTIME_SLUG}`)
         : null;
 
-      const botName = config.bot_name || "cathost/pyrodactyl bot";
+      const botName = config.bot_name || "pyrodactyl bot";
       const showCredit = config.show_credit !== false;
 
       const infoText =

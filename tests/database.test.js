@@ -303,3 +303,18 @@ describe("deleteUser", () => {
     expect(database.getUserByPanelUsername("bob")).not.toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// blacklist nodes — public read API
+// ---------------------------------------------------------------------------
+
+describe("blacklist nodes", () => {
+  test("getBlacklistedNode returns null for an unknown node", () => {
+    expect(database.getBlacklistedNode("ghost-node")).toBeNull();
+  });
+
+  test("getAllBlacklistedNodes returns an array (empty when none)", () => {
+    const result = database.getAllBlacklistedNodes();
+    expect(Array.isArray(result)).toBe(true);
+  });
+});

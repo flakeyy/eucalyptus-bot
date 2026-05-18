@@ -21,6 +21,7 @@ module.exports = [
         clearTimeout: true,
         global: true,
         fetch: true,
+        URL: true,
         // Test globals
         jest: true,
         describe: true,

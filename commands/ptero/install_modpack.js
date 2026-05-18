@@ -14,6 +14,7 @@ const { getErrorMessage } = require("../../utility/error_messages.js");
 const { getModpackById, getModpackFiles, detectLoaderType, getFileById, getFilesByIds, getModsByIds, parseProjectId, isManifestZip, parseManifestFromZip } = require("../../utility/curseforge.js");
 const { analyzeModrinthFiles } = require("../../utility/modrinth.js");
 const { inspectModJarCached, extractModDeps } = require("../../utility/mod_inspector.js");
+const { validateExternalUrl } = require("../../utility/url_validation.js");
 const AdmZip = require("adm-zip");
 const config = require("../../config.json");
 
@@ -121,6 +122,10 @@ function getJavaImageForMCVersion(mcVersion) {
 
 /* global TextEncoder, ReadableStream */
 async function downloadFileToBuffer(downloadUrl, onDownloadProgress) {
+  const urlCheck = await validateExternalUrl(downloadUrl);
+  if (!urlCheck.ok) {
+    throw Object.assign(new Error(`URL rejected: ${urlCheck.reason}`), { isDownload: true });
+  }
   const dlResponse = await fetch(downloadUrl);
   if (!dlResponse.ok) throw Object.assign(new Error(`Download failed: HTTP ${dlResponse.status}`), { isDownload: true });
 
@@ -481,6 +486,8 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, loaderTyp
     const results = await Promise.all(batch.map(async mod => {
       const filename = decodeURIComponent(mod.downloadUrl.split("/").pop());
       try {
+        const urlCheck = await validateExternalUrl(mod.downloadUrl);
+        if (!urlCheck.ok) throw new Error(`URL rejected: ${urlCheck.reason}`);
         const res = await fetch(mod.downloadUrl);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const chunks = [];
@@ -749,12 +756,12 @@ module.exports = {
   async execute(interaction) {
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
 
-    const hasReadServers = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_SERVERS);
-    if (hasReadServers === -1) {
+    const hasEditServers = authenticateUserForPermission(interaction.user.id, PERMISSIONS.EDIT_SERVER_PROPERTIES);
+    if (hasEditServers === -1) {
       await interaction.reply({ content: getErrorMessage("USER_NOT_FOUND"), flags: MessageFlags.Ephemeral });
       return;
     }
-    if (!hasReadServers) {
+    if (!hasEditServers) {
       await interaction.reply({ content: getErrorMessage("INSUFFICIENT_PERMISSIONS"), flags: MessageFlags.Ephemeral });
       return;
     }
