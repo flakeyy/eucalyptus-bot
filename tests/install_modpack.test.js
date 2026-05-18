@@ -55,36 +55,26 @@ const { execute, runInstallation } = require("../commands/ptero/install_modpack.
 const serverFunctions = require("../utility/server_functions.js");
 const helpers = require("../utility/helper_functions.js");
 const perms = require("../utility/permissions.js");
+const { makeState, mockHappyPath, mockUpToTransfer } = require("./fixtures/modpack.js");
 
 // ─── Project ID Parsing ─────────────────────────────────────────────────────
 
 describe("parseProjectId", () => {
-  test("parses a bare numeric ID string", () => {
-    expect(parseProjectId("905765")).toBe(905765);
+  test.each([
+    [ "bare numeric ID string", "905765", 905765 ],
+    [ "numeric ID with whitespace", "  905765  ", 905765 ],
+    [ "CurseForge /projects/ URL", "https://www.curseforge.com/projects/905765", 905765 ]
+  ])("parses %s", (_label, input, expected) => {
+    expect(parseProjectId(input)).toBe(expected);
   });
 
-  test("parses a numeric ID with whitespace", () => {
-    expect(parseProjectId("  905765  ")).toBe(905765);
-  });
-
-  test("extracts numeric ID from a CurseForge projects URL", () => {
-    expect(parseProjectId("https://www.curseforge.com/projects/905765")).toBe(905765);
-  });
-
-  test("returns null for a slug-only URL (no numeric ID)", () => {
-    expect(parseProjectId("https://www.curseforge.com/minecraft/modpacks/star-technology")).toBeNull();
-  });
-
-  test("returns null for a non-numeric string", () => {
-    expect(parseProjectId("star-technology")).toBeNull();
-  });
-
-  test("returns null for empty string", () => {
-    expect(parseProjectId("")).toBeNull();
-  });
-
-  test("returns null for null", () => {
-    expect(parseProjectId(null)).toBeNull();
+  test.each([
+    [ "slug-only URL", "https://www.curseforge.com/minecraft/modpacks/star-technology" ],
+    [ "non-numeric string", "star-technology" ],
+    [ "empty string", "" ],
+    [ "null", null ]
+  ])("returns null for %s", (_label, input) => {
+    expect(parseProjectId(input)).toBeNull();
   });
 });
 
@@ -337,77 +327,34 @@ describe("install-modpack command", () => {
 // ─── Installation behavior (via runInstallation) ────────────────────────────
 
 describe("runInstallation behavior", () => {
+  const USER = { user: { id: "discord1", username: "testuser" } };
   let mockInteraction;
 
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
     serverFunctions.reinstallServer.mockResolvedValue(204);
-    mockInteraction = {
-      editReply: jest.fn().mockResolvedValue(undefined)
-    };
+    mockInteraction = { editReply: jest.fn().mockResolvedValue(undefined) };
   });
 
   afterEach(() => {
     jest.useRealTimers();
   });
 
-  function makeState(overrides = {}) {
-    return {
-      serverId: "abc123",
-      serverInternalId: 42,
-      serverName: "Test Server",
-      modpackName: "Star Technology",
-      targetFile: {
-        id: 1,
-        displayName: "startech-server.zip",
-        downloadUrl: "https://cdn.example.com/pack.zip"
-      },
-      loaderType: "forge",
-      usingClientPack: false,
-      ...overrides
-    };
+  async function runAndSettle(state) {
+    const p = runInstallation(mockInteraction, state, USER);
+    await jest.runAllTimersAsync();
+    await p;
   }
 
-  /* global ReadableStream */
-  function makeStreamResponse(bytes = new Uint8Array([ 1, 2, 3, 4 ])) {
-    const body = new ReadableStream({
-      start(controller) { controller.enqueue(bytes); controller.close(); }
-    });
-    return {
-      ok: true,
-      status: 200,
-      headers: { get: name => name === "content-length" ? String(bytes.length) : null },
-      body
-    };
-  }
-
-  function mockHappyPath({ firstListResult = [] } = {}) {
-    serverFunctions.setServerPowerState.mockResolvedValue({ statusCode: 204 });
-    serverFunctions.getServerResourceInfoById.mockResolvedValue({
-      statusCode: 200,
-      body: { json: async () => ({ attributes: { current_state: "offline" } }) }
-    });
-    serverFunctions.listServerFiles.mockResolvedValue(firstListResult);
-    serverFunctions.deleteServerFiles.mockResolvedValue(204);
-    serverFunctions.changeServerEgg.mockResolvedValue(200);
-    serverFunctions.getFileUploadUrl.mockResolvedValue("https://wings.example.com/upload?token=x");
-    serverFunctions.decompressFile.mockResolvedValue(204);
-    global.fetch = jest.fn()
-      .mockResolvedValueOnce(makeStreamResponse())  // download
-      .mockResolvedValueOnce({ ok: true });         // upload
-  }
-
-  test("server file wipe: deleteServerFiles called with names from listServerFiles result", async () => {
-    mockHappyPath({ firstListResult: [
+  test("server file wipe: deleteServerFiles is called with names from listServerFiles result", async () => {
+    mockHappyPath(serverFunctions, { firstListResult: [
       { attributes: { name: "server.jar" } },
       { attributes: { name: "mods" } },
       { attributes: { name: "config" } }
     ] });
 
-    const p1 = runInstallation(mockInteraction, makeState(), { user: { id: "discord1", username: "testuser" } });
-    await jest.runAllTimersAsync();
-    await p1;
+    await runAndSettle(makeState());
 
     expect(serverFunctions.deleteServerFiles).toHaveBeenCalledWith(
       "abc123",
@@ -416,74 +363,41 @@ describe("runInstallation behavior", () => {
     );
   });
 
-  test("egg change: changeServerEgg called with egg ID from config.modpack_eggs[loaderType]", async () => {
-    mockHappyPath();
-
-    // config mock has modpack_eggs.forge = 3 and minecraft_nest_id = 1
-    const p2 = runInstallation(mockInteraction, makeState({ loaderType: "forge" }), { user: { id: "discord1", username: "testuser" } });
-    await jest.runAllTimersAsync();
-    await p2;
-
-    expect(serverFunctions.changeServerEgg).toHaveBeenCalledWith(42, 3, 1, {}, null);
+  // config mock has modpack_eggs.forge = 3, modpack_eggs.fabric = 4, minecraft_nest_id = 1
+  test.each([
+    [ "forge", 3 ],
+    [ "fabric", 4 ]
+  ])("egg change: %s loader → changeServerEgg with eggId %i", async (loaderType, eggId) => {
+    mockHappyPath(serverFunctions);
+    await runAndSettle(makeState({ loaderType }));
+    expect(serverFunctions.changeServerEgg).toHaveBeenCalledWith(42, eggId, 1, {}, null);
   });
 
-  test("egg change uses fabric egg ID for fabric loader", async () => {
-    mockHappyPath();
-
-    // config mock has modpack_eggs.fabric = 4
-    const p3 = runInstallation(mockInteraction, makeState({ loaderType: "fabric" }), { user: { id: "discord1", username: "testuser" } });
-    await jest.runAllTimersAsync();
-    await p3;
-
-    expect(serverFunctions.changeServerEgg).toHaveBeenCalledWith(42, 4, 1, {}, null);
-  });
-
-  test("shows download error when CurseForge fetch fails", async () => {
-    serverFunctions.setServerPowerState.mockResolvedValue({ statusCode: 204 });
-    serverFunctions.getServerResourceInfoById.mockResolvedValue({
-      statusCode: 200,
-      body: { json: async () => ({ attributes: { current_state: "offline" } }) }
-    });
-    serverFunctions.listServerFiles.mockResolvedValue([]);
-    serverFunctions.deleteServerFiles.mockResolvedValue(204);
-    serverFunctions.changeServerEgg.mockResolvedValue(200);
+  test("skips decompress when CurseForge download fails", async () => {
+    mockUpToTransfer(serverFunctions);
     serverFunctions.getFileUploadUrl.mockResolvedValue("https://wings.example.com/upload?token=x");
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 });
 
-    const p4 = runInstallation(mockInteraction, makeState(), { user: { id: "discord1", username: "testuser" } });
-    await jest.runAllTimersAsync();
-    await p4;
+    await runAndSettle(makeState());
 
     expect(serverFunctions.decompressFile).not.toHaveBeenCalled();
   });
 
-  test("shows upload error when getFileUploadUrl returns null", async () => {
-    serverFunctions.setServerPowerState.mockResolvedValue({ statusCode: 204 });
-    serverFunctions.getServerResourceInfoById.mockResolvedValue({
-      statusCode: 200,
-      body: { json: async () => ({ attributes: { current_state: "offline" } }) }
-    });
-    serverFunctions.listServerFiles.mockResolvedValue([]);
-    serverFunctions.deleteServerFiles.mockResolvedValue(204);
-    serverFunctions.changeServerEgg.mockResolvedValue(200);
+  test("skips decompress when getFileUploadUrl returns null", async () => {
+    mockUpToTransfer(serverFunctions);
     serverFunctions.getFileUploadUrl.mockResolvedValue(null);
 
-    const p5 = runInstallation(mockInteraction, makeState(), { user: { id: "discord1", username: "testuser" } });
-    await jest.runAllTimersAsync();
-    await p5;
+    await runAndSettle(makeState());
 
     expect(serverFunctions.decompressFile).not.toHaveBeenCalled();
   });
 
-  test("shows client pack reminder in done message when usingClientPack is true", async () => {
-    mockHappyPath();
+  test("includes client pack reminder when usingClientPack is true", async () => {
+    mockHappyPath(serverFunctions);
 
-    const p6 = runInstallation(mockInteraction, makeState({ usingClientPack: true }), { user: { id: "discord1", username: "testuser" } });
-    await jest.runAllTimersAsync();
-    await p6;
+    await runAndSettle(makeState({ usingClientPack: true }));
 
     const lastCall = mockInteraction.editReply.mock.calls.at(-1)[0];
-    const container = lastCall.components[0];
-    expect(JSON.stringify(container)).toContain("client modpack");
+    expect(JSON.stringify(lastCall.components[0])).toContain("client modpack");
   });
 });

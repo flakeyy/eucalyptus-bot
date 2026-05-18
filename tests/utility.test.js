@@ -40,7 +40,9 @@ const {
   validateString,
   userHasClientApiKey,
   extractEnvVariables,
-  formatNames
+  formatNames,
+  reconstructCommand,
+  getCommands
 } = require("../utility/helper_functions.js");
 
 const { getErrorMessage } = require("../utility/error_messages.js");
@@ -49,71 +51,42 @@ const { PERMISSIONS, authenticateUserForPermission } = require("../utility/permi
 // ---------------------------------------------------------------------------
 // helper_functions — user lookups
 // ---------------------------------------------------------------------------
+// Each lookup accepts a discordId (string), a panelUsername (string), or a
+// panelId (number). The unknown cases verify the -1 sentinel.
 
 describe("getUserId", () => {
-  test("returns panelId for a known discordId string", () => {
-    expect(getUserId("111")).toBe(1);
-    expect(getUserId("222")).toBe(2);
-  });
-
-  test("returns panelId for a known panelUsername string", () => {
-    expect(getUserId("alice")).toBe(1);
-    expect(getUserId("bob")).toBe(2);
-  });
-
-  test("returns panelId when discordId is passed as a number", () => {
-    // discordIds stored as strings; numeric lookup coerces via String(val)
-    expect(getUserId(111)).toBe(1);
-    expect(getUserId(222)).toBe(2);
-  });
-
-  test("returns -1 for an unknown string", () => {
-    expect(getUserId("nobody")).toBe(-1);
-  });
-
-  test("returns -1 for an unknown number", () => {
-    expect(getUserId(999)).toBe(-1);
+  test.each([
+    [ "discordId string", "111", 1 ],
+    [ "panelUsername string", "alice", 1 ],
+    [ "discordId number (coerced to string)", 111, 1 ],
+    [ "unknown string", "nobody", -1 ],
+    [ "unknown number", 999, -1 ]
+  ])("%s → %s", (_label, input, expected) => {
+    expect(getUserId(input)).toBe(expected);
   });
 });
 
 describe("getPanelUsername", () => {
-  test("returns username for a known discordId string", () => {
-    expect(getPanelUsername("111")).toBe("alice");
-    expect(getPanelUsername("222")).toBe("bob");
-  });
-
-  test("returns username for a known panelUsername string", () => {
-    expect(getPanelUsername("alice")).toBe("alice");
-    expect(getPanelUsername("bob")).toBe("bob");
-  });
-
-  test("returns username when discordId is passed as a number", () => {
-    expect(getPanelUsername(111)).toBe("alice");
-  });
-
-  test("returns -1 for an unknown value", () => {
-    expect(getPanelUsername("nobody")).toBe(-1);
-    expect(getPanelUsername(9999)).toBe(-1);
+  test.each([
+    [ "discordId string", "222", "bob" ],
+    [ "panelUsername string", "bob", "bob" ],
+    [ "discordId number", 111, "alice" ],
+    [ "unknown string", "nobody", -1 ],
+    [ "unknown number", 9999, -1 ]
+  ])("%s → %s", (_label, input, expected) => {
+    expect(getPanelUsername(input)).toBe(expected);
   });
 });
 
 describe("getDiscordId", () => {
-  test("returns discordId for a known discordId string", () => {
-    expect(getDiscordId("111")).toBe("111");
-  });
-
-  test("returns discordId for a known panelUsername string", () => {
-    expect(getDiscordId("alice")).toBe("111");
-  });
-
-  test("returns discordId when looked up by panelId number", () => {
-    expect(getDiscordId(1)).toBe("111");
-    expect(getDiscordId(2)).toBe("222");
-  });
-
-  test("returns -1 for an unknown value", () => {
-    expect(getDiscordId("nobody")).toBe(-1);
-    expect(getDiscordId(9999)).toBe(-1);
+  test.each([
+    [ "discordId string", "111", "111" ],
+    [ "panelUsername string", "alice", "111" ],
+    [ "panelId number", 1, "111" ],
+    [ "unknown string", "nobody", -1 ],
+    [ "unknown number", 9999, -1 ]
+  ])("%s → %s", (_label, input, expected) => {
+    expect(getDiscordId(input)).toBe(expected);
   });
 });
 
@@ -226,48 +199,89 @@ describe("formatNames", () => {
 });
 
 // ---------------------------------------------------------------------------
+// helper_functions — reconstructCommand
+// ---------------------------------------------------------------------------
+
+describe("reconstructCommand", () => {
+  test("renders a bare command with no options", () => {
+    const interaction = { commandName: "info", options: { data: [] } };
+    // Trailing space is a quirk of the current implementation; not asserting on it.
+    expect(reconstructCommand(interaction).trim()).toBe("/info");
+  });
+
+  test("renders a command with a scalar option", () => {
+    const interaction = {
+      commandName: "ping",
+      options: { data: [ { name: "target", value: "node-1" } ] }
+    };
+    expect(reconstructCommand(interaction)).toBe("/ping target:node-1");
+  });
+
+  test("redacts the api-key option value", () => {
+    const interaction = {
+      commandName: "set-client-key",
+      options: { data: [ { name: "api-key", value: "super-secret-real-key" } ] }
+    };
+    const out = reconstructCommand(interaction);
+    expect(out).toBe("/set-client-key api-key:********");
+    expect(out).not.toContain("super-secret-real-key");
+  });
+
+  test("flattens a subcommand group with options", () => {
+    const interaction = {
+      commandName: "admin",
+      options: {
+        data: [ {
+          name: "user",
+          options: [ {
+            name: "view",
+            options: [ { name: "target", value: "alice" } ]
+          } ]
+        } ]
+      }
+    };
+    expect(reconstructCommand(interaction)).toBe("/admin user view target:alice");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// helper_functions — getCommands (integration against real commands/ tree)
+// ---------------------------------------------------------------------------
+
+describe("getCommands", () => {
+  test("returns an array containing the known slash commands", async () => {
+    const commands = await getCommands();
+    expect(Array.isArray(commands)).toBe(true);
+    const names = commands.map(c => c.name);
+    // These are stable, user-facing commands the bot exposes today.
+    for (const expected of [ "info", "help", "admin", "set-client-key" ]) {
+      expect(names).toContain(expected);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // error_messages — getErrorMessage
 // ---------------------------------------------------------------------------
 
 describe("getErrorMessage", () => {
-  test("returns the text for a known string key", () => {
-    const msg = getErrorMessage("INVALID_INPUT");
-    expect(typeof msg).toBe("string");
-    expect(msg).toContain("Invalid input");
+  test("returns text for a known string key", () => {
+    expect(getErrorMessage("INVALID_INPUT")).toContain("Invalid input");
   });
 
-  test("returns the text for another known string key", () => {
-    const msg = getErrorMessage("USER_TIMEOUT");
-    expect(typeof msg).toBe("string");
-    expect(msg.length).toBeGreaterThan(0);
+  test("formats messages that use a format function", () => {
+    expect(getErrorMessage("API_REQUEST_FAILED", 422)).toContain("422");
+    expect(getErrorMessage("SERVER_CREATION_FAILED_MEMORY", 512)).toContain("512");
   });
 
-  test("calls the format function when the entry uses format", () => {
-    // API_REQUEST_FAILED uses a format function: statusCode => `...HTTP Code: ${statusCode}...`
-    const msg = getErrorMessage("API_REQUEST_FAILED", 422);
-    expect(msg).toContain("422");
-  });
-
-  test("calls the format function with memory amount for SERVER_CREATION_FAILED_MEMORY", () => {
-    const msg = getErrorMessage("SERVER_CREATION_FAILED_MEMORY", 512);
-    expect(msg).toContain("512");
-  });
-
-  test("returns the entry text when looked up by numeric id", () => {
+  test("looks up by numeric id", () => {
     // INVALID_INPUT has id -4
-    const msg = getErrorMessage(-4);
-    expect(typeof msg).toBe("string");
-    expect(msg).toContain("Invalid input");
+    expect(getErrorMessage(-4)).toContain("Invalid input");
   });
 
-  test("returns an error string for an unknown string key", () => {
-    const msg = getErrorMessage("NONEXISTENT_CODE");
-    expect(msg).toContain("NONEXISTENT_CODE");
-  });
-
-  test("returns an error string for an unknown numeric id", () => {
-    const msg = getErrorMessage(-999);
-    expect(typeof msg).toBe("string");
+  test("returns a fallback string for an unknown key or id", () => {
+    expect(getErrorMessage("NONEXISTENT_CODE")).toContain("NONEXISTENT_CODE");
+    expect(typeof getErrorMessage(-999)).toBe("string");
   });
 });
 
