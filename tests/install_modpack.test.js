@@ -7,7 +7,7 @@ jest.mock("../utility/logger.js", () => ({
 }));
 
 jest.mock("../utility/permissions.js", () => ({
-  PERMISSIONS: { READ_SERVERS: 4 },
+  PERMISSIONS: { EDIT_SERVER_PROPERTIES: 8 },
   authenticateUserForPermission: jest.fn()
 }));
 
@@ -252,7 +252,7 @@ describe("install-modpack command", () => {
     );
   });
 
-  test("shows INSUFFICIENT_PERMISSIONS when user lacks READ_SERVERS", async () => {
+  test("shows INSUFFICIENT_PERMISSIONS when user lacks EDIT_SERVER_PROPERTIES", async () => {
     perms.authenticateUserForPermission.mockReturnValue(false);
 
     await execute(interaction);

@@ -756,12 +756,12 @@ module.exports = {
   async execute(interaction) {
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
 
-    const hasReadServers = authenticateUserForPermission(interaction.user.id, PERMISSIONS.READ_SERVERS);
-    if (hasReadServers === -1) {
+    const hasEditServers = authenticateUserForPermission(interaction.user.id, PERMISSIONS.EDIT_SERVER_PROPERTIES);
+    if (hasEditServers === -1) {
       await interaction.reply({ content: getErrorMessage("USER_NOT_FOUND"), flags: MessageFlags.Ephemeral });
       return;
     }
-    if (!hasReadServers) {
+    if (!hasEditServers) {
       await interaction.reply({ content: getErrorMessage("INSUFFICIENT_PERMISSIONS"), flags: MessageFlags.Ephemeral });
       return;
     }
