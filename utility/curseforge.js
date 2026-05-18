@@ -24,6 +24,14 @@ function parseProjectId(input) {
   return null;
 }
 
+function parseModpackSlug(input) {
+  if (!input || typeof input !== "string") return null;
+  const trimmed = input.trim();
+  // Standard CurseForge modpack URLs: /minecraft/modpacks/<slug>[/...]
+  const match = trimmed.match(/curseforge\.com\/minecraft\/modpacks\/([a-z0-9][a-z0-9-]*)/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
 async function getModpackById(projectId) {
   const response = await fetch(
     `${CURSEFORGE_BASE_URL}/mods/${projectId}`,
@@ -37,6 +45,18 @@ async function getModpackById(projectId) {
   // Verify it's a Minecraft modpack (gameId=432, classId=4471)
   if (data.data.gameId !== 432 || data.data.classId !== 4471) return null;
   return data.data;
+}
+
+async function getModpackBySlug(slug) {
+  const url = `${CURSEFORGE_BASE_URL}/mods/search?gameId=432&classId=4471&slug=${encodeURIComponent(slug)}`;
+  const response = await fetch(url, {
+    headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json" }
+  });
+  msgLog.debugExtended(`API: GET /curse/mods/search?slug=${slug} | Status Code: ${response.status}`);
+  if (!response.ok) throw new Error(`CurseForge API error: HTTP ${response.status}`);
+  const data = await response.json();
+  const match = (data.data || []).find(m => m.slug?.toLowerCase() === slug.toLowerCase());
+  return match || null;
 }
 
 async function getModpackFiles(modId) {
@@ -154,7 +174,8 @@ function parseManifestLoaderType(manifest) {
 }
 
 module.exports = {
-  getModpackById, getModpackFiles, detectLoaderType, findServerPack,
-  findLinkedServerPackId, getFileById, getFilesByIds, getModsByIds, parseProjectId, LOADER_MAP,
+  getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, findServerPack,
+  findLinkedServerPackId, getFileById, getFilesByIds, getModsByIds,
+  parseProjectId, parseModpackSlug, LOADER_MAP,
   isManifestZip, parseManifestFromZip, parseManifestLoaderType
 };
