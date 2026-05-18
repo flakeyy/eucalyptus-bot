@@ -22,7 +22,9 @@
     "mod_id_blocklist": [
         "drippyloadingscreen",
         "fancymenu",
-        "notenoughanimations"
+        "notenoughanimations",
+        "oculus",
+        "legendarytooltips"
     ],
     "minecraft_java_map": {
         "1.21": 21,
