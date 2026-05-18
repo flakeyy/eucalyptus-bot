@@ -133,6 +133,36 @@ async function getServerResourceInfoById(serverId, discordId) {
   return apiResult;
 }
 
+// Pyrodactyl nests daemon-specific routes (power, files, etc.) under a daemonType
+// prefix: /client/servers/{wings|elytra}/{id}/... Older Pterodactyl/Pyrodactyl
+// versions return no daemonType — we then call the legacy un-prefixed path.
+const daemonTypeCache = new Map();
+
+async function getServerDaemonType(serverId, discordId) {
+  if (daemonTypeCache.has(serverId)) return daemonTypeCache.get(serverId);
+  const apiResult = await clientApiCall(`client/servers/${serverId}`, "GET", null, discordId);
+  if (apiResult.statusCode !== 200) return null;
+  try {
+    const jsonData = await apiResult.body.json();
+    const type = jsonData?.attributes?.daemonType ?? null;
+    daemonTypeCache.set(serverId, type);
+    return type;
+  } catch {
+    return null;
+  }
+}
+
+function clearDaemonTypeCache(serverId) {
+  if (serverId === undefined) daemonTypeCache.clear();
+  else daemonTypeCache.delete(serverId);
+}
+
+async function daemonServerPath(serverId, discordId, suffix) {
+  const daemonType = await getServerDaemonType(serverId, discordId);
+  const prefix = daemonType ? `${daemonType}/` : "";
+  return `client/servers/${prefix}${serverId}/${suffix}`;
+}
+
 async function getServerOwnerId(serverId) {
   const parsedId = parseInt(serverId, 10);
   if (isNaN(parsedId)) {
@@ -248,7 +278,8 @@ async function setServerPowerState(serverId, userId, action) {
     signal: action
   });
 
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/power`, "POST", body, userId);
+  const path = await daemonServerPath(validatedId, userId, "power");
+  const apiResult = await clientApiCall(path, "POST", body, userId);
 
   return apiResult;
 }
@@ -258,10 +289,8 @@ async function setServerPowerState(serverId, userId, action) {
 async function listServerFiles(serverId, discordId, dirPath = "/") {
   const validatedId = validateString(serverId);
   if (!validatedId) return null;
-  const apiResult = await clientApiCall(
-    `client/servers/${validatedId}/files/list?directory=${encodeURIComponent(dirPath)}`,
-    "GET", null, discordId
-  );
+  const path = await daemonServerPath(validatedId, discordId, `files/list?directory=${encodeURIComponent(dirPath)}`);
+  const apiResult = await clientApiCall(path, "GET", null, discordId);
   if (apiResult.statusCode !== 200) return null;
   const jsonData = await apiResult.body.json();
   return jsonData.data || [];
@@ -271,14 +300,16 @@ async function deleteServerFiles(serverId, discordId, filenames) {
   const validatedId = validateString(serverId);
   if (!validatedId) return -1;
   const body = JSON.stringify({ root: "/", files: filenames });
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/delete`, "POST", body, discordId);
+  const path = await daemonServerPath(validatedId, discordId, "files/delete");
+  const apiResult = await clientApiCall(path, "POST", body, discordId);
   return apiResult.statusCode;
 }
 
 async function getFileUploadUrl(serverId, discordId) {
   const validatedId = validateString(serverId);
   if (!validatedId) return null;
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/upload`, "GET", null, discordId);
+  const path = await daemonServerPath(validatedId, discordId, "files/upload");
+  const apiResult = await clientApiCall(path, "GET", null, discordId);
   if (apiResult.statusCode !== 200) return null;
   const jsonData = await apiResult.body.json();
   return jsonData.attributes?.url || null;
@@ -288,7 +319,8 @@ async function pullServerFile(serverId, discordId, url, directory, filename) {
   const validatedId = validateString(serverId);
   if (!validatedId) return -1;
   const body = JSON.stringify({ url, directory, filename, use_header: false, foreground: false });
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/pull`, "POST", body, discordId);
+  const path = await daemonServerPath(validatedId, discordId, "files/pull");
+  const apiResult = await clientApiCall(path, "POST", body, discordId);
   if (apiResult.statusCode !== 204) {
     try {
       const responseBody = await apiResult.body.text();
@@ -302,7 +334,8 @@ async function chmodServerFiles(serverId, discordId, root, files) {
   const validatedId = validateString(serverId);
   if (!validatedId) return -1;
   const body = JSON.stringify({ root, files });
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/chmod`, "POST", body, discordId);
+  const path = await daemonServerPath(validatedId, discordId, "files/chmod");
+  const apiResult = await clientApiCall(path, "POST", body, discordId);
   return apiResult.statusCode;
 }
 
@@ -310,7 +343,8 @@ async function createServerDirectory(serverId, discordId, root, name) {
   const validatedId = validateString(serverId);
   if (!validatedId) return -1;
   const body = JSON.stringify({ root, name });
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/create-folder`, "POST", body, discordId);
+  const path = await daemonServerPath(validatedId, discordId, "files/create-folder");
+  const apiResult = await clientApiCall(path, "POST", body, discordId);
   return apiResult.statusCode;
 }
 
@@ -318,7 +352,8 @@ async function decompressFile(serverId, discordId, root, filename) {
   const validatedId = validateString(serverId);
   if (!validatedId) return -1;
   const body = JSON.stringify({ root, file: filename });
-  const apiResult = await clientApiCall(`client/servers/${validatedId}/files/decompress`, "POST", body, discordId);
+  const path = await daemonServerPath(validatedId, discordId, "files/decompress");
+  const apiResult = await clientApiCall(path, "POST", body, discordId);
   return apiResult.statusCode;
 }
 
@@ -411,5 +446,7 @@ module.exports = {
   decompressFile,
   pullServerFile,
   changeServerEgg,
-  reinstallServer
+  reinstallServer,
+  getServerDaemonType,
+  clearDaemonTypeCache
 };
