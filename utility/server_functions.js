@@ -133,9 +133,11 @@ async function getServerResourceInfoById(serverId, discordId) {
   return apiResult;
 }
 
-// Pyrodactyl nests daemon-specific routes (power, files, etc.) under a daemonType
-// prefix: /client/servers/{wings|elytra}/{id}/... Older Pterodactyl/Pyrodactyl
-// versions return no daemonType — we then call the legacy un-prefixed path.
+// Pyrodactyl nests daemon-specific routes (power, files, etc.) under a daemon_type
+// prefix: /client/servers/{wings|elytra}/{id}/... The daemon_type field is returned
+// from GET /client/servers/{id} (snake_case, sourced from node->daemonType in the
+// panel's ServerTransformer). Older Pterodactyl/Pyrodactyl versions omit it — we
+// then fall back to the legacy un-prefixed path.
 const daemonTypeCache = new Map();
 
 async function getServerDaemonType(serverId, discordId) {
@@ -144,7 +146,7 @@ async function getServerDaemonType(serverId, discordId) {
   if (apiResult.statusCode !== 200) return null;
   try {
     const jsonData = await apiResult.body.json();
-    const type = jsonData?.attributes?.daemonType ?? null;
+    const type = jsonData?.attributes?.daemon_type ?? null;
     daemonTypeCache.set(serverId, type);
     return type;
   } catch {

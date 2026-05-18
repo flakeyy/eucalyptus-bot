@@ -603,7 +603,7 @@ async function runManifestSteps(i, serverId, userId, buffer, manifest, loaderTyp
     msgLog.warn(`[install-modpack] manifest install: ${installed}/${total} mods installed, ${downloadFailed} unavailable`);
   }
 
-  return unavailable;
+  return { unavailable, installed, total };
 }
 
 async function runInstallation(i, state, interaction) {
@@ -668,6 +668,8 @@ async function runInstallation(i, state, interaction) {
 
   let buffer = Buffer.concat(chunks);
   let unavailableMods = [];
+  let manifestInstalled = 0;
+  let manifestTotal = 0;
 
   if (isServerStarterZip(buffer)) {
     const ssConfig = parseServerStarterConfig(buffer);
@@ -697,7 +699,8 @@ async function runInstallation(i, state, interaction) {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
       return;
     }
-    unavailableMods = await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest, loaderType);
+    ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
+      await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest, loaderType));
   } else {
     const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
     if (!uploadUrl) {
@@ -720,7 +723,13 @@ async function runInstallation(i, state, interaction) {
     await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
   }
 
-  // g. Done
+  // g. Done — but bail out as a failure if a manifest install couldn't place a single mod.
+  if (usedManifest && manifestTotal > 0 && manifestInstalled === 0) {
+    msgLog.error(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install failed: 0/${manifestTotal} mods installed: ${modpackName} | ${serverId}`);
+    await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+    return;
+  }
+
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
   msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
 
