@@ -34,6 +34,10 @@ jest.mock("../utility/error_messages.js", () => ({
   getErrorMessage: jest.fn(code => `Error: ${code}`)
 }));
 
+jest.mock("../utility/url_validation.js", () => ({
+  validateExternalUrl: jest.fn(async () => ({ ok: true }))
+}));
+
 jest.mock("../config.json", () => ({
   debug: false,
   minecraft_nest_id: 1,
