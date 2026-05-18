@@ -3,13 +3,13 @@
 [![CI Tests - main](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml/badge.svg?branch=main)](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml)
 [![CI Tests - dev](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml/badge.svg?branch=dev)](https://github.com/flakeyy/eucalyptus-bot/actions/workflows/nodejs-tests.yml)
 
-A Discord bot integration for the Pyrodactyl/Pterodactyl Panel.
+A Discord bot integration for the Pyrodactyl Panel.
 
 ## Description
 
 A simple discord bot that allows administrators and users to manage their servers from within Discord. Made to extend functionality currently unavailable natively within the panel.
 
-This bot is made to work with [Pyrodactyl](https://github.com/pyrohost-oss/pyrodactyl) + [Elytra](https://github.com/pyrodactyl-oss/elytra) primarily, although it should work fine with [Pterodactyl](https://github.com/pterodactyl/panel) + [Wings](https://github.com/pterodactyl/wings) instances.
+This bot is made to work with [Pyrodactyl](https://github.com/pyrohost-oss/pyrodactyl) + [Elytra](https://github.com/pyrodactyl-oss/elytra). Although it is compatible with [Wings](https://github.com/pterodactyl/wings), [Pterodactyl](https://github.com/pterodactyl/panel) is not supported (although many features may still work).
 
 ## Features
 
