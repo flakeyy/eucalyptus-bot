@@ -1,60 +1,12 @@
-const { ContainerBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require("discord.js");
+const { ContainerBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, MessageFlags, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder } = require("discord.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const msgLog = require("../../utility/logger.js");
 const { getUserId, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getClientServers, setServerPowerState, getServerInfoById, getServerResourceInfoById, isServerSuspended, suspendServer, unsuspendServer, getAvailableUserMemory, deleteServer, editServerInfo } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { PterodactylWebSocket } = require("../../utility/pterodactyl_websocket.js");
-
-const COLORS = {
-  PRIMARY: 0x6b34eb,
-  DISABLED: 0x808080
-};
-
-const COLLECTOR_IDLE_TIMEOUT = 300_000;
-const WS_THROTTLE_MS = 3000;
-const CONSOLE_MAX_LINES = 20;
-const CONSOLE_PREVIEW_LINES = 5;
-
-const HTTP_STATUS_CODES = {
-  OK: 200,
-  NO_CONTENT: 204,
-  UNAUTHORIZED: 401,
-  CONFLICT: 409
-};
-
-const UNIT_CONVERSIONS = {
-  BYTES_TO_MB: 1_000_000,
-  BYTES_TO_GB: 1_000_000_000
-};
-
-function buildServerSelectMenu(serverObjects, selectedServerId = null, disabled = false) {
-  const selectMenu = new StringSelectMenuBuilder()
-    .setCustomId("server-selection")
-    .setPlaceholder(disabled ? "Session ended" : "Select a server")
-    .setDisabled(disabled);
-
-  if (serverObjects && serverObjects.data && serverObjects.data.length > 0) {
-    for (const server of serverObjects.data) {
-      selectMenu.addOptions(
-        new StringSelectMenuOptionBuilder()
-          .setLabel(server.attributes.name)
-          .setDescription(`ID: ${server.attributes.identifier}`)
-          .setValue(server.attributes.identifier)
-          .setDefault(Boolean(selectedServerId && server.attributes.identifier === selectedServerId))
-      );
-    }
-  } else {
-    selectMenu.addOptions(
-      new StringSelectMenuOptionBuilder()
-        .setLabel(disabled ? "No servers" : "No servers found")
-        .setDescription(disabled ? undefined : "No servers available")
-        .setValue("none")
-    );
-  }
-
-  return selectMenu;
-}
+const { COLORS, HTTP_STATUS_CODES, COLLECTOR_IDLE_TIMEOUT, WS_THROTTLE_MS, CONSOLE_MAX_LINES } = require("../../utility/constants.js");
+const { buildServerSelectMenu, buildServerDetailsText, renderConsoleBlock } = require("../../utility/server_views.js");
 
 function buildMainServerView(serverObjects, currentSelectedServer, serverResourceInfo = null, statusMessage = null, consoleLines = []) {
   const selectMenu = buildServerSelectMenu(
@@ -69,38 +21,7 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
     );
 
   if (currentSelectedServer) {
-    const limits = currentSelectedServer.attributes.limits;
-    let detailsText = "";
-
-    if (serverResourceInfo && serverResourceInfo.attributes) {
-      const memUsageMB = (serverResourceInfo.attributes.resources.memory_bytes / UNIT_CONVERSIONS.BYTES_TO_MB).toFixed(0);
-      const diskUsageGB = (serverResourceInfo.attributes.resources.disk_bytes / UNIT_CONVERSIONS.BYTES_TO_GB).toFixed(2);
-      const cpuUsage = (serverResourceInfo.attributes.resources.cpu_absolute).toFixed(2);
-      const diskLimitGB = limits.disk > 0
-        ? `${(limits.disk / 1024).toFixed(2)} GB`
-        : null;
-      const diskText = diskLimitGB ? `${diskUsageGB} / ${diskLimitGB}` : `${diskUsageGB} GB`;
-      const state = serverResourceInfo.attributes.is_suspended
-        ? "Suspended"
-        : `Active — ${serverResourceInfo.attributes.current_state}`;
-
-      detailsText = `**Status:** ${state}\n` +
-        `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-        `**Memory:** ${memUsageMB} / ${limits.memory} MB\n` +
-        `**Disk:** ${diskText}\n` +
-        `**CPU:** ${cpuUsage}%\n` +
-        `**Node:** ${currentSelectedServer.attributes.node}`;
-    } else {
-      const diskLimitGB = limits.disk > 0 ? `${(limits.disk / 1024).toFixed(2)} GB` : null;
-      const diskText = diskLimitGB ? `— / ${diskLimitGB}` : "—";
-
-      detailsText = "**Status:** Suspended\n" +
-        `**ID:** \`${currentSelectedServer.attributes.identifier}\`\n` +
-        `**Memory:** — / ${limits.memory} MB\n` +
-        `**Disk:** ${diskText}\n` +
-        "**CPU:** —\n" +
-        `**Node:** ${currentSelectedServer.attributes.node}`;
-    }
+    let detailsText = buildServerDetailsText(currentSelectedServer, serverResourceInfo);
 
     if (statusMessage) {
       detailsText += `\n\n${statusMessage}`;
@@ -114,21 +35,13 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
       )
       .addSeparatorComponents(separator => separator);
 
-    if (consoleLines.length > 0) {
-      const subset = consoleLines.slice(-CONSOLE_PREVIEW_LINES);
-      let previewText;
-      do {
-        previewText = "```\n" + subset.join("\n") + "\n```";
-        if (previewText.length <= 4000) break;
-        subset.shift();
-      } while (subset.length > 0);
-      if (subset.length > 0) {
-        container
-          .addTextDisplayComponents(text =>
-            text.setContent(previewText)
-          )
-          .addSeparatorComponents(separator => separator);
-      }
+    const consolePreview = renderConsoleBlock(consoleLines, { preview: true });
+    if (consolePreview) {
+      container
+        .addTextDisplayComponents(text =>
+          text.setContent(consolePreview)
+        )
+        .addSeparatorComponents(separator => separator);
     }
 
     container
@@ -151,17 +64,7 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
 }
 
 function buildConsoleView(serverName, lines) {
-  let consoleText = "No output yet.";
-  if (lines.length > 0) {
-    const subset = lines.slice();
-    let text;
-    do {
-      text = "```\n" + subset.join("\n") + "\n```";
-      if (text.length <= 4000) break;
-      subset.shift();
-    } while (subset.length > 0);
-    if (subset.length > 0) consoleText = text;
-  }
+  const consoleText = renderConsoleBlock(lines) ?? "No output yet.";
 
   return new ContainerBuilder()
     .setAccentColor(COLORS.PRIMARY)

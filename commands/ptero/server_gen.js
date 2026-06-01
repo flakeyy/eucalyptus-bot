@@ -5,19 +5,7 @@ const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/pe
 const { applicationApiCall, extractEnvVariables, getUserId, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory, getNodes, getNests, getEggs } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-
-const COLORS = {
-  PRIMARY: 0x6b34eb,
-  SUCCESS: 0x00ff00,
-  DISABLED: 0x808080
-};
-
-const COLLECTOR_IDLE_TIMEOUT = 300_000;
-
-const HTTP_STATUS_CODES = {
-  CREATED: 201,
-  UNAUTHORIZED: 401
-};
+const { COLORS, HTTP_STATUS_CODES, COLLECTOR_IDLE_TIMEOUT } = require("../../utility/constants.js");
 
 async function getDefaultAllocation(node) {
   const apiResult = await applicationApiCall(`application/nodes/${node}/allocations`, "GET");

@@ -27,18 +27,6 @@ jest.mock("../utility/server_functions.js", () => ({
   getAvailableUserMemory: jest.fn().mockResolvedValue(null)
 }));
 
-jest.mock("../commands/ptero/server_menu.js", () => ({
-  buildServerSelectMenu: jest.fn(() => ({
-    setCustomId: jest.fn().mockReturnThis(),
-    setPlaceholder: jest.fn().mockReturnThis(),
-    setDisabled: jest.fn().mockReturnThis(),
-    addOptions: jest.fn().mockReturnThis()
-  })),
-  buildMainServerView: jest.fn(),
-  data: { name: "servers", toJSON: jest.fn(() => ({})) },
-  execute: jest.fn()
-}));
-
 jest.mock("../utility/helper_functions.js", () => ({
   reconstructCommand: jest.fn(() => "/admin"),
   getUserId: jest.fn(),

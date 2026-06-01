@@ -107,8 +107,7 @@ const COLORS = {
   DISABLED: 0x808080
 };
 
-const COLLECTOR_IDLE_TIMEOUT = 300_000;
-const HTTP_STATUS_CODES = { OK: 200, NO_CONTENT: 204 };
+const { COLLECTOR_IDLE_TIMEOUT, HTTP_STATUS_CODES } = require("../../utility/constants.js");
 const STOP_POLL = { MAX_ATTEMPTS: 60, INTERVAL: 2000 };
 
 function buildServerSelectContainer(servers, nestMap, statusNote = null, disabled = false) {

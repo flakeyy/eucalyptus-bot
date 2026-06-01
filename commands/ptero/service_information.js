@@ -4,13 +4,7 @@ const msgLog = require("../../utility/logger.js");
 const { reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getNodes, getNests, getEggs } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-
-const COLORS = {
-  PRIMARY: 0x6b34eb,
-  DISABLED: 0x808080
-};
-
-const COLLECTOR_IDLE_TIMEOUT = 300_000;
+const { COLORS, COLLECTOR_IDLE_TIMEOUT } = require("../../utility/constants.js");
 
 function buildCategorySelectMenu(selectedCategory = null, disabled = false) {
   const selectMenu = new StringSelectMenuBuilder()
