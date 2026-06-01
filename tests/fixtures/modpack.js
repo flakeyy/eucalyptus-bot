@@ -4,6 +4,7 @@
 
 function makeState(overrides = {}) {
   return {
+    source: "curseforge",
     serverId: "abc123",
     serverInternalId: 42,
     serverName: "Test Server",

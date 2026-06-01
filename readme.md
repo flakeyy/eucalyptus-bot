@@ -14,7 +14,7 @@ This bot is made to work with [Pyrodactyl](https://github.com/pyrohost-oss/pyrod
 ## Features
 
 - Create and manage servers interactively
-- Install CurseForge modpacks onto Minecraft servers
+- Install CurseForge and Modrinth modpacks onto Minecraft servers
 - View available eggs, nests, and nodes
 - View and edit server properties
 - Suspend, unsuspend, and delete servers
@@ -61,6 +61,7 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `UPTIME_NODE_MONITOR_ID` | *(Kuma only)* Monitor ID for the node |
 | `UPTIME_API_KEY` | *(custom provider only)* Bearer token for the custom status API |
 | `CURSEFORGE_API_KEY` | *(required for /install-modpack command)* API key for the [Curseforge API](https://console.curseforge.com/?#/api-keys)
+| `MODRINTH_API_KEY` | *(optional)* Token for the [Modrinth API](https://modrinth.com/settings/pats). Anonymous access works; a token only raises rate limits. |
 
 ### config.json fields
 
@@ -120,7 +121,7 @@ The user created via `/init` is granted a hidden Immunity flag (value `131072`) 
 
 - `/servers` — Interactive server management menu (view, edit, suspend/unsuspend/delete).
 - `/gen-server` — Interactive menu to create a new server.
-- `/install-modpack` — Install a CurseForge modpack onto one of your Minecraft servers.
+- `/install-modpack` — Install a CurseForge or Modrinth modpack onto one of your Minecraft servers.
 - `/service` — View service information including nodes, nests, and eggs.
 - `/info` — Retrieves current service information.
 - `/help` — Displays available commands.

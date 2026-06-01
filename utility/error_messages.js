@@ -129,6 +129,18 @@ const ERROR_MESSAGES = {
   MODPACK_FILE_UPLOAD_FAILED: {
     id: -33,
     text: "Failed to upload the modpack file to the server.\nPlease try again."
+  },
+  UNSUPPORTED_MODPACK_URL: {
+    id: -34,
+    text: "Unrecognized modpack URL.\nPaste a full CurseForge (`curseforge.com/minecraft/modpacks/...`) or Modrinth (`modrinth.com/modpack/...`) modpack URL."
+  },
+  MODRINTH_MODPACK_NOT_FOUND: {
+    id: -35,
+    text: "No modpack was found at that Modrinth URL.\nPlease check the link and try again."
+  },
+  MODRINTH_API_ERROR: {
+    id: -36,
+    text: "Failed to reach the Modrinth API.\nPlease try again later."
   }
 };
 

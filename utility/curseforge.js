@@ -84,6 +84,28 @@ function detectLoaderType(latestFilesIndexes) {
   return null;
 }
 
+// Best-effort Minecraft version for a modpack file, used to pick the Java image
+// and set the MC_VERSION egg variable. Prefers per-file version metadata, then
+// falls back to the modpack's latest indexed version.
+function detectMCVersion(modpack, targetFile) {
+  if (targetFile?.sortableGameVersions) {
+    const ver = targetFile.sortableGameVersions
+      .map(v => v.gameVersionName)
+      .find(v => /^\d+\.\d+/.test(v));
+    if (ver) return ver;
+  }
+  if (targetFile?.gameVersions) {
+    const loaderKeywords = /java|forge|fabric|neoforge|quilt/i;
+    const ver = targetFile.gameVersions.find(v => /^\d+\.\d+/.test(v) && !loaderKeywords.test(v));
+    if (ver) return ver;
+  }
+  if (modpack?.latestFilesIndexes?.length > 0) {
+    const ver = modpack.latestFilesIndexes[0].gameVersion;
+    if (ver && /^\d+\.\d+/.test(ver)) return ver;
+  }
+  return null;
+}
+
 function findServerPack(files) {
   if (!files || files.length === 0) return null;
   // Some older modpacks include server pack entries directly in the file list
@@ -305,7 +327,7 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
 }
 
 module.exports = {
-  getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, findServerPack,
+  getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, detectMCVersion, findServerPack,
   findLinkedServerPackId, getFileById, getFilesByIds, getModsByIds,
   parseProjectId, parseModpackSlug, LOADER_MAP,
   isManifestZip, parseManifestFromZip, parseManifestLoaderType,

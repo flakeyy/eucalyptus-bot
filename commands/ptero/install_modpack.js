@@ -11,10 +11,10 @@ const {
   changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-const { getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, getFileById, parseProjectId, parseModpackSlug, isManifestZip } = require("../../utility/curseforge.js");
+const { isManifestZip } = require("../../utility/curseforge.js");
 const { downloadToBuffer, streamUploadToServer } = require("../../utility/modpack_http.js");
 const { buildProgressBar, installFilePlan } = require("../../utility/modpack_install.js");
-const { resolveModpackInstall } = require("../../utility/modpack_providers.js");
+const { detectProvider, lookupModpack, listModpackFiles, resolveModpackInstall } = require("../../utility/modpack_providers.js");
 const AdmZip = require("adm-zip");
 const config = require("../../config.json");
 
@@ -70,25 +70,6 @@ function parseServerStarterConfig(buffer) {
   } catch {
     return null;
   }
-}
-
-function detectMCVersion(modpack, targetFile) {
-  if (targetFile?.sortableGameVersions) {
-    const ver = targetFile.sortableGameVersions
-      .map(v => v.gameVersionName)
-      .find(v => /^\d+\.\d+/.test(v));
-    if (ver) return ver;
-  }
-  if (targetFile?.gameVersions) {
-    const loaderKeywords = /java|forge|fabric|neoforge|quilt/i;
-    const ver = targetFile.gameVersions.find(v => /^\d+\.\d+/.test(v) && !loaderKeywords.test(v));
-    if (ver) return ver;
-  }
-  if (modpack?.latestFilesIndexes?.length > 0) {
-    const ver = modpack.latestFilesIndexes[0].gameVersion;
-    if (ver && /^\d+\.\d+/.test(ver)) return ver;
-  }
-  return null;
 }
 
 function getJavaImageForMCVersion(mcVersion) {
@@ -173,18 +154,11 @@ function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId) {
     .setPlaceholder("Select a version");
 
   for (const file of fileOptions) {
-    const loaderKw = /java|forge|fabric|neoforge|quilt/i;
-    const mcVer = file.gameVersions?.find(v => /^\d+\.\d+/.test(v) && !loaderKw.test(v));
-    const date = file.fileDate?.slice(0, 10) ?? "";
-    const packType = file.isServerPack ? "Server pack" : "Client pack";
-    const sizeMb = file.fileLength ? `${(file.fileLength / 1_048_576).toFixed(1)} MB` : null;
-    const description = [ mcVer, date, sizeMb, packType ].filter(Boolean).join(" · ").slice(0, 100);
-
     menu.addOptions(
       new StringSelectMenuOptionBuilder()
-        .setLabel(file.displayName.slice(0, 100))
-        .setDescription(description)
-        .setValue(String(file.id))
+        .setLabel(file.label)
+        .setDescription(file.description || "—")
+        .setValue(file.id)
         .setDefault(file.id === autoSelectedId)
     );
   }
@@ -245,7 +219,7 @@ async function updateProgress(i, message) {
 }
 
 async function runInstallation(i, state, interaction) {
-  const { serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
+  const { source, serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
 
   // a. Stop server
   await updateProgress(i, "Stopping server...");
@@ -308,59 +282,73 @@ async function runInstallation(i, state, interaction) {
   let unavailableMods = [];
   let manifestInstalled = 0;
   let manifestTotal = 0;
-
-  if (isServerStarterZip(buffer)) {
-    const ssConfig = parseServerStarterConfig(buffer);
-    if (!ssConfig?.modpackUrl) {
-      await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-      return;
-    }
-    await updateProgress(i, "Downloading modpack from ServerStarter URL...");
-    try {
-      ({ chunks, fileSize } = await downloadToBuffer(ssConfig.modpackUrl, (dl, total) => {
-        const pct = Math.round((dl / total) * 100);
-        updateProgress(i, `Downloading modpack from ServerStarter URL... ${pct}%`).catch(() => {});
-      }));
-    } catch (err) {
-      msgLog.error(`[install-modpack] ServerStarter modpackUrl download failed: ${err.message}`);
-      await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-      return;
-    }
-    buffer = Buffer.concat(chunks);
-  }
-
   let usedManifest = false;
-  if (isManifestZip(buffer)) {
+
+  const installCtx = { i, serverId, userId: interaction.user.id, loaderType, updateProgress };
+
+  if (source === "modrinth") {
+    // Modrinth modpacks are always .mrpack manifests — there is no direct server pack.
     usedManifest = true;
-    const resolution = await resolveModpackInstall("curseforge", buffer, loaderType, msg => updateProgress(i, msg));
+    const resolution = await resolveModpackInstall("modrinth", buffer, loaderType, msg => updateProgress(i, msg));
     if (!resolution || resolution.kind !== "plan") {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
       return;
     }
-    const installCtx = { i, serverId, userId: interaction.user.id, loaderType, updateProgress };
     ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
       await installFilePlan(installCtx, resolution.plan));
   } else {
-    const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
-    if (!uploadUrl) {
-      await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-      return;
-    }
-    await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
-    try {
-      await streamUploadToServer(uploadUrl, targetFile.displayName, chunks, fileSize, (dl, ul, total) => {
-        const unit = `${(total / 1_048_576).toFixed(1)} MB`;
-        updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar({ downloaded: dl, installed: ul, total, unit })}`).catch(() => {});
-      });
-    } catch (err) {
-      msgLog.error(`[install-modpack] upload failed: ${err.message}`);
-      await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-      return;
+    // CurseForge: may be a ServerStarter wrapper, a manifest, or a direct server pack.
+    if (isServerStarterZip(buffer)) {
+      const ssConfig = parseServerStarterConfig(buffer);
+      if (!ssConfig?.modpackUrl) {
+        await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+        return;
+      }
+      await updateProgress(i, "Downloading modpack from ServerStarter URL...");
+      try {
+        ({ chunks, fileSize } = await downloadToBuffer(ssConfig.modpackUrl, (dl, total) => {
+          const pct = Math.round((dl / total) * 100);
+          updateProgress(i, `Downloading modpack from ServerStarter URL... ${pct}%`).catch(() => {});
+        }));
+      } catch (err) {
+        msgLog.error(`[install-modpack] ServerStarter modpackUrl download failed: ${err.message}`);
+        await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+        return;
+      }
+      buffer = Buffer.concat(chunks);
     }
 
-    // f. Extract
-    await updateProgress(i, "Extracting files...");
-    await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+    if (isManifestZip(buffer)) {
+      usedManifest = true;
+      const resolution = await resolveModpackInstall("curseforge", buffer, loaderType, msg => updateProgress(i, msg));
+      if (!resolution || resolution.kind !== "plan") {
+        await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+        return;
+      }
+      ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
+        await installFilePlan(installCtx, resolution.plan));
+    } else {
+      const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
+      if (!uploadUrl) {
+        await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+        return;
+      }
+      await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
+      try {
+        await streamUploadToServer(uploadUrl, targetFile.displayName, chunks, fileSize, (dl, ul, total) => {
+          const unit = `${(total / 1_048_576).toFixed(1)} MB`;
+          updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar({ downloaded: dl, installed: ul, total, unit })}`).catch(() => {});
+        });
+      } catch (err) {
+        msgLog.error(`[install-modpack] upload failed: ${err.message}`);
+        await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+        return;
+      }
+
+      // f. Extract
+      await updateProgress(i, "Extracting files...");
+      await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+    }
   }
 
   // g. Done — but bail out as a failure if a manifest install couldn't place a single mod.
@@ -400,7 +388,7 @@ module.exports = {
 
   data: new SlashCommandBuilder()
     .setName("install-modpack")
-    .setDescription("Install a CurseForge modpack onto one of your Minecraft servers."),
+    .setDescription("Install a CurseForge or Modrinth modpack onto one of your Minecraft servers."),
 
   async execute(interaction) {
     msgLog.log(`${interaction.user.username}/${interaction.user.id} | ${reconstructCommand(interaction)}`);
@@ -456,11 +444,11 @@ module.exports = {
       let selectedServerInternalId = null;
       let selectedServerName = null;
       let modpackName = null;
+      let modpackSource = null;
       let targetFile = null;
       let loaderType = null;
       let usingClientPack = false;
       let mcVersion = null;
-      let modpackData = null;
       let fileOptions = null;
       let selectedFileId = null;
 
@@ -493,7 +481,7 @@ module.exports = {
                 text.setContent(`**Selected:** ${selectedServerName} (\`${selectedServerId}\`)`)
               )
               .addActionRowComponents(row => row.setComponents(
-                new ButtonBuilder().setCustomId("proceed-to-url").setLabel("Enter Modpack ID").setStyle(ButtonStyle.Primary)
+                new ButtonBuilder().setCustomId("proceed-to-url").setLabel("Enter Modpack URL").setStyle(ButtonStyle.Primary)
               ));
 
             await i.update({ components: [ selectedContainer ], flags: MessageFlags.IsComponentsV2 });
@@ -505,11 +493,11 @@ module.exports = {
 
             const urlInput = new TextInputBuilder()
               .setCustomId("modpack-url-input")
-              .setLabel("CurseForge URL or Project ID")
+              .setLabel("Modpack URL (CurseForge or Modrinth)")
               .setStyle(TextInputStyle.Short)
-              .setPlaceholder("e.g. curseforge.com/minecraft/modpacks/star-technology  or  905765")
+              .setPlaceholder("curseforge.com/minecraft/modpacks/...  or  modrinth.com/modpack/...")
               .setRequired(true)
-              .setMaxLength(200);
+              .setMaxLength(300);
 
             urlModal.addComponents(new ActionRowBuilder().addComponents(urlInput));
             await i.showModal(urlModal);
@@ -522,14 +510,13 @@ module.exports = {
               await modalSubmit.deferUpdate();
 
               const rawInput = modalSubmit.fields.getTextInputValue("modpack-url-input").trim();
-              const projectId = parseProjectId(rawInput);
-              const slug = projectId ? null : parseModpackSlug(rawInput);
+              const source = detectProvider(rawInput);
 
-              if (!projectId && !slug) {
+              if (!source) {
                 const errorContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
                   .addTextDisplayComponents(text => text.setContent(
-                    `**Install Modpack**\n\n${getErrorMessage("INVALID_INPUT")}\n\nEnter a CurseForge modpack URL (e.g. \`curseforge.com/minecraft/modpacks/star-technology\`) or a numeric Project ID from the **About Project** section.`
+                    `**Install Modpack**\n\n${getErrorMessage("UNSUPPORTED_MODPACK_URL")}`
                   ))
                   .addSeparatorComponents(sep => sep)
                   .addActionRowComponents(row => row.setComponents(
@@ -547,11 +534,12 @@ module.exports = {
 
               let modpack;
               try {
-                modpack = projectId ? await getModpackById(projectId) : await getModpackBySlug(slug);
+                modpack = await lookupModpack(source, rawInput);
               } catch {
+                const apiErrorKey = source === "modrinth" ? "MODRINTH_API_ERROR" : "CURSEFORGE_API_ERROR";
                 const errContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
-                  .addTextDisplayComponents(text => text.setContent(`**Install Modpack**\n\n${getErrorMessage("CURSEFORGE_API_ERROR")}`))
+                  .addTextDisplayComponents(text => text.setContent(`**Install Modpack**\n\n${getErrorMessage(apiErrorKey)}`))
                   .addSeparatorComponents(sep => sep)
                   .addActionRowComponents(row => row.setComponents(
                     new ButtonBuilder().setCustomId("cancel").setLabel("Close").setStyle(ButtonStyle.Secondary)
@@ -561,9 +549,10 @@ module.exports = {
               }
 
               if (!modpack) {
+                const notFoundKey = source === "modrinth" ? "MODRINTH_MODPACK_NOT_FOUND" : "CURSEFORGE_MODPACK_NOT_FOUND";
                 const notFoundContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
-                  .addTextDisplayComponents(text => text.setContent(`**Install Modpack**\n\n${getErrorMessage("CURSEFORGE_MODPACK_NOT_FOUND")}`))
+                  .addTextDisplayComponents(text => text.setContent(`**Install Modpack**\n\n${getErrorMessage(notFoundKey)}`))
                   .addSeparatorComponents(sep => sep)
                   .addActionRowComponents(row => row.setComponents(
                     new ButtonBuilder().setCustomId("proceed-to-url").setLabel("Try Again").setStyle(ButtonStyle.Primary),
@@ -573,24 +562,13 @@ module.exports = {
                 return;
               }
 
+              modpackSource = source;
               modpackName = modpack.name;
-              modpackData = modpack;
-              loaderType = detectLoaderType(modpack.latestFilesIndexes);
+              loaderType = modpack.loaderType;
 
-              let files = null;
-              try {
-                files = await getModpackFiles(modpack.id);
-              } catch (e) {
-                msgLog.warn(`[install-modpack] getModpackFiles failed: ${e.message}`);
-              }
+              fileOptions = await listModpackFiles(source, modpack);
 
-              // Client files sorted by date, latest first (server packs aren't in the main list)
-              const sortedClientFiles = (files || [])
-                .filter(f => !f.isServerPack && f.downloadUrl)
-                .sort((a, b) => new Date(b.fileDate) - new Date(a.fileDate))
-                .slice(0, 10);
-
-              if (sortedClientFiles.length === 0) {
+              if (!fileOptions || fileOptions.length === 0) {
                 const noFileContainer = new ContainerBuilder()
                   .setAccentColor(COLORS.PRIMARY)
                   .addTextDisplayComponents(text => text.setContent(
@@ -602,22 +580,6 @@ module.exports = {
                   ));
                 await modalSubmit.editReply({ components: [ noFileContainer ], flags: MessageFlags.IsComponentsV2 });
                 return;
-              }
-
-              // Fetch linked server packs in parallel
-              const serverPacks = await Promise.all(
-                sortedClientFiles.map(f => f.serverPackFileId
-                  ? getFileById(f.modId, f.serverPackFileId).catch(() => null)
-                  : null
-                )
-              );
-
-              // Interleave: server pack (if available) then client file, per version
-              fileOptions = [];
-              for (let idx = 0; idx < sortedClientFiles.length; idx++) {
-                const sp = serverPacks[idx];
-                if (sp?.downloadUrl) fileOptions.push(sp);
-                fileOptions.push(sortedClientFiles[idx]);
               }
 
               const autoFile = fileOptions[0];
@@ -634,7 +596,7 @@ module.exports = {
 
           } else if (i.customId === "file-select") {
             // Just update the displayed selection; Continue button drives the actual proceed
-            selectedFileId = parseInt(i.values[0], 10);
+            selectedFileId = i.values[0];
             await i.update({
               components: [ buildFileSelectContainer(modpackName, fileOptions, selectedFileId) ],
               flags: MessageFlags.IsComponentsV2
@@ -645,9 +607,11 @@ module.exports = {
             const chosenFile = fileOptions?.find(f => f.id === selectedFileId);
             if (!chosenFile) return;
 
-            targetFile = { id: chosenFile.id, displayName: chosenFile.displayName, downloadUrl: chosenFile.downloadUrl };
-            mcVersion = detectMCVersion(modpackData, chosenFile);
+            targetFile = { id: chosenFile.id, displayName: chosenFile.label, downloadUrl: chosenFile.downloadUrl };
+            mcVersion = chosenFile.mcVersion;
             usingClientPack = !chosenFile.isServerPack;
+            // Modrinth loaders vary per version; prefer the selected file's loader.
+            loaderType = chosenFile.loaderType ?? loaderType;
 
             if (!targetFile?.downloadUrl) {
               const noFileContainer = new ContainerBuilder()
@@ -713,6 +677,7 @@ module.exports = {
             collector.stop("installing");
 
             const installState = {
+              source: modpackSource,
               serverId: selectedServerId,
               serverInternalId: selectedServerInternalId,
               serverName: selectedServerName,
