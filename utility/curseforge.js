@@ -3,6 +3,11 @@ require("dotenv").config();
 const CURSEFORGE_BASE_URL = "https://api.curseforge.com/v1";
 const msgLog = require("./logger.js");
 const AdmZip = require("adm-zip");
+const { analyzeModrinthFiles } = require("./modrinth.js");
+
+// CurseForge classId for actual mods. Manifest entries with any other classId
+// (resource packs 12, shaders 6552, worlds 17, etc.) are not installed to mods/.
+const CF_MOD_CLASS_ID = 6;
 
 const LOADER_MAP = {
   1: "forge",
@@ -173,9 +178,136 @@ function parseManifestLoaderType(manifest) {
   return match ? match[1].toLowerCase() : null;
 }
 
+// Resolves a CurseForge manifest zip into a normalized install plan consumed by
+// the shared file-plan engine. Resolves manifest file IDs to download URLs,
+// drops non-mod entries by classId, recovers API-disabled mods via Modrinth
+// fallback URLs, and collects the overrides to upload. Returns null if the zip
+// has no parseable manifest. onProgress(message) surfaces resolution status.
+async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {}) {
+  const manifest = parseManifestFromZip(buffer);
+  if (!manifest) return null;
+
+  const requiredEntries = (manifest.files || []).filter(f => f.required);
+  onProgress(
+    "No direct server pack download was available. Installing from manifest — this may take longer than usual.\n\nResolving mod list..."
+  );
+  const resolvedFiles = await getFilesByIds(requiredEntries.map(f => f.fileID)).catch(() => []);
+
+  const nameByModId = new Map(resolvedFiles.map(f => [ f.modId, f.displayName ?? f.fileName ?? String(f.modId) ]));
+
+  // Fetch mod metadata for all resolved files — used for classId filtering
+  const allModIds = [ ...new Set(resolvedFiles.map(f => f.modId)) ];
+  const allCfMods = await getModsByIds(allModIds);
+  const classIdByModId = new Map(allCfMods.map(m => [ m.id, m.classId ]));
+
+  // Build a set of filenames to exclude from overrides/mods/ (non-mod classIds only)
+  const overrideModExclude = new Set();
+  for (const f of resolvedFiles) {
+    if (!f.fileName) continue;
+    const classId = classIdByModId.get(f.modId);
+    const isNonMod = classId !== undefined && classId !== CF_MOD_CLASS_ID;
+    if (isNonMod) overrideModExclude.add(f.fileName);
+  }
+
+  // Collect overrides content (strip the "overrides/" prefix so files land at server root)
+  onProgress("Preparing overrides...");
+  const srcZip = new AdmZip(buffer);
+  const overrideEntries = [];
+  for (const e of srcZip.getEntries()) {
+    if (!e.entryName.startsWith("overrides/") || e.isDirectory) continue;
+    if (e.entryName.startsWith("overrides/mods/")) {
+      const filename = e.entryName.slice("overrides/mods/".length);
+      if (overrideModExclude.has(filename)) {
+        msgLog.debugExtended(`[install-modpack] skip override (non-mod): ${filename}`);
+        continue;
+      }
+    }
+    overrideEntries.push({ path: e.entryName.slice("overrides/".length), data: e.getData() });
+  }
+
+  // Filter out non-mod entries (resource packs classId=12, shaders classId=6552, worlds classId=17, etc.)
+  let nonModSkipped = 0;
+  const modFiles = resolvedFiles.filter(f => {
+    const classId = classIdByModId.get(f.modId);
+    if (classId !== undefined && classId !== CF_MOD_CLASS_ID) {
+      nonModSkipped++;
+      msgLog.debugExtended(`[install-modpack] skip (non-mod classId=${classId}): ${nameByModId.get(f.modId)}`);
+      return false;
+    }
+    return true;
+  });
+  if (nonModSkipped > 0) {
+    msgLog.log(`[install-modpack] skipped ${nonModSkipped} non-mod file(s) from manifest (resource packs, shaders, etc.)`);
+  }
+
+  const downloadable = modFiles.filter(f => f.downloadUrl);
+  const noUrl = modFiles.filter(f => !f.downloadUrl);
+
+  // Build SHA1 map across all mod files for a single combined Modrinth lookup (used for fallback URLs only)
+  const sha1ToFile = new Map();
+  for (const f of modFiles) {
+    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
+    if (sha1) sha1ToFile.set(sha1, f);
+  }
+
+  onProgress("Installing from manifest — resolving download URLs...");
+  const { fallbackUrls } = await analyzeModrinthFiles([ ...sha1ToFile.keys() ]);
+
+  // Recover mods with no CurseForge download URL using Modrinth fallback URLs
+  const unavailable = [];
+  const modrinthFallbacks = [];
+  for (const f of noUrl) {
+    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
+    const fallback = sha1 ? fallbackUrls.get(sha1) : null;
+    if (fallback) {
+      modrinthFallbacks.push({ downloadUrl: fallback.url, displayName: nameByModId.get(f.modId), sha1 });
+      msgLog.debugExtended(`[install-modpack] Modrinth fallback: ${nameByModId.get(f.modId)}`);
+    } else {
+      unavailable.push(f);
+      msgLog.debugExtended(`[install-modpack] no download URL: ${nameByModId.get(f.modId)} (modId: ${f.modId})`);
+    }
+  }
+  if (modrinthFallbacks.length > 0) {
+    msgLog.log(`[install-modpack] recovered ${modrinthFallbacks.length} mod(s) via Modrinth fallback`);
+  }
+  if (unavailable.length > 0) {
+    msgLog.log(`[install-modpack] ${unavailable.length} mod(s) have no download URL on CurseForge or Modrinth`);
+  }
+
+  const rawMods = [
+    ...downloadable.map(f => ({ ...f, sha1: (f.hashes || []).find(h => h.algo === 1)?.value ?? null })),
+    ...modrinthFallbacks
+  ];
+
+  const planModFiles = rawMods.map(mod => {
+    const filename = decodeURIComponent(mod.downloadUrl.split("/").pop());
+    return {
+      path: `mods/${filename}`,
+      filename,
+      downloadUrl: mod.downloadUrl,
+      sha1: mod.sha1 ?? null,
+      displayName: mod.displayName ?? filename,
+      sideFallback: null
+    };
+  });
+
+  return {
+    kind: "plan",
+    plan: {
+      loaderType,
+      mcVersion: null,
+      modFiles: planModFiles,
+      extraFiles: [],
+      overrideEntries,
+      unavailable
+    }
+  };
+}
+
 module.exports = {
   getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, findServerPack,
   findLinkedServerPackId, getFileById, getFilesByIds, getModsByIds,
   parseProjectId, parseModpackSlug, LOADER_MAP,
-  isManifestZip, parseManifestFromZip, parseManifestLoaderType
+  isManifestZip, parseManifestFromZip, parseManifestLoaderType,
+  resolveCurseforgeInstall
 };

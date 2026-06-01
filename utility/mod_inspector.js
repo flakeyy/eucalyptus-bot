@@ -6,6 +6,7 @@ const path = require("path");
 const CACHE_PATH = path.join(__dirname, "../mod_inspector_cache.json");
 
 let cache = null;
+let cacheDirty = false;
 
 function loadCache() {
   if (cache !== null) return;
@@ -16,8 +17,13 @@ function loadCache() {
   }
 }
 
-function saveCache() {
+// Persists the cache to disk only when there are unwritten entries. Callers
+// (e.g. the install engine) invoke this once per batch instead of paying a
+// synchronous full-file write for every inspected JAR.
+function flushModInspectorCache() {
+  if (!cacheDirty || cache === null) return;
   fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
+  cacheDirty = false;
 }
 
 // Checks if a Forge/NeoForge mods.toml declares the mod as client-only.
@@ -107,7 +113,7 @@ function inspectModJarCached(sha1, buffer, loaderType = null) {
 
   const result = inspectModJar(buffer, loaderType);
   cache[key] = result;
-  saveCache();
+  cacheDirty = true;
 
   return result;
 }
@@ -187,4 +193,4 @@ function extractModDeps(buffer, loaderType = null) {
     ?? { modId: null, requiredDeps: [] };
 }
 
-module.exports = { inspectModJar, inspectModJarCached, extractModDeps };
+module.exports = { inspectModJar, inspectModJarCached, extractModDeps, flushModInspectorCache };

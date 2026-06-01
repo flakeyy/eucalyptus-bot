@@ -8,13 +8,13 @@ const msgLog = require("../../utility/logger.js");
 const { getUserId, reconstructCommand, userHasClientApiKey, applicationApiCall } = require("../../utility/helper_functions.js");
 const {
   getClientServers, setServerPowerState, getServerResourceInfoById,
-  changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile, chmodServerFiles
+  changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
-const { getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, getFileById, getFilesByIds, getModsByIds, parseProjectId, parseModpackSlug, isManifestZip, parseManifestFromZip } = require("../../utility/curseforge.js");
-const { analyzeModrinthFiles } = require("../../utility/modrinth.js");
-const { inspectModJarCached, extractModDeps } = require("../../utility/mod_inspector.js");
-const { validateExternalUrl } = require("../../utility/url_validation.js");
+const { getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, getFileById, parseProjectId, parseModpackSlug, isManifestZip } = require("../../utility/curseforge.js");
+const { downloadToBuffer, streamUploadToServer } = require("../../utility/modpack_http.js");
+const { buildProgressBar, installFilePlan } = require("../../utility/modpack_install.js");
+const { resolveModpackInstall } = require("../../utility/modpack_providers.js");
 const AdmZip = require("adm-zip");
 const config = require("../../config.json");
 
@@ -120,107 +120,6 @@ function getJavaImageForMCVersion(mcVersion) {
   return null;
 }
 
-/* global TextEncoder, ReadableStream */
-async function downloadFileToBuffer(downloadUrl, onDownloadProgress) {
-  const urlCheck = await validateExternalUrl(downloadUrl);
-  if (!urlCheck.ok) {
-    throw Object.assign(new Error(`URL rejected: ${urlCheck.reason}`), { isDownload: true });
-  }
-  const dlResponse = await fetch(downloadUrl);
-  if (!dlResponse.ok) throw Object.assign(new Error(`Download failed: HTTP ${dlResponse.status}`), { isDownload: true });
-
-  const fileSize = parseInt(dlResponse.headers.get("content-length") || "0", 10);
-  const hasSize = fileSize > 0;
-  let lastProgressAt = 0;
-  const THROTTLE_MS = 2500;
-
-  const chunks = [];
-  let downloadBytes = 0;
-  const dlReader = dlResponse.body.getReader();
-  while (true) {
-    const { done, value } = await dlReader.read();
-    if (done) break;
-    chunks.push(value);
-    downloadBytes += value.length;
-    if (onDownloadProgress && hasSize) {
-      const now = Date.now();
-      if (now - lastProgressAt >= THROTTLE_MS) {
-        lastProgressAt = now;
-        onDownloadProgress(downloadBytes, fileSize);
-      }
-    }
-  }
-  if (onDownloadProgress && hasSize) onDownloadProgress(fileSize, fileSize);
-  return { chunks, fileSize };
-}
-
-async function uploadBufferToServer(uploadUrl, filename, chunks, fileSize, onProgress) {
-  const hasSize = fileSize > 0;
-  let lastProgressAt = 0;
-  const THROTTLE_MS = 2500;
-
-  const boundary = `WingsBoundary${Date.now()}`;
-  const enc = new TextEncoder();
-  const partHeader = enc.encode(
-    `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${filename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
-  );
-  const partFooter = enc.encode(`\r\n--${boundary}--\r\n`);
-
-  const uploadHeaders = { "Content-Type": `multipart/form-data; boundary=${boundary}` };
-  if (hasSize) {
-    uploadHeaders["Content-Length"] = String(partHeader.length + fileSize + partFooter.length);
-  }
-
-  let uploadBytes = 0;
-  let chunkIdx = 0;
-  let headerSent = false;
-
-  const body = new ReadableStream({
-    pull(controller) {
-      if (!headerSent) {
-        controller.enqueue(partHeader);
-        headerSent = true;
-      } else if (chunkIdx < chunks.length) {
-        const chunk = chunks[chunkIdx++];
-        uploadBytes += chunk.length;
-        if (onProgress && hasSize) {
-          const now = Date.now();
-          if (now - lastProgressAt >= THROTTLE_MS) {
-            lastProgressAt = now;
-            onProgress(fileSize, uploadBytes, fileSize);
-          }
-        }
-        controller.enqueue(chunk);
-      } else {
-        controller.enqueue(partFooter);
-        controller.close();
-      }
-    }
-  });
-
-  const uploadResponse = await fetch(uploadUrl, { method: "POST", headers: uploadHeaders, body, duplex: "half" });
-  if (!uploadResponse.ok) throw Object.assign(new Error(`Upload failed: HTTP ${uploadResponse.status}`), { isUpload: true });
-}
-
-function buildManifestProgressBar(downloaded, installed, total, width = 20) {
-  const half = Math.floor(width / 2);
-  const dlPct = total > 0 ? Math.min(downloaded / total, 1) : 0;
-  const ulPct = total > 0 ? Math.min(installed / total, 1) : 0;
-  const dlBar = "█".repeat(Math.round(dlPct * half)) + "░".repeat(half - Math.round(dlPct * half));
-  const ulBar = "█".repeat(Math.round(ulPct * half)) + "░".repeat(half - Math.round(ulPct * half));
-  return `\`[${dlBar}↓${ulBar}↑]\` ↓ ${Math.round(dlPct * 100)}% · ↑ ${Math.round(ulPct * 100)}% · ${total} mods`;
-}
-
-function buildProgressBar(downloadBytes, uploadBytes, fileSize, width = 20) {
-  const half = Math.floor(width / 2);
-  const dlPct = Math.min(downloadBytes / fileSize, 1);
-  const ulPct = Math.min(uploadBytes / fileSize, 1);
-  const dlBar = "█".repeat(Math.round(dlPct * half)) + "░".repeat(half - Math.round(dlPct * half));
-  const ulBar = "█".repeat(Math.round(ulPct * half)) + "░".repeat(half - Math.round(ulPct * half));
-  const totalMb = (fileSize / 1_048_576).toFixed(1);
-  return `\`[${dlBar}↓${ulBar}↑]\` ↓ ${Math.round(dlPct * 100)}% · ↑ ${Math.round(ulPct * 100)}% · ${totalMb} MB`;
-}
-
 const COLORS = {
   PRIMARY: 0x6b34eb,
   SUCCESS: 0x00aa00,
@@ -230,7 +129,6 @@ const COLORS = {
 const COLLECTOR_IDLE_TIMEOUT = 300_000;
 const HTTP_STATUS_CODES = { OK: 200, NO_CONTENT: 204 };
 const STOP_POLL = { MAX_ATTEMPTS: 60, INTERVAL: 2000 };
-const MANIFEST_MOD_BATCH = 20;
 
 function buildServerSelectContainer(servers, nestMap, statusNote = null, disabled = false) {
   const selectMenu = new StringSelectMenuBuilder()
@@ -346,266 +244,6 @@ async function updateProgress(i, message) {
   await i.editReply({ components: [ container ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
 }
 
-async function runManifestSteps(i, serverId, userId, buffer, manifest, loaderType = null) {
-  // Resolve files and mod metadata first so we can filter overrides
-  const requiredEntries = (manifest.files || []).filter(f => f.required);
-  await updateProgress(i,
-    "No direct server pack download was available. Installing from manifest — this may take longer than usual.\n\nResolving mod list..."
-  );
-  const resolvedFiles = await getFilesByIds(requiredEntries.map(f => f.fileID)).catch(() => []);
-
-  const nameByModId = new Map(resolvedFiles.map(f => [ f.modId, f.displayName ?? f.fileName ?? String(f.modId) ]));
-
-  // Fetch mod metadata for all resolved files — used for classId filtering
-  const allModIds = [ ...new Set(resolvedFiles.map(f => f.modId)) ];
-  const allCfMods = await getModsByIds(allModIds);
-  const classIdByModId = new Map(allCfMods.map(m => [ m.id, m.classId ]));
-
-  // Build a set of filenames to exclude from overrides/mods/ (non-mod classIds only)
-  const CF_MOD_CLASS_ID = 6;
-  const overrideModExclude = new Set();
-  for (const f of resolvedFiles) {
-    if (!f.fileName) continue;
-    const classId = classIdByModId.get(f.modId);
-    const isNonMod = classId !== undefined && classId !== CF_MOD_CLASS_ID;
-    if (isNonMod) overrideModExclude.add(f.fileName);
-  }
-
-  // Upload overrides content (strip the "overrides/" prefix so files land at server root)
-  await updateProgress(i, "Preparing overrides...");
-  const srcZip = new AdmZip(buffer);
-  const overrideEntries = srcZip.getEntries().filter(e => {
-    if (!e.entryName.startsWith("overrides/") || e.isDirectory) return false;
-    if (e.entryName.startsWith("overrides/mods/")) {
-      const filename = e.entryName.slice("overrides/mods/".length);
-      if (overrideModExclude.has(filename)) {
-        msgLog.debugExtended(`[install-modpack] skip override (non-mod): ${filename}`);
-        return false;
-      }
-    }
-    return true;
-  });
-  if (overrideEntries.length > 0) {
-    const overridesZip = new AdmZip();
-    for (const entry of overrideEntries) {
-      const stripped = entry.entryName.slice("overrides/".length);
-      overridesZip.addFile(stripped, entry.getData(), "", 0o100644 << 16);
-    }
-    const overridesBuf = overridesZip.toBuffer();
-    const uploadUrl = await getFileUploadUrl(serverId, userId);
-    if (uploadUrl) {
-      const overridesFilename = "overrides.zip";
-      const enc = new TextEncoder();
-      const boundary = `WingsBoundary${Date.now()}`;
-      const partHeader = enc.encode(
-        `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${overridesFilename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
-      );
-      const partFooter = enc.encode(`\r\n--${boundary}--\r\n`);
-      const bodyBuf = Buffer.concat([ partHeader, overridesBuf, partFooter ]);
-      await fetch(uploadUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": `multipart/form-data; boundary=${boundary}`,
-          "Content-Length": String(bodyBuf.length)
-        },
-        body: bodyBuf
-      });
-      await decompressFile(serverId, userId, "/", overridesFilename);
-      await chmodServerFiles(serverId, userId, "/", overrideEntries.map(e => ({
-        file: e.entryName.slice("overrides/".length),
-        mode: "644"
-      }))).catch(() => {});
-    }
-  }
-
-  // Filter out non-mod entries (resource packs classId=12, shaders classId=6552, worlds classId=17, etc.)
-  let nonModSkipped = 0;
-  const modFiles = resolvedFiles.filter(f => {
-    const classId = classIdByModId.get(f.modId);
-    if (classId !== undefined && classId !== CF_MOD_CLASS_ID) {
-      nonModSkipped++;
-      msgLog.debugExtended(`[install-modpack] skip (non-mod classId=${classId}): ${nameByModId.get(f.modId)}`);
-      return false;
-    }
-    return true;
-  });
-  if (nonModSkipped > 0) {
-    msgLog.log(`[install-modpack] skipped ${nonModSkipped} non-mod file(s) from manifest (resource packs, shaders, etc.)`);
-  }
-
-  const downloadable = modFiles.filter(f => f.downloadUrl);
-  const noUrl = modFiles.filter(f => !f.downloadUrl);
-
-  // Build SHA1 map across all mod files for a single combined Modrinth lookup (used for fallback URLs only)
-  const sha1ToFile = new Map();
-  for (const f of modFiles) {
-    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
-    if (sha1) sha1ToFile.set(sha1, f);
-  }
-
-  await updateProgress(i, "Installing from manifest — resolving download URLs...");
-  const { fallbackUrls } = await analyzeModrinthFiles([ ...sha1ToFile.keys() ]);
-
-  // Recover mods with no CurseForge download URL using Modrinth fallback URLs
-  const unavailable = [];
-  const modrinthFallbacks = [];
-  for (const f of noUrl) {
-    const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
-    const fallback = sha1 ? fallbackUrls.get(sha1) : null;
-    if (fallback) {
-      modrinthFallbacks.push({ downloadUrl: fallback.url, displayName: nameByModId.get(f.modId), sha1 });
-      msgLog.debugExtended(`[install-modpack] Modrinth fallback: ${nameByModId.get(f.modId)}`);
-    } else {
-      unavailable.push(f);
-      msgLog.debugExtended(`[install-modpack] no download URL: ${nameByModId.get(f.modId)} (modId: ${f.modId})`);
-    }
-  }
-  if (modrinthFallbacks.length > 0) {
-    msgLog.log(`[install-modpack] recovered ${modrinthFallbacks.length} mod(s) via Modrinth fallback`);
-  }
-  if (unavailable.length > 0) {
-    msgLog.log(`[install-modpack] ${unavailable.length} mod(s) have no download URL on CurseForge or Modrinth`);
-  }
-
-  const mods = [
-    ...downloadable.map(f => ({ ...f, sha1: (f.hashes || []).find(h => h.algo === 1)?.value ?? null })),
-    ...modrinthFallbacks
-  ];
-  let downloadFailed = 0;
-
-  // Phase 1: Download all mods and build dependency metadata.
-  // Buffers are kept in memory so we can propagate dependency chains before uploading anything.
-  await updateProgress(i,
-    `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(0, 0, mods.length)}`
-  );
-
-  const modInfos = []; // { filename, buffer, sha1, isClientOnly, source, modId, requiredDeps }
-
-  for (let start = 0; start < mods.length; start += MANIFEST_MOD_BATCH) {
-    const batch = mods.slice(start, start + MANIFEST_MOD_BATCH);
-    const results = await Promise.all(batch.map(async mod => {
-      const filename = decodeURIComponent(mod.downloadUrl.split("/").pop());
-      try {
-        const urlCheck = await validateExternalUrl(mod.downloadUrl);
-        if (!urlCheck.ok) throw new Error(`URL rejected: ${urlCheck.reason}`);
-        const res = await fetch(mod.downloadUrl);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const chunks = [];
-        const reader = res.body.getReader();
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          chunks.push(value);
-        }
-        return { filename, buffer: Buffer.concat(chunks), sha1: mod.sha1 ?? null };
-      } catch (e) {
-        msgLog.debugExtended(`[install-modpack] mod download failed: ${filename}: ${e.message}`);
-        downloadFailed++;
-        return null;
-      }
-    }));
-
-    for (const r of results) {
-      if (!r) continue;
-      let { isClientOnly, source } = inspectModJarCached(r.sha1, r.buffer, loaderType);
-      const { modId, requiredDeps } = extractModDeps(r.buffer, loaderType);
-      if (!isClientOnly && modId !== null && (config.mod_id_blocklist ?? []).includes(modId)) {
-        isClientOnly = true;
-        source = "blocklist";
-      }
-      if (isClientOnly) msgLog.debugExtended(`[install-modpack] skip (client-only, ${source}): ${r.filename}`);
-      modInfos.push({ ...r, isClientOnly, source, modId, requiredDeps });
-    }
-
-    await updateProgress(i,
-      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(modInfos.length + downloadFailed, 0, mods.length)}`
-    );
-  }
-
-  // Propagate client-only status: if a mod's required dependency was skipped, skip the mod too.
-  const skippedModIds = new Set(modInfos.filter(m => m.isClientOnly && m.modId).map(m => m.modId));
-  let propagated = true;
-  while (propagated) {
-    propagated = false;
-    for (const info of modInfos) {
-      if (!info.isClientOnly && info.requiredDeps.some(dep => skippedModIds.has(dep))) {
-        info.isClientOnly = true;
-        if (info.modId) { skippedModIds.add(info.modId); propagated = true; }
-        msgLog.debugExtended(`[install-modpack] skip (client-dep chain): ${info.filename}`);
-      }
-    }
-  }
-
-  // Phase 2: Upload non-skipped mods in batches.
-  const toInstallAll = modInfos.filter(m => !m.isClientOnly);
-  const total = toInstallAll.length;
-  let installed = 0;
-
-  for (let start = 0; start < toInstallAll.length; start += MANIFEST_MOD_BATCH) {
-    const batchIdx = Math.floor(start / MANIFEST_MOD_BATCH) + 1;
-    const batch = toInstallAll.slice(start, start + MANIFEST_MOD_BATCH);
-
-    await updateProgress(i,
-      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(mods.length, installed, mods.length)}`
-    );
-
-    // Bundle mods into a zip with a mods/ prefix so it extracts to /mods/
-    const batchZip = new AdmZip();
-    for (const { filename, buffer } of batch) {
-      batchZip.addFile(`mods/${filename}`, buffer, "", 0o100644 << 16);
-    }
-    const zipBuf = batchZip.toBuffer();
-    const zipFilename = `_mods_batch_${batchIdx}.zip`;
-
-    const uploadUrl = await getFileUploadUrl(serverId, userId);
-    if (!uploadUrl) {
-      msgLog.error(`[install-modpack] no upload URL for mod batch ${batchIdx}`);
-      downloadFailed += batch.length;
-      continue;
-    }
-
-    const enc = new TextEncoder();
-    const boundary = `WingsBoundary${Date.now()}`;
-    const partHeader = enc.encode(
-      `--${boundary}\r\nContent-Disposition: form-data; name="files"; filename="${zipFilename}"\r\nContent-Type: application/octet-stream\r\n\r\n`
-    );
-    const partFooter = enc.encode(`\r\n--${boundary}--\r\n`);
-    const bodyBuf = Buffer.concat([ partHeader, zipBuf, partFooter ]);
-    const uploadRes = await fetch(uploadUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": `multipart/form-data; boundary=${boundary}`,
-        "Content-Length": String(bodyBuf.length)
-      },
-      body: bodyBuf
-    });
-
-    if (!uploadRes.ok) {
-      msgLog.error(`[install-modpack] mod batch ${batchIdx} upload failed: HTTP ${uploadRes.status}`);
-      downloadFailed += batch.length;
-      continue;
-    }
-
-    await decompressFile(serverId, userId, "/", zipFilename);
-    await chmodServerFiles(serverId, userId, "/mods/", batch.map(({ filename }) => ({
-      file: filename,
-      mode: "644"
-    }))).catch(() => {});
-    await deleteServerFiles(serverId, userId, [ zipFilename ]).catch(() => {});
-
-    installed += batch.length;
-    await updateProgress(i,
-      `**Installing mods from manifest**\nThis may take a while...\n\n${buildManifestProgressBar(mods.length, installed, mods.length)}`
-    );
-  }
-
-  if (downloadFailed > 0) {
-    msgLog.warn(`[install-modpack] manifest install: ${installed}/${total} mods installed, ${downloadFailed} unavailable`);
-  }
-
-  return { unavailable, installed, total };
-}
-
 async function runInstallation(i, state, interaction) {
   const { serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
 
@@ -656,7 +294,7 @@ async function runInstallation(i, state, interaction) {
   await updateProgress(i, `Downloading **${targetFile.displayName}**...`);
   let chunks, fileSize;
   try {
-    ({ chunks, fileSize } = await downloadFileToBuffer(targetFile.downloadUrl, (dl, total) => {
+    ({ chunks, fileSize } = await downloadToBuffer(targetFile.downloadUrl, (dl, total) => {
       const pct = Math.round((dl / total) * 100);
       updateProgress(i, `Downloading **${targetFile.displayName}**... ${pct}%`).catch(() => {});
     }));
@@ -679,7 +317,7 @@ async function runInstallation(i, state, interaction) {
     }
     await updateProgress(i, "Downloading modpack from ServerStarter URL...");
     try {
-      ({ chunks, fileSize } = await downloadFileToBuffer(ssConfig.modpackUrl, (dl, total) => {
+      ({ chunks, fileSize } = await downloadToBuffer(ssConfig.modpackUrl, (dl, total) => {
         const pct = Math.round((dl / total) * 100);
         updateProgress(i, `Downloading modpack from ServerStarter URL... ${pct}%`).catch(() => {});
       }));
@@ -694,13 +332,14 @@ async function runInstallation(i, state, interaction) {
   let usedManifest = false;
   if (isManifestZip(buffer)) {
     usedManifest = true;
-    const manifest = parseManifestFromZip(buffer);
-    if (!manifest) {
+    const resolution = await resolveModpackInstall("curseforge", buffer, loaderType, msg => updateProgress(i, msg));
+    if (!resolution || resolution.kind !== "plan") {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
       return;
     }
+    const installCtx = { i, serverId, userId: interaction.user.id, loaderType, updateProgress };
     ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
-      await runManifestSteps(i, serverId, interaction.user.id, buffer, manifest, loaderType));
+      await installFilePlan(installCtx, resolution.plan));
   } else {
     const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
     if (!uploadUrl) {
@@ -709,8 +348,9 @@ async function runInstallation(i, state, interaction) {
     }
     await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
     try {
-      await uploadBufferToServer(uploadUrl, targetFile.displayName, chunks, fileSize, (dl, ul, total) => {
-        updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar(dl, ul, total)}`).catch(() => {});
+      await streamUploadToServer(uploadUrl, targetFile.displayName, chunks, fileSize, (dl, ul, total) => {
+        const unit = `${(total / 1_048_576).toFixed(1)} MB`;
+        updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar({ downloaded: dl, installed: ul, total, unit })}`).catch(() => {});
       });
     } catch (err) {
       msgLog.error(`[install-modpack] upload failed: ${err.message}`);
