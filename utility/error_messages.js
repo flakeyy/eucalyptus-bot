@@ -141,6 +141,10 @@ const ERROR_MESSAGES = {
   MODRINTH_API_ERROR: {
     id: -36,
     text: "Failed to reach the Modrinth API.\nPlease try again later."
+  },
+  MISSING_REQUIRED_VARIABLES: {
+    id: -37,
+    format: variables => `This server type requires values the bot could not fill automatically: ${variables}.\nPlease let <@${ADMIN_DISCORD_ID}> know so the egg can be configured with defaults.`
   }
 };
 

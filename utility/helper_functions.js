@@ -64,6 +64,55 @@ function extractEnvVariables(jsonData) {
   return envVariables;
 }
 
+// Derive a value for a required egg variable whose default is blank, using only
+// its Laravel validation rules so this stays egg-agnostic. Currently handles
+// numeric/port variables (e.g. "required|numeric|between:1024,65535"): if the
+// server's assigned allocation port satisfies the range, we reuse it. Returns
+// undefined when no safe value can be inferred.
+function deriveRequiredValue(ruleList, { port } = {}) {
+  const isNumeric = ruleList.includes("numeric") || ruleList.includes("integer");
+  const between = ruleList.find(r => r.startsWith("between:"));
+  if (isNumeric && between && port !== null && port !== undefined) {
+    const [ min, max ] = between.slice("between:".length).split(",").map(Number);
+    if (!Number.isNaN(min) && !Number.isNaN(max) && port >= min && port <= max) {
+      return String(port);
+    }
+  }
+  return undefined;
+}
+
+// Build the environment map for a new server, like extractEnvVariables, but also
+// fill in required variables whose default_value is blank. Pterodactyl validates
+// the environment against each egg variable's rules, so a blank "required" value
+// (e.g. Satisfactory's RELIABLE_PORT) otherwise causes an opaque 422 on creation.
+// Returns { environment, missing }, where missing lists the required variables we
+// could not fill so the caller can surface a clear error instead.
+function resolveEnvVariables(jsonData, context = {}) {
+  const environment = {};
+  const missing = [];
+
+  jsonData.data.forEach(item => {
+    const { env_variable, default_value, rules, name } = item.attributes;
+    const ruleList = typeof rules === "string" ? rules.split("|") : [];
+    const isRequired = ruleList.includes("required");
+    const isBlank = default_value === null || default_value === "";
+
+    let value = default_value;
+    if (isRequired && isBlank) {
+      const derived = deriveRequiredValue(ruleList, context);
+      if (derived === undefined) {
+        missing.push({ envVariable: env_variable, name: name || env_variable });
+      } else {
+        value = derived;
+      }
+    }
+
+    environment[env_variable] = value;
+  });
+
+  return { environment, missing };
+}
+
 function formatNames(jsonData) {
   if (!jsonData || !Array.isArray(jsonData.data)) {
     throw new Error("Invalid input: Expect an object with a 'data' array.");
@@ -241,6 +290,7 @@ module.exports = {
   applicationApiCall,
   clientApiCall,
   extractEnvVariables,
+  resolveEnvVariables,
   formatNames,
   getUserId,
   getPanelUsername,

@@ -2,7 +2,7 @@ const { ContainerBuilder, ButtonBuilder, ButtonStyle, SlashCommandBuilder, Strin
 const config = require("../../config.json");
 const msgLog = require("../../utility/logger.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
-const { applicationApiCall, extractEnvVariables, getUserId, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
+const { applicationApiCall, resolveEnvVariables, getUserId, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
 const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory, getNodes, getNests, getEggs } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { COLORS, HTTP_STATUS_CODES, COLLECTOR_IDLE_TIMEOUT } = require("../../utility/constants.js");
@@ -14,7 +14,7 @@ async function getDefaultAllocation(node) {
 
   for (let i = 0;i < jsonData.length;i++) {
     if (!jsonData[i].attributes.assigned && (jsonData[i].attributes.alias === null || (jsonData[i].attributes.alias !== null && jsonData[i].attributes.ip === "0.0.0.0"))) {
-      return jsonData[i].attributes.id;
+      return jsonData[i].attributes;
     }
   }
   return -1;
@@ -62,13 +62,21 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
     return getErrorMessage("EGG_INFO_NOT_RETURNED");
   }
 
+  const { environment, missing } = resolveEnvVariables(
+    eggInfo.attributes.relationships.variables,
+    { port: defaultAllocation.port }
+  );
+  if (missing.length > 0) {
+    return getErrorMessage("MISSING_REQUIRED_VARIABLES", missing.map(m => m.name).join(", "));
+  }
+
   const requestBody = JSON.stringify({
     "name": name,
     "user": userId,
     "egg": eggId,
     "docker_image": eggInfo.attributes.docker_image,
     "startup": eggInfo.attributes.startup,
-    "environment": extractEnvVariables(eggInfo.attributes.relationships.variables),
+    "environment": environment,
     "limits": {
       "memory": memory,
       "overhead_memory": overheadMemory,
@@ -83,7 +91,7 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
       "allocations": 4
     },
     "allocation": {
-      "default": defaultAllocation
+      "default": defaultAllocation.id
     }
   });
 

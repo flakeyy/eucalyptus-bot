@@ -40,6 +40,7 @@ const {
   validateString,
   userHasClientApiKey,
   extractEnvVariables,
+  resolveEnvVariables,
   formatNames,
   reconstructCommand,
   getCommands
@@ -167,6 +168,71 @@ describe("extractEnvVariables", () => {
 
   test("returns empty object for empty data array", () => {
     expect(extractEnvVariables({ data: [] })).toEqual({});
+  });
+});
+
+// ---------------------------------------------------------------------------
+// helper_functions — resolveEnvVariables
+// ---------------------------------------------------------------------------
+
+describe("resolveEnvVariables", () => {
+  test("passes through defaults and reports nothing missing when all are usable", () => {
+    const input = {
+      data: [
+        { attributes: { env_variable: "BETA_BRANCH", default_value: "none", rules: "nullable|string", name: "Beta Branch" } },
+        { attributes: { env_variable: "MAXPLAYERS", default_value: "8", rules: "required|numeric", name: "Max Players" } }
+      ]
+    };
+    expect(resolveEnvVariables(input, { port: 7777 })).toEqual({
+      environment: { BETA_BRANCH: "none", MAXPLAYERS: "8" },
+      missing: []
+    });
+  });
+
+  test("fills a blank required port variable from the allocation port", () => {
+    const input = {
+      data: [
+        { attributes: { env_variable: "RELIABLE_PORT", default_value: "", rules: "required|numeric|between:1024,65535", name: "Reliable Messaging Port" } }
+      ]
+    };
+    expect(resolveEnvVariables(input, { port: 27015 })).toEqual({
+      environment: { RELIABLE_PORT: "27015" },
+      missing: []
+    });
+  });
+
+  test("does not fill a blank required port when the allocation port is out of range", () => {
+    const input = {
+      data: [
+        { attributes: { env_variable: "RELIABLE_PORT", default_value: "", rules: "required|numeric|between:1024,65535", name: "Reliable Messaging Port" } }
+      ]
+    };
+    const result = resolveEnvVariables(input, { port: 80 });
+    expect(result.environment.RELIABLE_PORT).toBe("");
+    expect(result.missing).toEqual([ { envVariable: "RELIABLE_PORT", name: "Reliable Messaging Port" } ]);
+  });
+
+  test("reports a blank required non-derivable variable as missing", () => {
+    const input = {
+      data: [
+        { attributes: { env_variable: "SERVER_NAME", default_value: "", rules: "required|string", name: "Server Name" } }
+      ]
+    };
+    const result = resolveEnvVariables(input, { port: 7777 });
+    expect(result.environment.SERVER_NAME).toBe("");
+    expect(result.missing).toEqual([ { envVariable: "SERVER_NAME", name: "Server Name" } ]);
+  });
+
+  test("leaves blank optional (nullable) variables untouched", () => {
+    const input = {
+      data: [
+        { attributes: { env_variable: "EXTRA_ARGS", default_value: "", rules: "nullable|string", name: "Extra Args" } }
+      ]
+    };
+    expect(resolveEnvVariables(input, {})).toEqual({
+      environment: { EXTRA_ARGS: "" },
+      missing: []
+    });
   });
 });
 
