@@ -43,6 +43,47 @@ describe("downloadFile", () => {
     global.fetch = jest.fn().mockResolvedValue(streamResponse(new Uint8Array([ 1 ]), { ok: false, status: 404 }));
     await expect(http.downloadFile("https://cdn.example.com/missing.jar")).rejects.toThrow("HTTP 404");
   });
+
+  test("uses manual redirect handling so each hop is re-validated", async () => {
+    global.fetch = jest.fn().mockResolvedValue(streamResponse(new Uint8Array([ 9 ])));
+    await http.downloadFile("https://cdn.example.com/a.jar");
+    expect(global.fetch).toHaveBeenCalledWith("https://cdn.example.com/a.jar", { redirect: "manual" });
+  });
+
+  test("re-validates redirect targets and rejects an internal Location (SSRF guard)", async () => {
+    // Initial public URL passes; the redirect target resolves to a blocked host.
+    validateExternalUrl.mockImplementation(async url =>
+      url.includes("169.254.169.254")
+        ? { ok: false, reason: "non-public address" }
+        : { ok: true });
+    const redirect = {
+      ok: false,
+      status: 302,
+      headers: { get: name => (name === "location" ? "https://169.254.169.254/latest/meta-data/" : null) },
+      body: null
+    };
+    global.fetch = jest.fn().mockResolvedValue(redirect);
+
+    await expect(http.downloadFile("https://attacker.example/pack.jar")).rejects.toThrow(/URL rejected/);
+    // First hop fetched, second hop blocked before any fetch to the internal host.
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test("follows a redirect to another allowed host", async () => {
+    validateExternalUrl.mockResolvedValue({ ok: true });
+    const redirect = {
+      ok: false,
+      status: 301,
+      headers: { get: name => (name === "location" ? "https://cdn2.example.com/a.jar" : null) },
+      body: null
+    };
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(redirect)
+      .mockResolvedValueOnce(streamResponse(new Uint8Array([ 7, 7 ])));
+    const buf = await http.downloadFile("https://cdn.example.com/a.jar");
+    expect([ ...buf ]).toEqual([ 7, 7 ]);
+    expect(global.fetch).toHaveBeenNthCalledWith(2, "https://cdn2.example.com/a.jar", { redirect: "manual" });
+  });
 });
 
 describe("downloadToBuffer", () => {
