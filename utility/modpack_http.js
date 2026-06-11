@@ -4,6 +4,34 @@
 const { validateExternalUrl } = require("./url_validation.js");
 
 const THROTTLE_MS = 2500;
+const MAX_REDIRECTS = 5;
+
+// SSRF-safe fetch. Node's global fetch follows 3xx redirects automatically, so
+// validating only the initial URL is bypassable: an attacker-controlled public
+// host can answer with a 302 to an internal address (cloud metadata, the
+// co-located panel/Wings on localhost) that the guard never saw. We instead
+// follow redirects manually, re-validating every hop against validateExternalUrl.
+// errorMeta is merged onto thrown errors so callers can keep their error tagging.
+async function safeFetch(downloadUrl, errorMeta = {}) {
+  let currentUrl = downloadUrl;
+  for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+    const urlCheck = await validateExternalUrl(currentUrl);
+    if (!urlCheck.ok) {
+      throw Object.assign(new Error(`URL rejected: ${urlCheck.reason}`), errorMeta);
+    }
+    const res = await fetch(currentUrl, { redirect: "manual" });
+    if (res.status >= 300 && res.status < 400) {
+      const location = res.headers.get("location");
+      if (location) {
+        // Resolve relative redirects against the current URL before re-validating.
+        currentUrl = new URL(location, currentUrl).toString();
+        continue;
+      }
+    }
+    return res;
+  }
+  throw Object.assign(new Error("Download failed: too many redirects"), errorMeta);
+}
 
 // Builds the multipart/form-data envelope used by the Wings files/upload endpoint.
 // Returns the boundary plus the encoded part header/footer for a single "files" field.
@@ -21,11 +49,7 @@ function buildMultipart(filename) {
 // onDownloadProgress(downloadedBytes, totalBytes) is called (throttled) when a
 // content-length is present. Returns { chunks, fileSize }.
 async function downloadToBuffer(downloadUrl, onDownloadProgress) {
-  const urlCheck = await validateExternalUrl(downloadUrl);
-  if (!urlCheck.ok) {
-    throw Object.assign(new Error(`URL rejected: ${urlCheck.reason}`), { isDownload: true });
-  }
-  const dlResponse = await fetch(downloadUrl);
+  const dlResponse = await safeFetch(downloadUrl, { isDownload: true });
   if (!dlResponse.ok) throw Object.assign(new Error(`Download failed: HTTP ${dlResponse.status}`), { isDownload: true });
 
   const fileSize = parseInt(dlResponse.headers.get("content-length") || "0", 10);
@@ -55,9 +79,7 @@ async function downloadToBuffer(downloadUrl, onDownloadProgress) {
 // Downloads a single (validated) URL fully into a Buffer. Throws on rejection or
 // non-2xx so callers can count failures.
 async function downloadFile(downloadUrl) {
-  const urlCheck = await validateExternalUrl(downloadUrl);
-  if (!urlCheck.ok) throw new Error(`URL rejected: ${urlCheck.reason}`);
-  const res = await fetch(downloadUrl);
+  const res = await safeFetch(downloadUrl);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const chunks = [];
   const reader = res.body.getReader();

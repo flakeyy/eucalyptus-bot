@@ -33,10 +33,12 @@ function isPrivateIPv6(ip) {
  * link-local, CGNAT, or multicast/reserved addresses.
  *
  * Mitigates SSRF where attacker-controlled URLs (e.g. modpack metadata)
- * would otherwise let the bot probe internal services. Note this is a
- * pre-fetch check; a sophisticated attacker could exploit a TOCTOU via
- * DNS rebinding, but the bot does not re-issue requests on redirects with
- * the resolved IP, so the practical window is narrow.
+ * would otherwise let the bot probe internal services. This is a per-URL
+ * check and must be applied to every redirect hop, not just the initial
+ * URL (see safeFetch in modpack_http.js), since fetch follows 3xx by default
+ * and an attacker could otherwise 302 to an internal address. A sophisticated
+ * attacker could still exploit a TOCTOU via DNS rebinding between this lookup
+ * and the connection, so treat this as defense-in-depth rather than absolute.
  *
  * @param {string} url
  * @returns {Promise<{ ok: true } | { ok: false, reason: string }>}
