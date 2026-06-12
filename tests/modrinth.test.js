@@ -122,12 +122,12 @@ describe("resolveModrinthInstall", () => {
     expect(result.plan.mcVersion).toBe("1.20.1");
   });
 
-  test("includes all mods/ JARs, tagging server-unsupported ones with a side fallback", () => {
+  test("includes all mods/ JARs, passing the index's server env through as provider metadata", () => {
     const byPath = Object.fromEntries(result.plan.modFiles.map(m => [ m.path, m ]));
     expect(Object.keys(byPath).sort()).toEqual([ "mods/a.jar", "mods/c.jar", "mods/n.jar" ]);
-    expect(byPath["mods/a.jar"].sideFallback).toBeNull();
-    expect(byPath["mods/n.jar"].sideFallback).toBeNull();
-    expect(byPath["mods/c.jar"].sideFallback).toBe("unsupported");
+    expect(byPath["mods/a.jar"].providerServerSide).toBe("required");
+    expect(byPath["mods/n.jar"].providerServerSide).toBeNull();
+    expect(byPath["mods/c.jar"].providerServerSide).toBe("unsupported");
   });
 
   test("keeps server-side non-mod files but drops client-only ones", () => {
@@ -151,6 +151,68 @@ describe("resolveModrinthInstall", () => {
 });
 
 // ─── API helpers ─────────────────────────────────────────────────────────────
+
+describe("analyzeModrinthFiles", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test("maps each hash to its project's server_side and derives clientOnlyHashes", async () => {
+    const versionMap = {
+      "hash-a": { project_id: "p1", files: [ { primary: true, url: "https://cdn/a.jar", filename: "a.jar" } ] },
+      "hash-b": { project_id: "p2", files: [ { primary: true, url: "https://cdn/b.jar", filename: "b.jar" } ] }
+    };
+    const projects = [
+      { id: "p1", server_side: "unsupported" },
+      { id: "p2", server_side: "optional" }
+    ];
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => versionMap })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => projects });
+
+    const res = await modrinth.analyzeModrinthFiles([ "hash-a", "hash-b" ]);
+    expect(res.serverSideByHash.get("hash-a")).toBe("unsupported");
+    expect(res.serverSideByHash.get("hash-b")).toBe("optional");
+    expect([ ...res.clientOnlyHashes ]).toEqual([ "hash-a" ]);
+    expect(res.fallbackUrls.get("hash-b")).toEqual({ url: "https://cdn/b.jar", filename: "b.jar" });
+    expect([ ...res.foundHashes ].sort()).toEqual([ "hash-a", "hash-b" ]);
+  });
+
+  test("degrades to empty results on API failure", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500 });
+    const res = await modrinth.analyzeModrinthFiles([ "hash-a" ]);
+    expect(res.serverSideByHash.size).toBe(0);
+    expect(res.clientOnlyHashes.size).toBe(0);
+  });
+});
+
+describe("getServerSideBySlugs", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test("returns a slug → server_side map for found projects", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true, status: 200,
+      json: async () => [
+        { slug: "legendary-tooltips", server_side: "unsupported" },
+        { slug: "jei", server_side: "optional" }
+      ]
+    });
+    const res = await modrinth.getServerSideBySlugs([ "legendary-tooltips", "jei", "cf-only-mod" ]);
+    expect(res.get("legendary-tooltips")).toBe("unsupported");
+    expect(res.get("jei")).toBe("optional");
+    expect(res.has("cf-only-mod")).toBe(false);
+  });
+
+  test("chunks large slug lists across multiple requests", async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => [] });
+    await modrinth.getServerSideBySlugs(Array.from({ length: 150 }, (_, i) => `mod-${i}`));
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  test("returns an empty map on API failure", async () => {
+    global.fetch = jest.fn().mockRejectedValue(new Error("network down"));
+    const res = await modrinth.getServerSideBySlugs([ "a" ]);
+    expect(res.size).toBe(0);
+  });
+});
 
 describe("getModrinthModpack", () => {
   afterEach(() => jest.restoreAllMocks());

@@ -3,7 +3,7 @@ require("dotenv").config();
 const CURSEFORGE_BASE_URL = "https://api.curseforge.com/v1";
 const msgLog = require("./logger.js");
 const AdmZip = require("adm-zip");
-const { analyzeModrinthFiles } = require("./modrinth.js");
+const { analyzeModrinthFiles, getServerSideBySlugs } = require("./modrinth.js");
 
 // CurseForge classId for actual mods. Manifest entries with any other classId
 // (resource packs 12, shaders 6552, worlds 17, etc.) are not installed to mods/.
@@ -265,7 +265,9 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
   const downloadable = modFiles.filter(f => f.downloadUrl);
   const noUrl = modFiles.filter(f => !f.downloadUrl);
 
-  // Build SHA1 map across all mod files for a single combined Modrinth lookup (used for fallback URLs only)
+  // Build SHA1 map across all mod files for a single combined Modrinth lookup,
+  // which supplies both fallback download URLs and per-mod server-side metadata
+  // (CurseForge's own API has no reliable client/server side information).
   const sha1ToFile = new Map();
   for (const f of modFiles) {
     const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
@@ -273,7 +275,22 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
   }
 
   onProgress("Installing from manifest — resolving download URLs...");
-  const { fallbackUrls } = await analyzeModrinthFiles([ ...sha1ToFile.keys() ]);
+  const { fallbackUrls, serverSideByHash } = await analyzeModrinthFiles([ ...sha1ToFile.keys() ]);
+
+  // Second-chance side lookup by slug: CurseForge builds often differ
+  // byte-for-byte from the Modrinth upload of the same mod, so hash lookups
+  // miss them. Cross-published mods usually share their slug across platforms.
+  const slugByModId = new Map(allCfMods.map(m => [ m.id, m.slug ]));
+  const unresolvedSlugs = [ ...new Set(
+    modFiles
+      .filter(f => {
+        const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
+        return !sha1 || !serverSideByHash.has(sha1);
+      })
+      .map(f => slugByModId.get(f.modId))
+      .filter(Boolean)
+  ) ];
+  const serverSideBySlug = await getServerSideBySlugs(unresolvedSlugs);
 
   // Recover mods with no CurseForge download URL using Modrinth fallback URLs
   const unavailable = [];
@@ -309,7 +326,9 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
       downloadUrl: mod.downloadUrl,
       sha1: mod.sha1 ?? null,
       displayName: mod.displayName ?? filename,
-      sideFallback: null
+      providerServerSide: (mod.sha1 ? serverSideByHash.get(mod.sha1) : undefined)
+        ?? serverSideBySlug.get(slugByModId.get(mod.modId))
+        ?? null
     };
   });
 

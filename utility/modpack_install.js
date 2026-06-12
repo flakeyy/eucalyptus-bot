@@ -7,7 +7,7 @@ const config = require("../config.json");
 const msgLog = require("./logger.js");
 const { downloadFile, uploadBufferToServer } = require("./modpack_http.js");
 const { getFileUploadUrl, decompressFile, chmodServerFiles, deleteServerFiles } = require("./server_functions.js");
-const { inspectModJarCached, extractModDeps, flushModInspectorCache } = require("./mod_inspector.js");
+const { inspectModJarCached, isClientOnlyMod, extractModDeps, flushModInspectorCache } = require("./mod_inspector.js");
 
 const MANIFEST_MOD_BATCH = 20;
 
@@ -22,13 +22,24 @@ function buildProgressBar({ downloaded, installed, total, unit, width = 20 }) {
   return `\`[${dlBar}↓${ulBar}↑]\` ↓ ${Math.round(dlPct * 100)}% · ↑ ${Math.round(ulPct * 100)}% · ${unit}`;
 }
 
-// Uploads override entries as a single overrides.zip extracted at the server root.
-async function uploadOverrides(serverId, userId, overrideEntries) {
+// Uploads override entries as a single overrides.zip extracted at the server
+// root. Mod JARs bundled under overrides/mods/ don't go through the manifest
+// download path, so they get the same client-only inspection here (without
+// provider metadata — overrides carry no source side info).
+async function uploadOverrides(serverId, userId, overrideEntries, loaderType) {
   if (!overrideEntries || overrideEntries.length === 0) return;
   const overridesZip = new AdmZip();
   for (const entry of overrideEntries) {
+    if (/^mods\/[^/]+\.jar$/i.test(entry.path)) {
+      const inspection = inspectModJarCached(null, entry.data, loaderType);
+      if (isClientOnlyMod(inspection)) {
+        msgLog.debugExtended(`[install-modpack] skip override mod (client-only, ${inspection.source}): ${entry.path}`);
+        continue;
+      }
+    }
     overridesZip.addFile(entry.path, entry.data, "", 0o100644 << 16);
   }
+  flushModInspectorCache();
   const uploadUrl = await getFileUploadUrl(serverId, userId);
   if (!uploadUrl) return;
   const overridesFilename = "overrides.zip";
@@ -74,7 +85,7 @@ async function installFilePlan(ctx, plan) {
   const update = msg => updateProgress(i, msg);
 
   // Upload overrides first so server-side config is in place before mods.
-  await uploadOverrides(serverId, userId, overrideEntries);
+  await uploadOverrides(serverId, userId, overrideEntries, loaderType);
 
   const grandTotal = modFiles.length + extraFiles.length;
   let downloadFailed = 0;
@@ -100,25 +111,58 @@ async function installFilePlan(ctx, plan) {
 
     for (const r of results) {
       if (!r) continue;
-      let { isClientOnly, source } = inspectModJarCached(r.sha1, r.buffer, loaderType);
+      const inspection = inspectModJarCached(r.sha1, r.buffer, loaderType);
       const { modId, requiredDeps } = extractModDeps(r.buffer, loaderType);
-      // Fall back to source-provided side metadata only when the JAR declares none.
-      if (!isClientOnly && source === "no-metadata" && r.sideFallback === "unsupported") {
-        isClientOnly = true;
-        source = "source-env";
+      // Combine JAR inspection with provider-declared server side (Modrinth
+      // project metadata / mrpack env.server): strong JAR verdicts win, weak
+      // ones yield to the provider, and the provider decides when the JAR is silent.
+      let isClientOnly = isClientOnlyMod(inspection, r.providerServerSide ?? null);
+      let source = inspection.verdict === "client" ? inspection.source : "provider-env";
+      // Manual escape hatches: the allowlist forces a mod onto the server when
+      // detection gets it wrong; the blocklist forces it off and wins overall.
+      if (isClientOnly && modId !== null && (config.mod_id_allowlist ?? []).includes(modId)) {
+        isClientOnly = false;
+        source = "allowlist";
       }
       if (!isClientOnly && modId !== null && (config.mod_id_blocklist ?? []).includes(modId)) {
         isClientOnly = true;
         source = "blocklist";
       }
       if (isClientOnly) msgLog.debugExtended(`[install-modpack] skip (client-only, ${source}): ${r.filename}`);
-      modInfos.push({ ...r, isClientOnly, source, modId, requiredDeps });
+      // Skips from weak heuristics or provider metadata may be rescued below if
+      // an installed mod hard-requires them; explicit/strong JAR declarations
+      // and the blocklist may not.
+      const rescuable = isClientOnly && source !== "blocklist"
+        && !(inspection.verdict === "client" && (inspection.confidence === "explicit" || inspection.confidence === "strong"));
+      modInfos.push({ ...r, isClientOnly, rescuable, source, modId, requiredDeps });
     }
     flushModInspectorCache();
 
     await update(
       `**Installing mods from manifest**\nThis may take a while...\n\n${buildProgressBar({ downloaded: modInfos.length + downloadFailed, installed: 0, total: grandTotal, unit: `${grandTotal} mods` })}`
     );
+  }
+
+  // Rescue pass: a weakly-skipped mod that an installed mod hard-requires must
+  // be present server-side anyway (the loader would fail on the missing
+  // dependency), so install it rather than dropping the dependent — this is how
+  // server-needed libraries with client-leaning metadata (e.g. rendering libs
+  // marked unsupported on Modrinth) survive. Runs to a fixpoint so a rescued
+  // mod's own weak dependencies get rescued too.
+  let rescued = true;
+  while (rescued) {
+    rescued = false;
+    const requiredByInstalled = new Set(
+      modInfos.filter(m => !m.isClientOnly).flatMap(m => m.requiredDeps)
+    );
+    for (const info of modInfos) {
+      if (info.isClientOnly && info.rescuable && info.modId && requiredByInstalled.has(info.modId)) {
+        info.isClientOnly = false;
+        info.source = "dep-rescue";
+        rescued = true;
+        msgLog.debugExtended(`[install-modpack] install (required by installed mod): ${info.filename}`);
+      }
+    }
   }
 
   // Propagate client-only status: if a mod's required dependency was skipped, skip the mod too.
