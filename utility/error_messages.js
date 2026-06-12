@@ -92,7 +92,7 @@ const ERROR_MESSAGES = {
   },
   USER_TIMEOUT: {
     id: -24,
-    text: "Session timed out while waiting for user input.\nRe-run the command to continue."
+    format: command => `Session timed out while waiting for user input.\nRe-run ${command ?? "the command"} to continue.`
   },
   INVALID_SERVER_NAME: {
     id: -25,
@@ -145,6 +145,14 @@ const ERROR_MESSAGES = {
   MISSING_REQUIRED_VARIABLES: {
     id: -37,
     format: variables => `This server type requires values the bot could not fill automatically: ${variables}.\nPlease let <@${ADMIN_DISCORD_ID}> know so the egg can be configured with defaults.`
+  },
+  POWER_ACTION_CONFLICT: {
+    id: -38,
+    text: "The server is busy processing another power action.\nTry again in a moment."
+  },
+  POWER_ACTION_FAILED: {
+    id: -39,
+    format: action => `Failed to send the ${action ?? "power"} command.\nPlease try again or contact an administrator.`
   }
 };
 

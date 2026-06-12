@@ -6,7 +6,7 @@
 const COLORS = {
   PRIMARY: 0x6b34eb,
   ADMIN: 0xeb4034,
-  SUCCESS: 0x00ff00,
+  SUCCESS: 0x00aa00,
   DISABLED: 0x808080
 };
 

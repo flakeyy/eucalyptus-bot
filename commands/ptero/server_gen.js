@@ -70,6 +70,9 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
     return getErrorMessage("MISSING_REQUIRED_VARIABLES", missing.map(m => m.name).join(", "));
   }
 
+  const defaultLimits = config["default_server_limits"] ?? { swap: -1, disk: 0, io: 500, cpu: 800 };
+  const defaultFeatureLimits = config["default_feature_limits"] ?? { databases: 0, backups: 24, allocations: 4 };
+
   const requestBody = JSON.stringify({
     "name": name,
     "user": userId,
@@ -78,18 +81,11 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
     "startup": eggInfo.attributes.startup,
     "environment": environment,
     "limits": {
+      ...defaultLimits,
       "memory": memory,
-      "overhead_memory": overheadMemory,
-      "swap": -1,
-      "disk": 0,
-      "io": 500,
-      "cpu": 800
+      "overhead_memory": overheadMemory
     },
-    "feature_limits": {
-      "databases": 0,
-      "backups": 24,
-      "allocations": 4
-    },
+    "feature_limits": { ...defaultFeatureLimits },
     "allocation": {
       "default": defaultAllocation.id
     }
@@ -103,7 +99,75 @@ async function createServer(name, node, nest, egg, memory, discordId, userId) {
   return jsonText;
 }
 
+function buildNodeSelectMenu(nodesData, selectedNode = null) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("node-selection")
+    .setPlaceholder("Select a node");
+
+  for (const node of nodesData.data) {
+    menu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(node.attributes.name)
+        .setDescription(`${node.attributes.fqdn} | Memory: ${node.attributes.memory} MB`)
+        .setValue(String(node.attributes.id))
+        .setDefault(!!selectedNode && node.attributes.id === selectedNode.attributes.id)
+    );
+  }
+
+  return menu;
+}
+
+function buildNestSelectMenu(nestsData, selectedNest = null) {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId("nest-selection")
+    .setPlaceholder("Select a nest (game type)");
+
+  for (const nest of nestsData.data) {
+    menu.addOptions(
+      new StringSelectMenuOptionBuilder()
+        .setLabel(nest.attributes.name)
+        .setDescription(nest.attributes.description || "No description")
+        .setValue(String(nest.attributes.id))
+        .setDefault(!!selectedNest && nest.attributes.id === selectedNest.attributes.id)
+    );
+  }
+
+  return menu;
+}
+
+function buildServerDetailsModal() {
+  const modal = new ModalBuilder()
+    .setCustomId("server-details-modal")
+    .setTitle("Server Details");
+
+  const nameInput = new TextInputBuilder()
+    .setCustomId("server-name")
+    .setLabel("Server Name")
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("My Server")
+    .setRequired(true)
+    .setMaxLength(40);
+
+  const memoryInput = new TextInputBuilder()
+    .setCustomId("server-memory")
+    .setLabel("Memory (MB)")
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder("1024")
+    .setRequired(true)
+    .setMaxLength(5);
+
+  modal.addComponents(
+    { type: 1, components: [ nameInput ] },
+    { type: 1, components: [ memoryInput ] }
+  );
+
+  return modal;
+}
+
 module.exports = {
+  category: "Servers",
+  requiresApiKey: true,
+
   data: new SlashCommandBuilder()
     .setName("gen-server")
     .setDescription("Opens an interactive menu to create a new server"),
@@ -135,38 +199,27 @@ module.exports = {
       const availableMemory = await getAvailableUserMemory(panelId, discordId);
 
       if (!nodesData || !nodesData.data) {
-        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), ephemeral: true });
+        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), flags: MessageFlags.Ephemeral });
         return;
       }
 
       if (!nestsData || !nestsData.data) {
-        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), ephemeral: true });
+        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), flags: MessageFlags.Ephemeral });
         return;
       }
 
       if (nodesData.data.length === 0) {
-        await interaction.reply({ content: getErrorMessage("NODE_NOT_FOUND"), ephemeral: true });
+        await interaction.reply({ content: getErrorMessage("NODE_NOT_FOUND"), flags: MessageFlags.Ephemeral });
         return;
       }
 
       if (nestsData.data.length === 0) {
-        await interaction.reply({ content: getErrorMessage("NEST_NOT_FOUND"), ephemeral: true });
+        await interaction.reply({ content: getErrorMessage("NEST_NOT_FOUND"), flags: MessageFlags.Ephemeral });
         return;
       }
 
       // Build initial container with node selection
-      const nodeSelectMenu = new StringSelectMenuBuilder()
-        .setCustomId("node-selection")
-        .setPlaceholder("Select a node");
-
-      for (const node of nodesData.data) {
-        nodeSelectMenu.addOptions(
-          new StringSelectMenuOptionBuilder()
-            .setLabel(node.attributes.name)
-            .setDescription(`${node.attributes.description || "No description"}`)
-            .setValue(String(node.attributes.id))
-        );
-      }
+      const nodeSelectMenu = buildNodeSelectMenu(nodesData);
 
       const memoryDisplay = availableMemory === -1
         ? "Unlimited"
@@ -203,24 +256,102 @@ module.exports = {
         msgLog.log(`${i.user.username}/${i.user.id} | [gen-server] ${action}${extra ? ` | ${extra}` : ""}`);
       };
 
+      // Shows the name/memory modal and, on submit, the confirmation screen.
+      // Invalid input re-offers the modal via the "reenter-details" button
+      // instead of stranding the flow on the egg-selection screen.
+      const promptServerDetails = async i => {
+        await i.showModal(buildServerDetailsModal());
+
+        try {
+          const modalSubmit = await i.awaitModalSubmit({
+            filter: modalI => modalI.customId === "server-details-modal" && modalI.user.id === interaction.user.id,
+            time: 300_000
+          });
+
+          serverName = modalSubmit.fields.getTextInputValue("server-name");
+          const memoryInputValue = modalSubmit.fields.getTextInputValue("server-memory");
+          serverMemory = parseInt(memoryInputValue, 10);
+
+          if (isNaN(serverMemory) || serverMemory <= 0) {
+            const invalidContainer = new ContainerBuilder()
+              .setAccentColor(COLORS.DISABLED)
+              .addTextDisplayComponents(text =>
+                text.setContent(`**Create New Server**\n\n${getErrorMessage("INVALID_MEMORY_VALUE")}`)
+              )
+              .addSeparatorComponents(separator => separator)
+              .addActionRowComponents(actionRow =>
+                actionRow.setComponents(
+                  new ButtonBuilder().setCustomId("reenter-details").setLabel("Re-enter Details").setStyle(ButtonStyle.Primary),
+                  new ButtonBuilder().setCustomId("cancel-create").setLabel("Cancel").setStyle(ButtonStyle.Danger)
+                )
+              );
+
+            await modalSubmit.update({
+              components: [ invalidContainer ],
+              flags: MessageFlags.IsComponentsV2
+            });
+            return;
+          }
+
+          // Check if user has enough memory
+          const currentAvailableMemory = await getAvailableUserMemory(panelId, discordId);
+          const memoryAfterCreation = currentAvailableMemory - serverMemory;
+
+          const hasInsufficientMemory = currentAvailableMemory !== -1 && memoryAfterCreation < 0;
+
+          let displayContent = "**Confirm Server Creation**\n\n" +
+            `**Name:** ${serverName}\n` +
+            `**Node:** ${selectedNode.attributes.name}\n` +
+            `**Nest:** ${selectedNest.attributes.name}\n` +
+            `**Egg:** ${selectedEgg.attributes.name}\n` +
+            `**Memory:** ${serverMemory} MB\n\n`;
+
+          if (hasInsufficientMemory) {
+            const memoryToFree = Math.abs(memoryAfterCreation);
+            displayContent += getErrorMessage("SERVER_CREATION_FAILED_MEMORY", memoryToFree);
+          } else {
+            const memoryDisplayAfter = currentAvailableMemory === -1
+              ? "Unlimited"
+              : `${memoryAfterCreation} MB`;
+            displayContent += `**Remaining Memory:** ${memoryDisplayAfter}`;
+          }
+
+          // Show confirmation screen
+          const confirmContainer = new ContainerBuilder()
+            .setAccentColor(hasInsufficientMemory ? COLORS.DISABLED : COLORS.PRIMARY)
+            .addTextDisplayComponents(text =>
+              text.setContent(displayContent)
+            )
+            .addSeparatorComponents(separator => separator)
+            .addActionRowComponents(actionRow =>
+              actionRow.setComponents(
+                new ButtonBuilder()
+                  .setCustomId("confirm-create")
+                  .setLabel("Create Server")
+                  .setStyle(ButtonStyle.Success)
+                  .setDisabled(hasInsufficientMemory),
+                new ButtonBuilder()
+                  .setCustomId("cancel-create")
+                  .setLabel("Cancel")
+                  .setStyle(ButtonStyle.Danger)
+              )
+            );
+
+          await modalSubmit.update({
+            components: [ confirmContainer ],
+            flags: MessageFlags.IsComponentsV2
+          });
+        } catch (error) {
+          msgLog.error(`Modal submit timeout or error: ${error.message}`);
+        }
+      };
+
       collector.on("collect", async i => {
         try {
           if (i.customId === "node-selection") {
             selectedNode = nodesData.data.find(n => String(n.attributes.id) === i.values[0]);
 
-            // Build nest selection menu
-            const nestSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId("nest-selection")
-              .setPlaceholder("Select a nest (game type)");
-
-            for (const nest of nestsData.data) {
-              nestSelectMenu.addOptions(
-                new StringSelectMenuOptionBuilder()
-                  .setLabel(nest.attributes.name)
-                  .setDescription(nest.attributes.description || "No description")
-                  .setValue(String(nest.attributes.id))
-              );
-            }
+            const nestSelectMenu = buildNestSelectMenu(nestsData, selectedNest);
 
             const nestContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
@@ -302,101 +433,10 @@ module.exports = {
             const eggsData = await getEggs(selectedNest.attributes.id);
             selectedEgg = eggsData.data.find(e => String(e.attributes.id) === i.values[0]);
 
-            // Show modal for server name and memory
-            const modal = new ModalBuilder()
-              .setCustomId("server-details-modal")
-              .setTitle("Server Details");
+            await promptServerDetails(i);
 
-            const nameInput = new TextInputBuilder()
-              .setCustomId("server-name")
-              .setLabel("Server Name")
-              .setStyle(TextInputStyle.Short)
-              .setPlaceholder("My Server")
-              .setRequired(true)
-              .setMaxLength(40);
-
-            const memoryInput = new TextInputBuilder()
-              .setCustomId("server-memory")
-              .setLabel("Memory (MB)")
-              .setStyle(TextInputStyle.Short)
-              .setPlaceholder("1024")
-              .setRequired(true)
-              .setMaxLength(5);
-
-            modal.addComponents(
-              { type: 1, components: [ nameInput ] },
-              { type: 1, components: [ memoryInput ] }
-            );
-
-            await i.showModal(modal);
-
-            // Wait for modal submission
-            try {
-              const modalSubmit = await i.awaitModalSubmit({
-                filter: modalI => modalI.customId === "server-details-modal" && modalI.user.id === interaction.user.id,
-                time: 300_000
-              });
-
-              serverName = modalSubmit.fields.getTextInputValue("server-name");
-              const memoryInputValue = modalSubmit.fields.getTextInputValue("server-memory");
-              serverMemory = parseInt(memoryInputValue, 10);
-
-              if (isNaN(serverMemory) || serverMemory <= 0) {
-                await modalSubmit.reply({ content: "Invalid memory value. Please enter a positive number.", ephemeral: true });
-                return;
-              }
-
-              // Check if user has enough memory
-              const currentAvailableMemory = await getAvailableUserMemory(panelId, discordId);
-              const memoryAfterCreation = currentAvailableMemory - serverMemory;
-
-              const hasInsufficientMemory = currentAvailableMemory !== -1 && memoryAfterCreation < 0;
-
-              let displayContent = "**Confirm Server Creation**\n\n" +
-                `**Name:** ${serverName}\n` +
-                `**Node:** ${selectedNode.attributes.name}\n` +
-                `**Nest:** ${selectedNest.attributes.name}\n` +
-                `**Egg:** ${selectedEgg.attributes.name}\n` +
-                `**Memory:** ${serverMemory} MB\n\n`;
-
-              if (hasInsufficientMemory) {
-                const memoryToFree = Math.abs(memoryAfterCreation);
-                displayContent += getErrorMessage("SERVER_CREATION_FAILED_MEMORY", memoryToFree);
-              } else {
-                const memoryDisplayAfter = currentAvailableMemory === -1
-                  ? "Unlimited"
-                  : `${memoryAfterCreation} MB`;
-                displayContent += `**Remaining Memory:** ${memoryDisplayAfter}`;
-              }
-
-              // Show confirmation screen
-              const confirmContainer = new ContainerBuilder()
-                .setAccentColor(hasInsufficientMemory ? COLORS.DISABLED : COLORS.PRIMARY)
-                .addTextDisplayComponents(text =>
-                  text.setContent(displayContent)
-                )
-                .addSeparatorComponents(separator => separator)
-                .addActionRowComponents(actionRow =>
-                  actionRow.setComponents(
-                    new ButtonBuilder()
-                      .setCustomId("confirm-create")
-                      .setLabel("Create Server")
-                      .setStyle(ButtonStyle.Success)
-                      .setDisabled(hasInsufficientMemory),
-                    new ButtonBuilder()
-                      .setCustomId("cancel-create")
-                      .setLabel("Cancel")
-                      .setStyle(ButtonStyle.Danger)
-                  )
-                );
-
-              await modalSubmit.update({
-                components: [ confirmContainer ],
-                flags: MessageFlags.IsComponentsV2
-              });
-            } catch (error) {
-              msgLog.error(`Modal submit timeout or error: ${error.message}`);
-            }
+          } else if (i.customId === "reenter-details") {
+            await promptServerDetails(i);
 
           } else if (i.customId === "confirm-create") {
             await i.deferUpdate();
@@ -475,19 +515,7 @@ module.exports = {
             selectedNest = null;
             selectedEgg = null;
 
-            const nodeSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId("node-selection")
-              .setPlaceholder("Select a node");
-
-            for (const node of nodesData.data) {
-              nodeSelectMenu.addOptions(
-                new StringSelectMenuOptionBuilder()
-                  .setLabel(node.attributes.name)
-                  .setDescription(`${node.attributes.fqdn} | Memory: ${node.attributes.memory} MB`)
-                  .setValue(String(node.attributes.id))
-                  .setDefault(selectedNode && node.attributes.id === selectedNode.attributes.id)
-              );
-            }
+            const nodeSelectMenu = buildNodeSelectMenu(nodesData, selectedNode);
 
             const currentAvailableMemory = await getAvailableUserMemory(panelId, discordId);
             const memoryDisplayBack = currentAvailableMemory === -1
@@ -512,19 +540,7 @@ module.exports = {
           } else if (i.customId === "back-to-nests") {
             selectedEgg = null;
 
-            const nestSelectMenu = new StringSelectMenuBuilder()
-              .setCustomId("nest-selection")
-              .setPlaceholder("Select a nest (game type)");
-
-            for (const nest of nestsData.data) {
-              nestSelectMenu.addOptions(
-                new StringSelectMenuOptionBuilder()
-                  .setLabel(nest.attributes.name)
-                  .setDescription(nest.attributes.description || "No description")
-                  .setValue(String(nest.attributes.id))
-                  .setDefault(selectedNest && nest.attributes.id === selectedNest.attributes.id)
-              );
-            }
+            const nestSelectMenu = buildNestSelectMenu(nestsData, selectedNest);
 
             const backContainer = new ContainerBuilder()
               .setAccentColor(COLORS.PRIMARY)
@@ -551,7 +567,7 @@ module.exports = {
           msgLog.error(`Error handling gen-server interaction: ${error.message}`);
           const errorResponse = {
             content: "An error occurred while processing your request.",
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
           };
 
           if (i.replied || i.deferred) {
@@ -567,7 +583,7 @@ module.exports = {
           const timeoutContainer = new ContainerBuilder()
             .setAccentColor(COLORS.DISABLED)
             .addTextDisplayComponents(text =>
-              text.setContent(getErrorMessage("USER_TIMEOUT"))
+              text.setContent(getErrorMessage("USER_TIMEOUT", "/gen-server"))
             );
 
           await interaction.editReply({
@@ -581,7 +597,7 @@ module.exports = {
       msgLog.error(`Error in gen-server command: ${error.message}`);
       const errorMessage = {
         content: "An error occurred while loading the server creation menu.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       };
 
       if (interaction.replied || interaction.deferred) {

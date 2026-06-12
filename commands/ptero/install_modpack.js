@@ -101,13 +101,7 @@ function getJavaImageForMCVersion(mcVersion) {
   return null;
 }
 
-const COLORS = {
-  PRIMARY: 0x6b34eb,
-  SUCCESS: 0x00aa00,
-  DISABLED: 0x808080
-};
-
-const { COLLECTOR_IDLE_TIMEOUT, HTTP_STATUS_CODES } = require("../../utility/constants.js");
+const { COLORS, COLLECTOR_IDLE_TIMEOUT, HTTP_STATUS_CODES } = require("../../utility/constants.js");
 const STOP_POLL = { MAX_ATTEMPTS: 60, INTERVAL: 2000 };
 
 function buildServerSelectContainer(servers, nestMap, statusNote = null, disabled = false) {
@@ -384,6 +378,9 @@ async function runInstallation(i, state, interaction) {
 
 module.exports = {
   runInstallation,
+
+  category: "Servers",
+  requiresApiKey: true,
 
   data: new SlashCommandBuilder()
     .setName("install-modpack")
@@ -700,7 +697,7 @@ module.exports = {
           }
         } catch (err) {
           msgLog.error(`[install-modpack] collector error: ${err.message}`);
-          const errResp = { content: "An error occurred while processing your request.", ephemeral: true };
+          const errResp = { content: "An error occurred while processing your request.", flags: MessageFlags.Ephemeral };
           if (i.replied || i.deferred) {
             await i.followUp(errResp).catch(() => {});
           } else {
@@ -712,7 +709,7 @@ module.exports = {
       collector.on("end", async (collected, reason) => {
         if (reason === "idle") {
           const disabledContainer = buildServerSelectContainer(
-            serverObjects.data, nestMap, getErrorMessage("USER_TIMEOUT"), true
+            serverObjects.data, nestMap, getErrorMessage("USER_TIMEOUT", "/install-modpack"), true
           );
           await interaction.editReply({ components: [ disabledContainer ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
         }
@@ -720,7 +717,7 @@ module.exports = {
 
     } catch (err) {
       msgLog.error(`[install-modpack] execute error: ${err.message}`);
-      const errMsg = { content: "An error occurred while loading the install modpack menu.", ephemeral: true };
+      const errMsg = { content: "An error occurred while loading the install modpack menu.", flags: MessageFlags.Ephemeral };
       if (interaction.replied || interaction.deferred) {
         await interaction.followUp(errMsg).catch(() => {});
       } else {

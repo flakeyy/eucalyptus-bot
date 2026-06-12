@@ -58,6 +58,9 @@ function buildNestSelectMenu(nests, selectedNestId = null, disabled = false) {
 }
 
 module.exports = {
+  category: "Panel",
+  requiresApiKey: true,
+
   data: new SlashCommandBuilder()
     .setName("service")
     .setDescription("View service information including nodes, nests, and eggs."),
@@ -117,7 +120,7 @@ module.exports = {
             actionRow.setComponents(buildCategorySelectMenu(currentCategory, true))
           )
           .addTextDisplayComponents(text =>
-            text.setContent(getErrorMessage("USER_TIMEOUT"))
+            text.setContent(getErrorMessage("USER_TIMEOUT", "/service"))
           );
 
         return disabledContainer;
@@ -316,7 +319,7 @@ module.exports = {
           console.error("Error handling interaction:", error);
           const errorResponse = {
             content: "An error occurred while processing your request.",
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
           };
 
           if (i.replied || i.deferred) {
@@ -340,7 +343,7 @@ module.exports = {
       console.error("Error in service information command:", error);
       const errorMessage = {
         content: "An error occurred while loading service information.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       };
 
       if (interaction.replied || interaction.deferred) {

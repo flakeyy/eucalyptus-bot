@@ -48,7 +48,8 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
       .addActionRowComponents(actionRow =>
         actionRow.setComponents(
           new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId("console-view").setLabel("Console").setStyle(ButtonStyle.Secondary).setDisabled(isSuspended)
+          new ButtonBuilder().setCustomId("console-view").setLabel("Console").setStyle(ButtonStyle.Secondary).setDisabled(isSuspended),
+          new ButtonBuilder().setCustomId("refresh-server").setLabel("Refresh").setStyle(ButtonStyle.Secondary)
         )
       )
       .addActionRowComponents(actionRow =>
@@ -125,6 +126,9 @@ module.exports = {
   buildServerSelectMenu,
   buildMainServerView,
   buildConsoleView,
+
+  category: "Servers",
+  requiresApiKey: true,
 
   data: new SlashCommandBuilder()
     .setName("servers")
@@ -269,7 +273,7 @@ module.exports = {
             actionRow.setComponents(disabledSelectMenu)
           )
           .addTextDisplayComponents(text =>
-            text.setContent(getErrorMessage(errorKey))
+            text.setContent(getErrorMessage(errorKey, "/servers"))
           );
 
         if (currentSelectedServer) {
@@ -277,7 +281,8 @@ module.exports = {
             .addSeparatorComponents(separator => separator)
             .addActionRowComponents(actionRow =>
               actionRow.setComponents(
-                new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary).setDisabled(true)
+                new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary).setDisabled(true),
+                new ButtonBuilder().setCustomId("refresh-server").setLabel("Refresh").setStyle(ButtonStyle.Secondary).setDisabled(true)
               )
             )
             .addActionRowComponents(actionRow =>
@@ -387,9 +392,15 @@ module.exports = {
               action
             );
 
-            const message = apiResult.statusCode === HTTP_STATUS_CODES.NO_CONTENT
-              ? `${action.charAt(0).toUpperCase() + action.slice(1)} command sent.`
-              : `Failed to send ${action} command (status ${apiResult.statusCode}).`;
+            let message;
+            if (apiResult.statusCode === HTTP_STATUS_CODES.NO_CONTENT) {
+              message = `${action.charAt(0).toUpperCase() + action.slice(1)} command sent.`;
+            } else {
+              msgLog.error(`[server-menu] power ${action} failed for ${currentSelectedServer.attributes.identifier} (status ${apiResult.statusCode})`);
+              message = apiResult.statusCode === HTTP_STATUS_CODES.CONFLICT
+                ? getErrorMessage("POWER_ACTION_CONFLICT")
+                : getErrorMessage("POWER_ACTION_FAILED", action);
+            }
 
             await i.editReply({
               components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
@@ -742,6 +753,28 @@ module.exports = {
             await submitted.deferUpdate();
             const cmd = submitted.fields.getTextInputValue("command-input").trim();
             if (activeWs) activeWs.sendCommand(cmd);
+          } else if (i.customId === "refresh-server") {
+            logMenuAction(i, "refresh-server");
+            await i.deferUpdate();
+
+            const selectedServerId = currentSelectedServer.attributes.identifier;
+            await refreshCurrentServer(selectedServerId);
+
+            const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
+            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
+              currentServerResourceInfo = await serverResourceApi.body.json();
+            } else {
+              currentServerResourceInfo = null;
+            }
+
+            currentView = "main";
+
+            await i.editReply({
+              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+              flags: MessageFlags.IsComponentsV2
+            });
+
+            connectWebSocket(selectedServerId);
           } else if (i.customId === "back") {
             currentView = "main";
 
@@ -756,7 +789,7 @@ module.exports = {
           msgLog.error(`Error handling interaction: ${error.message}`);
           const errorResponse = {
             content: "An error occurred while processing your request.",
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
           };
 
           if (i.replied || i.deferred) {
@@ -786,7 +819,7 @@ module.exports = {
       msgLog.error(`Error in edit server command: ${error.message}`);
       const errorMessage = {
         content: "An error occurred while loading the server menu.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       };
 
       if (interaction.replied || interaction.deferred) {

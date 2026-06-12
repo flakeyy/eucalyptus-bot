@@ -15,6 +15,8 @@ const {
 } = require("./admin/server_handlers.js");
 
 module.exports = {
+  category: "Admin",
+
   data: new SlashCommandBuilder()
     .setName("admin")
     .setDescription("Administrator tools for managing users and servers.")

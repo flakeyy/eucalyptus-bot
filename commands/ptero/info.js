@@ -2,12 +2,11 @@ const { ContainerBuilder, SlashCommandBuilder, MessageFlags } = require("discord
 const msgLog = require("../../utility/logger.js");
 const config = require("../../config.json");
 const { reconstructCommand, getMonitorUptime } = require("../../utility/helper_functions.js");
-
-const COLORS = {
-  PRIMARY: 0x6b34eb
-};
+const { COLORS } = require("../../utility/constants.js");
 
 module.exports = {
+  category: "Getting Started",
+
   data: new SlashCommandBuilder()
     .setName("info")
     .setDescription("Retrieves current service information."),
@@ -54,7 +53,7 @@ module.exports = {
       msgLog.error(`Error in info command: ${error.message}`);
       const errorMessage = {
         content: "An error occurred while loading the service information.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       };
 
       if (interaction.replied || interaction.deferred) {
