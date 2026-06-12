@@ -27,11 +27,12 @@ function modrinthHeaders(extra = {}) {
 // Looks up all provided SHA1 hashes against Modrinth in a single round-trip.
 // Returns:
 //   clientOnlyHashes - Set of SHA1s whose mod is server_side "unsupported"
+//   serverSideByHash - Map of SHA1 -> project server_side ("required"|"optional"|"unsupported")
 //   fallbackUrls     - Map of SHA1 -> { url, filename } for mods found on Modrinth
 //   foundHashes      - Set of SHA1s that were matched at all (used to detect unmatched mods)
 // Silently degrades to empty results on any API failure.
 async function analyzeModrinthFiles(sha1Hashes) {
-  const empty = { clientOnlyHashes: new Set(), fallbackUrls: new Map(), foundHashes: new Set() };
+  const empty = { clientOnlyHashes: new Set(), serverSideByHash: new Map(), fallbackUrls: new Map(), foundHashes: new Set() };
   if (!sha1Hashes || sha1Hashes.length === 0) return empty;
 
   let versionMap;
@@ -60,7 +61,7 @@ async function analyzeModrinthFiles(sha1Hashes) {
 
   // Fetch project details to determine client/server side
   const projectIds = [ ...new Set(Object.values(versionMap).map(v => v.project_id)) ];
-  if (projectIds.length === 0) return { clientOnlyHashes: new Set(), fallbackUrls, foundHashes };
+  if (projectIds.length === 0) return { clientOnlyHashes: new Set(), serverSideByHash: new Map(), fallbackUrls, foundHashes };
 
   let projects;
   try {
@@ -69,48 +70,55 @@ async function analyzeModrinthFiles(sha1Hashes) {
       { headers: modrinthHeaders() }
     );
     msgLog.debugExtended(`API: GET /modrinth/projects (${projectIds.length} ids) | Status Code: ${res.status}`);
-    if (!res.ok) return { clientOnlyHashes: new Set(), fallbackUrls, foundHashes };
+    if (!res.ok) return { clientOnlyHashes: new Set(), serverSideByHash: new Map(), fallbackUrls, foundHashes };
     projects = await res.json();
   } catch (e) {
     msgLog.warn(`[modrinth] projects lookup failed: ${e.message}`);
-    return { clientOnlyHashes: new Set(), fallbackUrls, foundHashes };
+    return { clientOnlyHashes: new Set(), serverSideByHash: new Map(), fallbackUrls, foundHashes };
   }
 
-  const clientOnlyProjectIds = new Set(
-    projects.filter(p => p.server_side === "unsupported").map(p => p.id)
+  const serverSideByProjectId = new Map(
+    projects.filter(p => typeof p.server_side === "string").map(p => [ p.id, p.server_side ])
   );
 
   const clientOnlyHashes = new Set();
+  const serverSideByHash = new Map();
   for (const [ hash, version ] of Object.entries(versionMap)) {
-    if (clientOnlyProjectIds.has(version.project_id)) clientOnlyHashes.add(hash);
+    const serverSide = serverSideByProjectId.get(version.project_id);
+    if (serverSide) serverSideByHash.set(hash, serverSide);
+    if (serverSide === "unsupported") clientOnlyHashes.add(hash);
   }
 
-  return { clientOnlyHashes, fallbackUrls, foundHashes };
+  return { clientOnlyHashes, serverSideByHash, fallbackUrls, foundHashes };
 }
 
-// Given a list of CurseForge mod slugs, returns a Set of slugs that Modrinth
-// considers client-only (server_side === "unsupported").
-// Silently returns an empty Set on any API failure.
-async function getClientOnlyBySlugs(slugs) {
-  if (!slugs || slugs.length === 0) return new Set();
+// Given a list of project slugs (e.g. CurseForge slugs, which usually match
+// Modrinth slugs for cross-published mods), returns a Map of slug ->
+// server_side ("required"|"optional"|"unsupported") for those found on Modrinth.
+// Silently returns an empty Map on any API failure.
+async function getServerSideBySlugs(slugs) {
+  const result = new Map();
+  if (!slugs || slugs.length === 0) return result;
 
-  let projects;
-  try {
-    const res = await fetch(
-      `${MODRINTH_BASE_URL}/projects?ids=${encodeURIComponent(JSON.stringify(slugs))}`,
-      { headers: modrinthHeaders() }
-    );
-    msgLog.debugExtended(`API: GET /modrinth/projects by slug (${slugs.length} slugs) | Status Code: ${res.status}`);
-    if (!res.ok) return new Set();
-    projects = await res.json();
-  } catch (e) {
-    msgLog.warn(`[modrinth] slug projects lookup failed: ${e.message}`);
-    return new Set();
+  // The ids parameter goes in the query string, so chunk to keep URLs short.
+  for (let start = 0; start < slugs.length; start += 75) {
+    const chunk = slugs.slice(start, start + 75);
+    try {
+      const res = await fetch(
+        `${MODRINTH_BASE_URL}/projects?ids=${encodeURIComponent(JSON.stringify(chunk))}`,
+        { headers: modrinthHeaders() }
+      );
+      msgLog.debugExtended(`API: GET /modrinth/projects by slug (${chunk.length} slugs) | Status Code: ${res.status}`);
+      if (!res.ok) continue;
+      for (const p of await res.json()) {
+        if (typeof p.server_side === "string") result.set(p.slug, p.server_side);
+      }
+    } catch (e) {
+      msgLog.warn(`[modrinth] slug projects lookup failed: ${e.message}`);
+    }
   }
 
-  return new Set(
-    projects.filter(p => p.server_side === "unsupported").map(p => p.slug)
-  );
+  return result;
 }
 
 // Returns our internal loader name for a Modrinth loaders array (project/version).
@@ -187,9 +195,9 @@ function parseMrpackIndex(buffer) {
 
 // Resolves a downloaded .mrpack into a normalized install plan for the shared
 // engine. The index declares each file's server side via env.server: for mods/
-// JARs we pass that as a fallback so the engine can inspect the JAR first and
-// only defer to the index when the JAR has no side metadata; non-mod files
-// (configs, resource packs) are dropped outright when env.server is unsupported.
+// JARs we pass that through as provider metadata that the engine combines with
+// its own JAR inspection (see isClientOnlyMod); non-mod files (configs,
+// resource packs) are dropped outright when env.server is unsupported.
 // overrides/ and server-overrides/ are merged (server wins); client-overrides/
 // is skipped. Returns null if the zip has no parseable index.
 function resolveModrinthInstall(buffer) {
@@ -213,7 +221,7 @@ function resolveModrinthInstall(buffer) {
         filename: file.path.split("/").pop(),
         downloadUrl,
         sha1,
-        sideFallback: serverEnv === "unsupported" ? "unsupported" : null
+        providerServerSide: typeof serverEnv === "string" ? serverEnv : null
       });
     } else {
       // Non-mod files can't be JAR-inspected, so the index is authoritative.
@@ -242,7 +250,7 @@ function resolveModrinthInstall(buffer) {
 
 module.exports = {
   analyzeModrinthFiles,
-  getClientOnlyBySlugs,
+  getServerSideBySlugs,
   mapModrinthLoader,
   loaderFromMrpackDeps,
   mcVersionFromMrpackDeps,
