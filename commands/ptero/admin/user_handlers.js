@@ -240,7 +240,7 @@ async function handleUserEdit(interaction) {
         components: [
           new ContainerBuilder()
             .setAccentColor(COLORS.DISABLED)
-            .addTextDisplayComponents(text => text.setContent(getErrorMessage("USER_TIMEOUT")))
+            .addTextDisplayComponents(text => text.setContent(getErrorMessage("USER_TIMEOUT", "/admin user edit")))
         ],
         flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
       }).catch(() => {});
@@ -330,7 +330,7 @@ async function handleUserDelete(interaction) {
         components: [
           new ContainerBuilder()
             .setAccentColor(COLORS.DISABLED)
-            .addTextDisplayComponents(text => text.setContent(getErrorMessage("USER_TIMEOUT")))
+            .addTextDisplayComponents(text => text.setContent(getErrorMessage("USER_TIMEOUT", "/admin user delete")))
         ],
         flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
       }).catch(() => {});

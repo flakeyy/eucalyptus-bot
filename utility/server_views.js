@@ -39,7 +39,11 @@ function buildServerSelectMenu(serverObjects, selectedServerId = null, disabled 
 
 // Renders the Status/ID/Memory/Disk/CPU/Node detail block for a selected server.
 // When resourceInfo is null/absent the server is treated as suspended.
-function buildServerDetailsText(server, resourceInfo) {
+// isSuspended only matters when resourceInfo is missing: it distinguishes a
+// genuinely suspended server from a failed stats fetch. Defaults to true to
+// preserve the legacy "no stats means suspended" rendering for callers that
+// don't pass it.
+function buildServerDetailsText(server, resourceInfo, isSuspended = true) {
   const limits = server.attributes.limits;
 
   if (resourceInfo && resourceInfo.attributes) {
@@ -63,7 +67,7 @@ function buildServerDetailsText(server, resourceInfo) {
   const diskLimitGB = limits.disk > 0 ? `${(limits.disk / 1024).toFixed(2)} GB` : null;
   const diskText = diskLimitGB ? `— / ${diskLimitGB}` : "—";
 
-  return "**Status:** Suspended\n" +
+  return `**Status:** ${isSuspended ? "Suspended" : "Unknown"}\n` +
     `**ID:** \`${server.attributes.identifier}\`\n` +
     `**Memory:** — / ${limits.memory} MB\n` +
     `**Disk:** ${diskText}\n` +

@@ -6,6 +6,17 @@
     "minecraft_nest_id": 1,
     "default_overhead_mb": 256,
     "java_overhead_mb": 2048,
+    "default_server_limits": {
+        "swap": -1,
+        "disk": 0,
+        "io": 500,
+        "cpu": 800
+    },
+    "default_feature_limits": {
+        "databases": 0,
+        "backups": 24,
+        "allocations": 4
+    },
     "modpack_eggs": {
         "forge": 0,
         "fabric": 0,

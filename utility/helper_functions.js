@@ -258,7 +258,9 @@ function userHasClientApiKey(discordId) {
   return !!(user.panelAPIKey && user.panelAPIKey !== "");
 }
 
-async function getCommands() {
+// includeMeta attaches bot-side metadata (category, requiresApiKey) for display
+// purposes; deploy.js must not use it, since the result is PUT to the Discord API.
+async function getCommands({ includeMeta = false } = {}) {
   const commands = [];
   const foldersPath = path.join(__dirname, "../commands");
   try {
@@ -272,7 +274,10 @@ async function getCommands() {
         const filePath = path.join(commandsPath, file);
         const command = require(filePath);
         if ("data" in command && "execute" in command) {
-          commands.push(command.data.toJSON());
+          const json = command.data.toJSON();
+          commands.push(includeMeta
+            ? { ...json, category: command.category, requiresApiKey: command.requiresApiKey === true }
+            : json);
         } else {
           msgLog.error(`[WARNING] The command at ${filePath} is missing a required "data" or "execute" property.`);
         }

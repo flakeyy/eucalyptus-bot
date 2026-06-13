@@ -194,7 +194,7 @@ function createDisabledAdminMenu(adminHeader, serverObjects, currentSelectedServ
     .addActionRowComponents(row =>
       row.setComponents(buildServerSelectMenu(serverObjects, currentSelectedServer?.attributes?.identifier, true))
     )
-    .addTextDisplayComponents(text => text.setContent(getErrorMessage(errorKey)));
+    .addTextDisplayComponents(text => text.setContent(getErrorMessage(errorKey, "/admin servers manage")));
 
   if (currentSelectedServer) {
     container

@@ -5,6 +5,8 @@ const { PERMISSIONS } = require("../../utility/permissions.js");
 const msgLog = require("../../utility/logger.js");
 
 module.exports = {
+  category: "Getting Started",
+
   data: new SlashCommandBuilder()
     .setName("init")
     .setDescription("First-run setup: create the initial admin account.")

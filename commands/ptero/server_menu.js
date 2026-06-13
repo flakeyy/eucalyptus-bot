@@ -8,7 +8,10 @@ const { PterodactylWebSocket } = require("../../utility/pterodactyl_websocket.js
 const { COLORS, HTTP_STATUS_CODES, COLLECTOR_IDLE_TIMEOUT, WS_THROTTLE_MS, CONSOLE_MAX_LINES } = require("../../utility/constants.js");
 const { buildServerSelectMenu, buildServerDetailsText, renderConsoleBlock } = require("../../utility/server_views.js");
 
-function buildMainServerView(serverObjects, currentSelectedServer, serverResourceInfo = null, statusMessage = null, consoleLines = []) {
+function buildMainServerView(
+  serverObjects, currentSelectedServer, serverResourceInfo = null,
+  statusMessage = null, consoleLines = [], isSuspended = false
+) {
   const selectMenu = buildServerSelectMenu(
     serverObjects,
     currentSelectedServer?.attributes?.identifier
@@ -21,13 +24,15 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
     );
 
   if (currentSelectedServer) {
-    let detailsText = buildServerDetailsText(currentSelectedServer, serverResourceInfo);
+    let detailsText = buildServerDetailsText(currentSelectedServer, serverResourceInfo, isSuspended);
+
+    if (!serverResourceInfo && !isSuspended) {
+      detailsText += "\n\n_Live stats unavailable — try Refresh._";
+    }
 
     if (statusMessage) {
       detailsText += `\n\n${statusMessage}`;
     }
-
-    const isSuspended = !serverResourceInfo;
 
     container
       .addTextDisplayComponents(text =>
@@ -48,7 +53,8 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
       .addActionRowComponents(actionRow =>
         actionRow.setComponents(
           new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary),
-          new ButtonBuilder().setCustomId("console-view").setLabel("Console").setStyle(ButtonStyle.Secondary).setDisabled(isSuspended)
+          new ButtonBuilder().setCustomId("console-view").setLabel("Console").setStyle(ButtonStyle.Secondary).setDisabled(isSuspended),
+          new ButtonBuilder().setCustomId("refresh-server").setLabel("Refresh").setStyle(ButtonStyle.Secondary)
         )
       )
       .addActionRowComponents(actionRow =>
@@ -63,8 +69,11 @@ function buildMainServerView(serverObjects, currentSelectedServer, serverResourc
   return container;
 }
 
-function buildConsoleView(serverName, lines) {
-  const consoleText = renderConsoleBlock(lines) ?? "No output yet.";
+function buildConsoleView(serverName, lines, statusMessage = null) {
+  let consoleText = renderConsoleBlock(lines) ?? "No output yet.";
+  if (statusMessage) {
+    consoleText += `\n${statusMessage}`;
+  }
 
   return new ContainerBuilder()
     .setAccentColor(COLORS.PRIMARY)
@@ -126,6 +135,9 @@ module.exports = {
   buildMainServerView,
   buildConsoleView,
 
+  category: "Servers",
+  requiresApiKey: true,
+
   data: new SlashCommandBuilder()
     .setName("servers")
     .setDescription("Opens the interactive server management menu."),
@@ -180,10 +192,16 @@ module.exports = {
 
       let currentSelectedServer = null;
       let currentServerResourceInfo = null;
+      let currentServerSuspended = false;
       let currentView = "main";
       let activeWs = null;
       let lastDiscordEditTime = 0;
       let consoleBuffer = [];
+
+      const renderMainView = (statusMessage = null) => buildMainServerView(
+        serverObjects, currentSelectedServer, currentServerResourceInfo,
+        statusMessage, consoleBuffer, currentServerSuspended
+      );
 
       const disconnectWebSocket = () => {
         if (activeWs) {
@@ -206,7 +224,7 @@ module.exports = {
           if (now - lastDiscordEditTime < WS_THROTTLE_MS || currentView !== "main") return;
           lastDiscordEditTime = now;
           await interaction.editReply({
-            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+            components: [ renderMainView() ],
             flags: MessageFlags.IsComponentsV2
           }).catch(() => disconnectWebSocket());
         });
@@ -237,7 +255,7 @@ module.exports = {
           }
           if (currentView !== "main") return;
           await interaction.editReply({
-            components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+            components: [ renderMainView() ],
             flags: MessageFlags.IsComponentsV2
           }).catch(() => disconnectWebSocket());
         });
@@ -269,7 +287,7 @@ module.exports = {
             actionRow.setComponents(disabledSelectMenu)
           )
           .addTextDisplayComponents(text =>
-            text.setContent(getErrorMessage(errorKey))
+            text.setContent(getErrorMessage(errorKey, "/servers"))
           );
 
         if (currentSelectedServer) {
@@ -277,7 +295,8 @@ module.exports = {
             .addSeparatorComponents(separator => separator)
             .addActionRowComponents(actionRow =>
               actionRow.setComponents(
-                new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary).setDisabled(true)
+                new ButtonBuilder().setCustomId("server-settings").setLabel("Server Settings").setStyle(ButtonStyle.Primary).setDisabled(true),
+                new ButtonBuilder().setCustomId("refresh-server").setLabel("Refresh").setStyle(ButtonStyle.Secondary).setDisabled(true)
               )
             )
             .addActionRowComponents(actionRow =>
@@ -309,6 +328,24 @@ module.exports = {
         }
       };
 
+      // Fetches resource info, updating currentServerResourceInfo and
+      // currentServerSuspended. A 409 means the panel refused because the
+      // server is suspended; other failures leave suspension state false so a
+      // transient stats outage doesn't lock the power/console buttons.
+      const refreshResourceInfo = async serverId => {
+        const serverResourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
+        if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
+          currentServerResourceInfo = await serverResourceApi.body.json();
+          currentServerSuspended = currentServerResourceInfo?.attributes?.is_suspended || false;
+        } else if (serverResourceApi.statusCode === HTTP_STATUS_CODES.CONFLICT) {
+          currentServerResourceInfo = null;
+          currentServerSuspended = true;
+        } else {
+          currentServerResourceInfo = null;
+          currentServerSuspended = false;
+        }
+      };
+
       const buildModalErrorView = message => new ContainerBuilder()
         .setAccentColor(COLORS.PRIMARY)
         .addActionRowComponents(actionRow =>
@@ -336,21 +373,23 @@ module.exports = {
               return;
             }
 
-            currentSelectedServer = serverObjects.data.find(
-              server => server.attributes.identifier === selectedServerId
-            );
-
-            const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
-            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-              currentServerResourceInfo = await serverResourceApi.body.json();
+            if (selectedServerObject.statusCode === HTTP_STATUS_CODES.OK) {
+              const updated = await selectedServerObject.body.json();
+              const idx = serverObjects.data.findIndex(s => s.attributes.identifier === selectedServerId);
+              if (idx !== -1) serverObjects.data[idx] = updated;
+              currentSelectedServer = updated;
             } else {
-              currentServerResourceInfo = null;
+              currentSelectedServer = serverObjects.data.find(
+                server => server.attributes.identifier === selectedServerId
+              );
             }
+
+            await refreshResourceInfo(selectedServerId);
 
             currentView = "main";
 
             await i.update({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+              components: [ renderMainView() ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -360,20 +399,12 @@ module.exports = {
 
             await i.deferUpdate();
 
-            let isSuspended = false;
-            const serverResourceApi = await getServerResourceInfoById(currentSelectedServer.attributes.identifier, interaction.user.id);
-            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-              currentServerResourceInfo = await serverResourceApi.body.json();
-              isSuspended = currentServerResourceInfo?.attributes?.is_suspended || false;
-            } else if (serverResourceApi.statusCode === HTTP_STATUS_CODES.CONFLICT) {
-              isSuspended = true;
-              currentServerResourceInfo = null;
-            }
+            await refreshResourceInfo(currentSelectedServer.attributes.identifier);
 
             currentView = "settings";
 
             await i.editReply({
-              components: [ buildSettingsView(currentSelectedServer.attributes.name, isSuspended) ],
+              components: [ buildSettingsView(currentSelectedServer.attributes.name, currentServerSuspended) ],
               flags: MessageFlags.IsComponentsV2
             });
           } else if ([ "power-start", "power-restart", "power-stop" ].includes(i.customId)) {
@@ -387,12 +418,18 @@ module.exports = {
               action
             );
 
-            const message = apiResult.statusCode === HTTP_STATUS_CODES.NO_CONTENT
-              ? `${action.charAt(0).toUpperCase() + action.slice(1)} command sent.`
-              : `Failed to send ${action} command (status ${apiResult.statusCode}).`;
+            let message;
+            if (apiResult.statusCode === HTTP_STATUS_CODES.NO_CONTENT) {
+              message = `${action.charAt(0).toUpperCase() + action.slice(1)} command sent.`;
+            } else {
+              msgLog.error(`[server-menu] power ${action} failed for ${currentSelectedServer.attributes.identifier} (status ${apiResult.statusCode})`);
+              message = apiResult.statusCode === HTTP_STATUS_CODES.CONFLICT
+                ? getErrorMessage("POWER_ACTION_CONFLICT")
+                : getErrorMessage("POWER_ACTION_FAILED", action);
+            }
 
             await i.editReply({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
+              components: [ renderMainView(message) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -453,7 +490,7 @@ module.exports = {
               currentView = "main";
 
               await modalSubmit.editReply({
-                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
+                components: [ renderMainView(message) ],
                 flags: MessageFlags.IsComponentsV2
               });
 
@@ -500,6 +537,20 @@ module.exports = {
                 return;
               }
 
+              // Raising memory consumes account quota; shrinking always allowed.
+              const memoryDelta = newMemory - currentSelectedServer.attributes.limits.memory;
+              if (memoryDelta > 0) {
+                const availableMemory = await getAvailableUserMemory(getUserId(interaction.user.id), interaction.user.id);
+                if (availableMemory !== -1 && availableMemory - memoryDelta < 0) {
+                  const memoryToFree = (availableMemory - memoryDelta) * -1;
+                  await modalSubmit.editReply({
+                    components: [ buildModalErrorView(getErrorMessage("SERVER_MEMORY_EDIT_QUOTA", memoryToFree)) ],
+                    flags: MessageFlags.IsComponentsV2
+                  });
+                  return;
+                }
+              }
+
               const updateStatusCode = await editServerInfo(
                 currentSelectedServer.attributes.internal_id,
                 "memory",
@@ -517,7 +568,7 @@ module.exports = {
               currentView = "main";
 
               await modalSubmit.editReply({
-                components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
+                components: [ renderMainView(message) ],
                 flags: MessageFlags.IsComponentsV2
               });
 
@@ -544,12 +595,7 @@ module.exports = {
             const selectedServerId = currentSelectedServer.attributes.identifier;
             await refreshCurrentServer(selectedServerId);
 
-            const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
-            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-              currentServerResourceInfo = await serverResourceApi.body.json();
-            } else {
-              currentServerResourceInfo = null;
-            }
+            await refreshResourceInfo(selectedServerId);
 
             const message = suspensionStatusCode === HTTP_STATUS_CODES.NO_CONTENT
               ? "Server suspended."
@@ -558,7 +604,7 @@ module.exports = {
             currentView = "main";
 
             await i.editReply({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
+              components: [ renderMainView(message) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -594,12 +640,7 @@ module.exports = {
             const selectedServerId = currentSelectedServer.attributes.identifier;
             await refreshCurrentServer(selectedServerId);
 
-            const serverResourceApi = await getServerResourceInfoById(selectedServerId, interaction.user.id);
-            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-              currentServerResourceInfo = await serverResourceApi.body.json();
-            } else {
-              currentServerResourceInfo = null;
-            }
+            await refreshResourceInfo(selectedServerId);
 
             const message = suspensionStatusCode === HTTP_STATUS_CODES.NO_CONTENT
               ? "Server unsuspended."
@@ -608,7 +649,7 @@ module.exports = {
             currentView = "main";
 
             await i.editReply({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, message, consoleBuffer) ],
+              components: [ renderMainView(message) ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -699,18 +740,10 @@ module.exports = {
           } else if (i.customId === "cancel-delete") {
             await i.deferUpdate();
 
-            let isSuspended = false;
-            const serverResourceApi = await getServerResourceInfoById(currentSelectedServer.attributes.identifier, interaction.user.id);
-            if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-              currentServerResourceInfo = await serverResourceApi.body.json();
-              isSuspended = currentServerResourceInfo?.attributes?.is_suspended || false;
-            } else if (serverResourceApi.statusCode === HTTP_STATUS_CODES.CONFLICT) {
-              isSuspended = true;
-              currentServerResourceInfo = null;
-            }
+            await refreshResourceInfo(currentSelectedServer.attributes.identifier);
 
             await i.editReply({
-              components: [ buildSettingsView(currentSelectedServer.attributes.name, isSuspended) ],
+              components: [ buildSettingsView(currentSelectedServer.attributes.name, currentServerSuspended) ],
               flags: MessageFlags.IsComponentsV2
             });
           } else if (i.customId === "console-view") {
@@ -741,12 +774,36 @@ module.exports = {
             if (!submitted) return;
             await submitted.deferUpdate();
             const cmd = submitted.fields.getTextInputValue("command-input").trim();
-            if (activeWs) activeWs.sendCommand(cmd);
+            const commandSent = activeWs ? activeWs.sendCommand(cmd) : false;
+            const statusNote = commandSent
+              ? `Command sent: \`${cmd}\``
+              : getErrorMessage("CONSOLE_NOT_CONNECTED");
+            await submitted.editReply({
+              components: [ buildConsoleView(currentSelectedServer.attributes.name, consoleBuffer, statusNote) ],
+              flags: MessageFlags.IsComponentsV2
+            });
+          } else if (i.customId === "refresh-server") {
+            logMenuAction(i, "refresh-server");
+            await i.deferUpdate();
+
+            const selectedServerId = currentSelectedServer.attributes.identifier;
+            await refreshCurrentServer(selectedServerId);
+
+            await refreshResourceInfo(selectedServerId);
+
+            currentView = "main";
+
+            await i.editReply({
+              components: [ renderMainView() ],
+              flags: MessageFlags.IsComponentsV2
+            });
+
+            connectWebSocket(selectedServerId);
           } else if (i.customId === "back") {
             currentView = "main";
 
             await i.update({
-              components: [ buildMainServerView(serverObjects, currentSelectedServer, currentServerResourceInfo, null, consoleBuffer) ],
+              components: [ renderMainView() ],
               flags: MessageFlags.IsComponentsV2
             });
 
@@ -756,7 +813,7 @@ module.exports = {
           msgLog.error(`Error handling interaction: ${error.message}`);
           const errorResponse = {
             content: "An error occurred while processing your request.",
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
           };
 
           if (i.replied || i.deferred) {
@@ -786,7 +843,7 @@ module.exports = {
       msgLog.error(`Error in edit server command: ${error.message}`);
       const errorMessage = {
         content: "An error occurred while loading the server menu.",
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       };
 
       if (interaction.replied || interaction.deferred) {

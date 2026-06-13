@@ -7,6 +7,8 @@ const { reconstructCommand, getUserId, clientApiCall } = require("../../utility/
 const { getErrorMessage } = require("../../utility/error_messages.js");
 
 module.exports = {
+  category: "Getting Started",
+
   data: new SlashCommandBuilder()
     .setName("set-client-key")
     .setDescription("Sets your client API key required for certain commands.")
