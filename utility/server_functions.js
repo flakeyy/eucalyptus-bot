@@ -396,6 +396,26 @@ async function reinstallServer(internalServerId) {
   return apiResult.statusCode;
 }
 
+// Returns the panel-side lifecycle status for a server via the application API:
+// "installing" while a (re)install is running, "install_failed"/"reinstall_failed"
+// on failure, null when fully installed/idle, "suspended", etc. Returns -1 on a
+// failed API call. The panel sets this status the moment a reinstall is accepted
+// and only clears it once the daemon reports completion, so it's the authoritative
+// signal for "is the reinstall done?" — unlike the client resources current_state,
+// which can still read "offline" before the daemon picks up the install task.
+async function getServerInstallStatus(internalServerId) {
+  const parsedId = parseInt(internalServerId, 10);
+  if (isNaN(parsedId)) return -1;
+  const apiResult = await applicationApiCall(`application/servers/${parsedId}`, "GET");
+  if (apiResult.statusCode !== 200) return -1;
+  try {
+    const jsonData = await apiResult.body.json();
+    return jsonData?.attributes?.status ?? null;
+  } catch {
+    return -1;
+  }
+}
+
 // MISC
 
 async function getAvailableUserMemory(userId, discordId) {
@@ -449,6 +469,7 @@ module.exports = {
   pullServerFile,
   changeServerEgg,
   reinstallServer,
+  getServerInstallStatus,
   getServerDaemonType,
   clearDaemonTypeCache
 };

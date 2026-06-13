@@ -45,6 +45,7 @@ function mockHappyPath(serverFunctions, { firstListResult = [] } = {}) {
   serverFunctions.listServerFiles.mockResolvedValue(firstListResult);
   serverFunctions.deleteServerFiles.mockResolvedValue(204);
   serverFunctions.changeServerEgg.mockResolvedValue(200);
+  serverFunctions.getServerInstallStatus.mockResolvedValue(null);
   serverFunctions.getFileUploadUrl.mockResolvedValue("https://wings.example.com/upload?token=x");
   serverFunctions.decompressFile.mockResolvedValue(204);
   global.fetch = jest.fn()
@@ -64,6 +65,7 @@ function mockUpToTransfer(serverFunctions) {
   serverFunctions.listServerFiles.mockResolvedValue([]);
   serverFunctions.deleteServerFiles.mockResolvedValue(204);
   serverFunctions.changeServerEgg.mockResolvedValue(200);
+  serverFunctions.getServerInstallStatus.mockResolvedValue(null);
 }
 
 module.exports = { makeState, makeStreamResponse, mockHappyPath, mockUpToTransfer };

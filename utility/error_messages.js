@@ -153,6 +153,30 @@ const ERROR_MESSAGES = {
   POWER_ACTION_FAILED: {
     id: -39,
     format: action => `Failed to send the ${action ?? "power"} command.\nPlease try again or contact an administrator.`
+  },
+  MODPACK_SERVER_STOP_TIMEOUT: {
+    id: -40,
+    text: "The server did not stop in time, so the installation was aborted before any files were changed.\nStop the server manually and try again."
+  },
+  MODPACK_EGG_CHANGE_FAILED: {
+    id: -41,
+    text: `Failed to switch the server type. **Server files were already wiped** — the server will need to be set up again.\nPlease let <@${ADMIN_DISCORD_ID}> know.`
+  },
+  MODPACK_REINSTALL_FAILED: {
+    id: -42,
+    text: `Failed to reinstall the server. **Server files were already wiped** — the server will need to be set up again.\nPlease let <@${ADMIN_DISCORD_ID}> know.`
+  },
+  SERVER_MEMORY_EDIT_QUOTA: {
+    id: -43,
+    format: amountToFree => `**Raising this server's memory would put you over your allowed maximum memory usage.**\n\nYou will need to use a smaller value OR free up ${amountToFree} MB by deleting or suspending other active servers.`
+  },
+  CONSOLE_NOT_CONNECTED: {
+    id: -44,
+    text: "The console connection was lost, so the command was not sent.\nPress Back and reopen the console to reconnect."
+  },
+  MODPACK_REINSTALL_TIMEOUT: {
+    id: -45,
+    text: `The server is still reinstalling and did not finish in time, so no modpack files were uploaded.\nWait for the reinstall to finish on the panel, then re-run /install-modpack to retry. Let <@${ADMIN_DISCORD_ID}> know if it stays stuck.`
   }
 };
 

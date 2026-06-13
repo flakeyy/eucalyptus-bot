@@ -126,10 +126,13 @@ class PterodactylWebSocket extends EventEmitter {
     }
   }
 
+  // Returns true if the command was sent, false if the socket is not open.
   sendCommand(command) {
     if (this._ws && this._ws.readyState === WebSocket.OPEN) {
       this._ws.send(JSON.stringify({ event: "send command", args: [ command ] }));
+      return true;
     }
+    return false;
   }
 
   async _reconnect() {

@@ -8,7 +8,8 @@ const msgLog = require("../../utility/logger.js");
 const { getUserId, reconstructCommand, userHasClientApiKey, applicationApiCall } = require("../../utility/helper_functions.js");
 const {
   getClientServers, setServerPowerState, getServerResourceInfoById,
-  changeServerEgg, reinstallServer, listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile
+  changeServerEgg, reinstallServer, getServerInstallStatus,
+  listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { isManifestZip } = require("../../utility/curseforge.js");
@@ -103,6 +104,9 @@ function getJavaImageForMCVersion(mcVersion) {
 
 const { COLORS, COLLECTOR_IDLE_TIMEOUT, HTTP_STATUS_CODES } = require("../../utility/constants.js");
 const STOP_POLL = { MAX_ATTEMPTS: 60, INTERVAL: 2000 };
+// Reinstall runs the egg's install script (download server jar, run loader installer);
+// allow up to ~10 minutes before giving up rather than uploading into an unfinished server.
+const INSTALL_POLL = { MAX_ATTEMPTS: 300, INTERVAL: 2000 };
 
 function buildServerSelectContainer(servers, nestMap, statusNote = null, disabled = false) {
   const selectMenu = new StringSelectMenuBuilder()
@@ -214,50 +218,7 @@ async function updateProgress(i, message) {
 async function runInstallation(i, state, interaction) {
   const { source, serverId, serverInternalId, serverName, modpackName, targetFile, loaderType, usingClientPack, mcVersion } = state;
 
-  // a. Stop server
-  await updateProgress(i, "Stopping server...");
-  await setServerPowerState(serverId, interaction.user.id, "stop").catch(() => {});
-  for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
-    await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
-    if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-      const data = await resourceApi.body.json();
-      if (data.attributes.current_state === "offline") break;
-    }
-  }
-
-  // b. Delete files
-  await updateProgress(i, "Deleting server files...");
-  const files = await listServerFiles(serverId, interaction.user.id, "/");
-  if (files && files.length > 0) {
-    await deleteServerFiles(serverId, interaction.user.id, files.map(f => f.attributes.name));
-  }
-
-  // c. Change egg (set MC_VERSION and correct Java Docker image)
-  await updateProgress(i, `Switching server type to **${loaderType ?? "unknown"}**...`);
-  const eggId = config.modpack_eggs[loaderType];
-  const envOverrides = {};
-  if (mcVersion && config.mc_version_variable) {
-    envOverrides[config.mc_version_variable] = mcVersion;
-  }
-  const javaImage = mcVersion ? getJavaImageForMCVersion(mcVersion) : null;
-  await changeServerEgg(serverInternalId, eggId, config.minecraft_nest_id, envOverrides, javaImage);
-
-  // d. Reinstall server
-  await updateProgress(i, "Reinstalling server...");
-  await reinstallServer(serverInternalId);
-  // Give the daemon a moment to transition to "installing" state before polling
-  await new Promise(r => setTimeout(r, 5000));
-  for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
-    await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
-    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
-    if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
-      const data = await resourceApi.body.json();
-      if (data.attributes.current_state !== "installing") break;
-    }
-  }
-
-  // e. Download modpack file, detect manifest, then either manifest-install or direct upload+extract
+  // a. Download the modpack file first — a failed download must leave the server untouched.
   await updateProgress(i, `Downloading **${targetFile.displayName}**...`);
   let chunks, fileSize;
   try {
@@ -272,79 +233,154 @@ async function runInstallation(i, state, interaction) {
   }
 
   let buffer = Buffer.concat(chunks);
-  let unavailableMods = [];
-  let manifestInstalled = 0;
-  let manifestTotal = 0;
+
+  // b. CurseForge ServerStarter wrapper: fetch the real pack, still before any destructive step.
+  if (source !== "modrinth" && isServerStarterZip(buffer)) {
+    const ssConfig = parseServerStarterConfig(buffer);
+    if (!ssConfig?.modpackUrl) {
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+      return;
+    }
+    await updateProgress(i, "Downloading modpack from ServerStarter URL...");
+    try {
+      ({ chunks, fileSize } = await downloadToBuffer(ssConfig.modpackUrl, (dl, total) => {
+        const pct = Math.round((dl / total) * 100);
+        updateProgress(i, `Downloading modpack from ServerStarter URL... ${pct}%`).catch(() => {});
+      }));
+    } catch (err) {
+      msgLog.error(`[install-modpack] ServerStarter modpackUrl download failed: ${err.message}`);
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
+      return;
+    }
+    buffer = Buffer.concat(chunks);
+  }
+
+  // c. Resolve manifest installs up front so resolution failures abort while the
+  // server still has its files. Modrinth packs are always .mrpack manifests.
+  let installPlan = null;
   let usedManifest = false;
-
-  const installCtx = { i, serverId, userId: interaction.user.id, loaderType, updateProgress };
-
-  if (source === "modrinth") {
-    // Modrinth modpacks are always .mrpack manifests — there is no direct server pack.
+  if (source === "modrinth" || isManifestZip(buffer)) {
     usedManifest = true;
-    const resolution = await resolveModpackInstall("modrinth", buffer, loaderType, msg => updateProgress(i, msg));
+    const resolution = await resolveModpackInstall(
+      source === "modrinth" ? "modrinth" : "curseforge",
+      buffer, loaderType, msg => updateProgress(i, msg)
+    );
     if (!resolution || resolution.kind !== "plan") {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
       return;
     }
-    ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
-      await installFilePlan(installCtx, resolution.plan));
-  } else {
-    // CurseForge: may be a ServerStarter wrapper, a manifest, or a direct server pack.
-    if (isServerStarterZip(buffer)) {
-      const ssConfig = parseServerStarterConfig(buffer);
-      if (!ssConfig?.modpackUrl) {
-        await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-        return;
-      }
-      await updateProgress(i, "Downloading modpack from ServerStarter URL...");
-      try {
-        ({ chunks, fileSize } = await downloadToBuffer(ssConfig.modpackUrl, (dl, total) => {
-          const pct = Math.round((dl / total) * 100);
-          updateProgress(i, `Downloading modpack from ServerStarter URL... ${pct}%`).catch(() => {});
-        }));
-      } catch (err) {
-        msgLog.error(`[install-modpack] ServerStarter modpackUrl download failed: ${err.message}`);
-        await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-        return;
-      }
-      buffer = Buffer.concat(chunks);
-    }
-
-    if (isManifestZip(buffer)) {
-      usedManifest = true;
-      const resolution = await resolveModpackInstall("curseforge", buffer, loaderType, msg => updateProgress(i, msg));
-      if (!resolution || resolution.kind !== "plan") {
-        await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-        return;
-      }
-      ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
-        await installFilePlan(installCtx, resolution.plan));
-    } else {
-      const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
-      if (!uploadUrl) {
-        await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-        return;
-      }
-      await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
-      try {
-        await streamUploadToServer(uploadUrl, targetFile.displayName, chunks, fileSize, (dl, ul, total) => {
-          const unit = `${(total / 1_048_576).toFixed(1)} MB`;
-          updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar({ downloaded: dl, installed: ul, total, unit })}`).catch(() => {});
-        });
-      } catch (err) {
-        msgLog.error(`[install-modpack] upload failed: ${err.message}`);
-        await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-        return;
-      }
-
-      // f. Extract
-      await updateProgress(i, "Extracting files...");
-      await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
-    }
+    installPlan = resolution.plan;
   }
 
-  // g. Done — but bail out as a failure if a manifest install couldn't place a single mod.
+  // d. Stop server — abort if it never reaches offline rather than wiping a running server.
+  await updateProgress(i, "Stopping server...");
+  await setServerPowerState(serverId, interaction.user.id, "stop").catch(() => {});
+  let serverStopped = false;
+  for (let attempt = 0; attempt < STOP_POLL.MAX_ATTEMPTS; attempt++) {
+    await new Promise(r => setTimeout(r, STOP_POLL.INTERVAL));
+    const resourceApi = await getServerResourceInfoById(serverId, interaction.user.id);
+    if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
+      const data = await resourceApi.body.json();
+      if (data.attributes.current_state === "offline") {
+        serverStopped = true;
+        break;
+      }
+    }
+  }
+  if (!serverStopped) {
+    msgLog.error(`[install-modpack] server ${serverId} did not stop in time; install aborted`);
+    await updateProgress(i, getErrorMessage("MODPACK_SERVER_STOP_TIMEOUT"));
+    return;
+  }
+
+  // e. Delete files
+  await updateProgress(i, "Deleting server files...");
+  const files = await listServerFiles(serverId, interaction.user.id, "/");
+  if (files && files.length > 0) {
+    await deleteServerFiles(serverId, interaction.user.id, files.map(f => f.attributes.name));
+  }
+
+  // f. Change egg (set MC_VERSION and correct Java Docker image)
+  await updateProgress(i, `Switching server type to **${loaderType ?? "unknown"}**...`);
+  const eggId = config.modpack_eggs[loaderType];
+  const envOverrides = {};
+  if (mcVersion && config.mc_version_variable) {
+    envOverrides[config.mc_version_variable] = mcVersion;
+  }
+  const javaImage = mcVersion ? getJavaImageForMCVersion(mcVersion) : null;
+  const eggChangeStatus = await changeServerEgg(serverInternalId, eggId, config.minecraft_nest_id, envOverrides, javaImage);
+  if (eggChangeStatus < 200 || eggChangeStatus >= 300) {
+    msgLog.error(`[install-modpack] egg change failed for ${serverId} (status ${eggChangeStatus})`);
+    await updateProgress(i, getErrorMessage("MODPACK_EGG_CHANGE_FAILED"));
+    return;
+  }
+
+  // g. Reinstall server, then wait until the panel confirms the install actually
+  // finished before placing any files. We poll the application-API server status
+  // (getServerInstallStatus): the panel sets it to "installing" synchronously when
+  // the reinstall is accepted and only clears it once the daemon reports completion.
+  // The client resources current_state is unreliable here — it can read "offline"
+  // in the gap before the daemon picks up the install, which previously let us
+  // upload into a server that was about to be wiped again by the install.
+  await updateProgress(i, "Reinstalling server...");
+  const reinstallStatus = await reinstallServer(serverInternalId);
+  if (reinstallStatus < 200 || reinstallStatus >= 300) {
+    msgLog.error(`[install-modpack] reinstall failed for ${serverId} (status ${reinstallStatus})`);
+    await updateProgress(i, getErrorMessage("MODPACK_REINSTALL_FAILED"));
+    return;
+  }
+  let reinstallFinished = false;
+  for (let attempt = 0; attempt < INSTALL_POLL.MAX_ATTEMPTS; attempt++) {
+    await new Promise(r => setTimeout(r, INSTALL_POLL.INTERVAL));
+    const installState = await getServerInstallStatus(serverInternalId);
+    if (installState === "installing" || installState === -1) continue; // still running, or transient API hiccup
+    if (installState === "install_failed" || installState === "reinstall_failed") {
+      msgLog.error(`[install-modpack] reinstall reported "${installState}" for ${serverId}`);
+      await updateProgress(i, getErrorMessage("MODPACK_REINSTALL_FAILED"));
+      return;
+    }
+    reinstallFinished = true; // null / idle — install complete
+    break;
+  }
+  if (!reinstallFinished) {
+    msgLog.error(`[install-modpack] reinstall did not finish in time for ${serverId}`);
+    await updateProgress(i, getErrorMessage("MODPACK_REINSTALL_TIMEOUT"));
+    return;
+  }
+
+  // h. Place files: manifest plan install or direct upload+extract
+  let unavailableMods = [];
+  let manifestInstalled = 0;
+  let manifestTotal = 0;
+
+  const installCtx = { i, serverId, userId: interaction.user.id, loaderType, updateProgress };
+
+  if (usedManifest) {
+    ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
+      await installFilePlan(installCtx, installPlan));
+  } else {
+    const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
+    if (!uploadUrl) {
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+      return;
+    }
+    await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
+    try {
+      await streamUploadToServer(uploadUrl, targetFile.displayName, chunks, fileSize, (dl, ul, total) => {
+        const unit = `${(total / 1_048_576).toFixed(1)} MB`;
+        updateProgress(i, `Uploading **${targetFile.displayName}**...\n\n${buildProgressBar({ downloaded: dl, installed: ul, total, unit })}`).catch(() => {});
+      });
+    } catch (err) {
+      msgLog.error(`[install-modpack] upload failed: ${err.message}`);
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+      return;
+    }
+
+    await updateProgress(i, "Extracting files...");
+    await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+  }
+
+  // i. Done — but bail out as a failure if a manifest install couldn't place a single mod.
   if (usedManifest && manifestTotal > 0 && manifestInstalled === 0) {
     msgLog.error(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install failed: 0/${manifestTotal} mods installed: ${modpackName} | ${serverId}`);
     await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));

@@ -3,7 +3,7 @@ const config = require("../../config.json");
 const msgLog = require("../../utility/logger.js");
 const { PERMISSIONS, authenticateUserForPermission } = require("../../utility/permissions.js");
 const { applicationApiCall, resolveEnvVariables, getUserId, reconstructCommand, userHasClientApiKey } = require("../../utility/helper_functions.js");
-const { getEggData, getNodeIdByName, getNestIdByName, getEggIdByName, getAvailableUserMemory, getNodes, getNests, getEggs } = require("../../utility/server_functions.js");
+const { getEggData, getAvailableUserMemory, getNodes, getNests, getEggs } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { COLORS, HTTP_STATUS_CODES, COLLECTOR_IDLE_TIMEOUT } = require("../../utility/constants.js");
 
@@ -20,30 +20,14 @@ async function getDefaultAllocation(node) {
   return -1;
 }
 
-async function createServer(name, node, nest, egg, memory, discordId, userId) {
+async function createServer(name, nodeId, nestId, eggId, memory, discordId, userId) {
   if (name === "" || name === null) {
     return getErrorMessage("INVALID_INPUT");
   }
-  const nodeId = await getNodeIdByName(node);
-  if (nodeId === -1) {
-    return getErrorMessage("NODE_NOT_FOUND");
-  }
-  else if (typeof(nodeId) === "string") {
-    return nodeId;
-  }
 
   let overheadMemory = config["default_overhead_mb"];
-  const nestId = await getNestIdByName(nest);
-  if (nestId === -1) {
-    return getErrorMessage("NEST_NOT_FOUND");
-  }
   if (nestId === config["minecraft_nest_id"]) {
     overheadMemory = config["java_overhead_mb"];
-  }
-
-  const eggId = await getEggIdByName(nestId, egg);
-  if (eggId === -1) {
-    return getErrorMessage("EGG_NOT_FOUND");
   }
 
   const availableMemory = await getAvailableUserMemory(userId, discordId);
@@ -194,27 +178,32 @@ module.exports = {
       const panelId = getUserId(interaction.user.id);
       const discordId = interaction.user.id;
 
-      const nodesData = await getNodes();
-      const nestsData = await getNests();
-      const availableMemory = await getAvailableUserMemory(panelId, discordId);
+      // Defer immediately: three panel calls can exceed the 3s interaction window.
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+      const [ nodesData, nestsData, availableMemory ] = await Promise.all([
+        getNodes(),
+        getNests(),
+        getAvailableUserMemory(panelId, discordId)
+      ]);
 
       if (!nodesData || !nodesData.data) {
-        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: getErrorMessage("CLIENT_API_FAILURE") });
         return;
       }
 
       if (!nestsData || !nestsData.data) {
-        await interaction.reply({ content: getErrorMessage("CLIENT_API_FAILURE"), flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: getErrorMessage("CLIENT_API_FAILURE") });
         return;
       }
 
       if (nodesData.data.length === 0) {
-        await interaction.reply({ content: getErrorMessage("NODE_NOT_FOUND"), flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: getErrorMessage("NODE_NOT_FOUND") });
         return;
       }
 
       if (nestsData.data.length === 0) {
-        await interaction.reply({ content: getErrorMessage("NEST_NOT_FOUND"), flags: MessageFlags.Ephemeral });
+        await interaction.editReply({ content: getErrorMessage("NEST_NOT_FOUND") });
         return;
       }
 
@@ -235,9 +224,9 @@ module.exports = {
           actionRow.setComponents(nodeSelectMenu)
         );
 
-      await interaction.reply({
+      await interaction.editReply({
         components: [ initialContainer ],
-        flags: MessageFlags.IsComponentsV2 | MessageFlags.Ephemeral
+        flags: MessageFlags.IsComponentsV2
       });
 
       const response = await interaction.fetchReply();
@@ -454,9 +443,9 @@ module.exports = {
 
             const apiResult = await createServer(
               serverName,
-              selectedNode.attributes.name,
-              selectedNest.attributes.name,
-              selectedEgg.attributes.name,
+              selectedNode.attributes.id,
+              selectedNest.attributes.id,
+              selectedEgg.attributes.id,
               serverMemory,
               discordId,
               panelId

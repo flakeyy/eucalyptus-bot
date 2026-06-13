@@ -17,6 +17,7 @@ jest.mock("../utility/server_functions.js", () => ({
   getServerResourceInfoById: jest.fn(),
   changeServerEgg: jest.fn(),
   reinstallServer: jest.fn(),
+  getServerInstallStatus: jest.fn(),
   listServerFiles: jest.fn(),
   deleteServerFiles: jest.fn(),
   getFileUploadUrl: jest.fn(),
@@ -457,6 +458,45 @@ describe("runInstallation behavior", () => {
     await runAndSettle(makeState());
 
     expect(serverFunctions.decompressFile).not.toHaveBeenCalled();
+  });
+
+  test("aborts before upload when reinstall reports install_failed", async () => {
+    mockHappyPath(serverFunctions);
+    serverFunctions.getServerInstallStatus.mockResolvedValue("install_failed");
+
+    await runAndSettle(makeState());
+
+    expect(serverFunctions.getFileUploadUrl).not.toHaveBeenCalled();
+    expect(serverFunctions.decompressFile).not.toHaveBeenCalled();
+    const lastCall = mockInteraction.editReply.mock.calls.at(-1)[0];
+    expect(JSON.stringify(lastCall.components[0])).toContain("MODPACK_REINSTALL_FAILED");
+  });
+
+  test("aborts before upload when reinstall never finishes (stays installing)", async () => {
+    mockHappyPath(serverFunctions);
+    serverFunctions.getServerInstallStatus.mockResolvedValue("installing");
+
+    await runAndSettle(makeState());
+
+    expect(serverFunctions.getFileUploadUrl).not.toHaveBeenCalled();
+    expect(serverFunctions.decompressFile).not.toHaveBeenCalled();
+    const lastCall = mockInteraction.editReply.mock.calls.at(-1)[0];
+    expect(JSON.stringify(lastCall.components[0])).toContain("MODPACK_REINSTALL_TIMEOUT");
+  });
+
+  test("uploads only after the install status clears", async () => {
+    mockHappyPath(serverFunctions);
+    // Two polls still installing, then idle — upload must wait for the clear.
+    serverFunctions.getServerInstallStatus
+      .mockResolvedValueOnce("installing")
+      .mockResolvedValueOnce("installing")
+      .mockResolvedValue(null);
+
+    await runAndSettle(makeState());
+
+    expect(serverFunctions.getServerInstallStatus).toHaveBeenCalledTimes(3);
+    expect(serverFunctions.getFileUploadUrl).toHaveBeenCalled();
+    expect(serverFunctions.decompressFile).toHaveBeenCalled();
   });
 
   test("includes client pack reminder when usingClientPack is true", async () => {
