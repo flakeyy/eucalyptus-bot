@@ -325,6 +325,8 @@ module.exports = {
           const idx = serverObjects.data.findIndex(s => s.attributes.identifier === serverId);
           if (idx !== -1) serverObjects.data[idx] = updated;
           currentSelectedServer = updated;
+        } else {
+          try { await res.body.text(); } catch { /* drain */ }
         }
       };
 
@@ -337,12 +339,11 @@ module.exports = {
         if (serverResourceApi.statusCode === HTTP_STATUS_CODES.OK) {
           currentServerResourceInfo = await serverResourceApi.body.json();
           currentServerSuspended = currentServerResourceInfo?.attributes?.is_suspended || false;
-        } else if (serverResourceApi.statusCode === HTTP_STATUS_CODES.CONFLICT) {
-          currentServerResourceInfo = null;
-          currentServerSuspended = true;
         } else {
+          // Always drain non-OK bodies so the shared undici Client can reuse the socket.
+          try { await serverResourceApi.body.text(); } catch { /* ignore */ }
           currentServerResourceInfo = null;
-          currentServerSuspended = false;
+          currentServerSuspended = serverResourceApi.statusCode === HTTP_STATUS_CODES.CONFLICT;
         }
       };
 
@@ -379,6 +380,7 @@ module.exports = {
               if (idx !== -1) serverObjects.data[idx] = updated;
               currentSelectedServer = updated;
             } else {
+              try { await selectedServerObject.body.text(); } catch { /* drain */ }
               currentSelectedServer = serverObjects.data.find(
                 server => server.attributes.identifier === selectedServerId
               );
