@@ -204,8 +204,8 @@ async function handleAdminServers(interaction) {
 
   // Builds the settings view, refreshing suspension state from the panel first.
   const loadSettingsView = async () => {
-    let isSuspended = false;
     const resourceApi = await getServerResourceInfoById(currentSelectedServer.attributes.identifier, targetDiscordId);
+    let isSuspended;
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       currentServerResourceInfo = await resourceApi.body.json();
       isSuspended = currentServerResourceInfo?.attributes?.is_suspended || false;
