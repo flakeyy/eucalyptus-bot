@@ -209,8 +209,9 @@ async function handleAdminServers(interaction) {
     if (resourceApi.statusCode === HTTP_STATUS_CODES.OK) {
       currentServerResourceInfo = await resourceApi.body.json();
       isSuspended = currentServerResourceInfo?.attributes?.is_suspended || false;
-    } else if (resourceApi.statusCode === HTTP_STATUS_CODES.CONFLICT) {
-      isSuspended = true;
+    } else {
+      try { await resourceApi.body.text(); } catch { /* drain */ }
+      isSuspended = resourceApi.statusCode === HTTP_STATUS_CODES.CONFLICT;
       currentServerResourceInfo = null;
     }
     return buildAdminSettingsView(currentSelectedServer.attributes.name, isSuspended);

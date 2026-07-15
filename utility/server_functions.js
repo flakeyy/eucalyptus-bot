@@ -1,6 +1,7 @@
 const db = require("./database.js");
 const msgLog = require("./logger.js");
 const { applicationApiCall, clientApiCall, validateString } = require("./helper_functions.js");
+const { HTTP_STATUS_CODES } = require("./constants.js");
 
 // EGGS
 async function getEggs(nestId) {
@@ -176,11 +177,24 @@ async function getServerOwnerId(serverId) {
   return ownerId;
 }
 
+// Client API returns 409 for /resources (and often /servers/{id}) when the
+// server is suspended. is_suspended lives on the resources payload when OK.
 async function isServerSuspended(serverId, discordId) {
-  const serverData = await getServerInfoById(serverId, discordId);
-  const jsonData = await serverData.body.json();
-  const suspended = jsonData.attributes.is_suspended;
-  return suspended;
+  const resourceResponse = await getServerResourceInfoById(serverId, discordId);
+  if (resourceResponse.statusCode === HTTP_STATUS_CODES.CONFLICT) {
+    try { await resourceResponse.body.text(); } catch { /* drain */ }
+    return true;
+  }
+  if (resourceResponse.statusCode !== HTTP_STATUS_CODES.OK) {
+    try { await resourceResponse.body.text(); } catch { /* drain */ }
+    return false;
+  }
+  try {
+    const jsonData = await resourceResponse.body.json();
+    return Boolean(jsonData?.attributes?.is_suspended);
+  } catch {
+    return false;
+  }
 }
 
 async function editServerInfo(serverId, settingName, value) {
@@ -418,6 +432,13 @@ async function getServerInstallStatus(internalServerId) {
 
 // MISC
 
+function isApplicationServerSuspended(server) {
+  const attrs = server?.attributes;
+  if (!attrs) return false;
+  // Classic boolean, or newer status string (also used by Pyrodactyl).
+  return attrs.suspended === true || attrs.status === "suspended";
+}
+
 async function getAvailableUserMemory(userId, discordId) {
   const parsedId = parseInt(userId, 10);
   if (isNaN(parsedId)) {
@@ -431,9 +452,13 @@ async function getAvailableUserMemory(userId, discordId) {
   }
 
   const jsonData = await apiResult.body.json();
+  const servers = jsonData?.attributes?.relationships?.servers?.data || [];
+  // Suspended servers free memory for create/unsuspend checks — matching the
+  // copy in SERVER_UNSUSPEND_FAILED_MEMORY / create-server limit errors.
   let totalMemoryUsage = 0;
-  for (let i = 0; i < jsonData.attributes.relationships.servers.data.length; i++) {
-    totalMemoryUsage += jsonData.attributes.relationships.servers.data[i].attributes.limits.memory;
+  for (const server of servers) {
+    if (isApplicationServerSuspended(server)) continue;
+    totalMemoryUsage += server.attributes.limits.memory;
   }
   const user = db.getUserByDiscordId(discordId);
   if (!user) return 0;

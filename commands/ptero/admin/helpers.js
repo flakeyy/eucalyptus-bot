@@ -44,13 +44,16 @@ async function refreshServerInState(serverObjects, serverId, targetDiscordId) {
     if (idx !== -1) serverObjects.data[idx] = updated;
     return updated;
   }
+  try { await res.body.text(); } catch { /* drain */ }
   return null;
 }
 
 // Fetches a server's live resource info, or null when unavailable (e.g. suspended).
 async function fetchResourceInfo(serverId, targetDiscordId) {
   const res = await getServerResourceInfoById(serverId, targetDiscordId);
-  return res.statusCode === HTTP_STATUS_CODES.OK ? await res.body.json() : null;
+  if (res.statusCode === HTTP_STATUS_CODES.OK) return await res.body.json();
+  try { await res.body.text(); } catch { /* drain */ }
+  return null;
 }
 
 module.exports = {
