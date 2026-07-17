@@ -20,6 +20,43 @@ let storePath = STORE_PATH;
 let store = null;
 let dirty = false;
 
+// Mixin bootstrap jars (UniMixins, MixinBootstrap, …). A bad boot-verify pass
+// once learned these as crashes-server from System Details inventory noise;
+// skipping them bricks every mixin-using pack (ClassNotFoundException: MixinTweaker).
+function isMixinInfrastructureJar({ modId = null, filename = null } = {}) {
+  const id = String(modId ?? "").toLowerCase();
+  const name = String(filename ?? "").toLowerCase();
+  return /unimixin|mixinbootstrap|spongemixin/.test(id) || /unimixin|mixinbootstrap|spongemixin/.test(name);
+}
+
+// Learned-verdict reasons that are too weak / collateral to persist across installs.
+function isLowConfidenceLearnedDetail(detail) {
+  if (!detail) return true;
+  return /^mixin config /i.test(detail) || /dependent of quarantined/i.test(detail);
+}
+
+function scrubPoisonedLearnedVerdicts() {
+  let cleared = 0;
+  for (const e of Object.values(store.entries)) {
+    if (!e?.learnedVerdict) continue;
+    if (
+      isLowConfidenceLearnedDetail(e.detail) ||
+      isMixinInfrastructureJar({ modId: e.modId, filename: e.filename })
+    ) {
+      delete e.learnedVerdict;
+      delete e.source;
+      delete e.detail;
+      cleared++;
+      dirty = true;
+    }
+  }
+  if (cleared > 0) {
+    // Persist immediately so a crash mid-install cannot re-skip these jars.
+    flushVerdictStore();
+  }
+  return cleared;
+}
+
 function load() {
   if (store !== null) return;
   try {
@@ -32,6 +69,7 @@ function load() {
   try {
     if (fs.existsSync(LEGACY_CACHE_PATH)) fs.unlinkSync(LEGACY_CACHE_PATH);
   } catch { /* non-fatal */ }
+  scrubPoisonedLearnedVerdicts();
 }
 
 function entry(sha1, create = false) {
@@ -88,6 +126,9 @@ function getLearnedVerdict(sha1) {
 
 function recordLearnedVerdict(sha1, verdict, { source = null, modId = null, filename = null, detail = null } = {}) {
   if (!sha1) return;
+  // Never persist weak mixin-inventory attributions or skip MixinTweaker providers.
+  if (isLowConfidenceLearnedDetail(detail)) return;
+  if (isMixinInfrastructureJar({ modId, filename })) return;
   const e = entry(sha1, true);
   e.learnedVerdict = verdict;
   e.source = source;
@@ -123,6 +164,8 @@ module.exports = {
   getLearnedVerdict,
   recordLearnedVerdict,
   clearLearnedVerdict,
+  isMixinInfrastructureJar,
+  isLowConfidenceLearnedDetail,
   _resetForTests,
   _STORE_PATH: STORE_PATH
 };

@@ -5,7 +5,8 @@ const path = require("path");
 const config = require("../config.json");
 const { FORGE_MOD_ANNOTATIONS } = require("./crash_risk.js");
 const {
-  getInspection, putInspection, getLearnedVerdict, flushVerdictStore
+  getInspection, putInspection, getLearnedVerdict, flushVerdictStore,
+  isMixinInfrastructureJar
 } = require("./verdict_store.js");
 
 // Bump when detection logic changes so cached verdicts are recomputed.
@@ -339,9 +340,14 @@ function decideModInstall({
     return install(2, "server-side-override");
   }
 
-  // 3. Learned verdict from the boot-verify loop.
+  // 3. Learned verdict from the boot-verify loop. Mixin bootstrap jars are
+  // exempt — a false positive here makes MixinTweaker unloadable and bricks
+  // the entire pack (see UniMixins over-quarantine).
   const learned = learnedVerdict ?? getLearnedVerdict(sha1);
-  if (learned === "crashes-server") {
+  if (
+    learned === "crashes-server" &&
+    !isMixinInfrastructureJar({ modId, filename })
+  ) {
     return skip(3, "learned-crashes-server", false);
   }
 

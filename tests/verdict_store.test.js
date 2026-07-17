@@ -49,7 +49,7 @@ describe("verdict store", () => {
 
   test("clearLearnedVerdict removes the verdict but keeps other data", () => {
     store.putInspection("sha1abc", "any:v8", { verdict: "unknown" });
-    store.recordLearnedVerdict("sha1abc", "crashes-server");
+    store.recordLearnedVerdict("sha1abc", "crashes-server", { detail: "loader error names mod 'bad'" });
     store.clearLearnedVerdict("sha1abc");
     store.flushVerdictStore();
 
@@ -78,8 +78,62 @@ describe("verdict store", () => {
     fs.writeFileSync(storePath, "{not json");
     store._resetForTests(storePath);
     expect(store.getLearnedVerdict("x")).toBeNull();
-    store.recordLearnedVerdict("x", "crashes-server");
+    store.recordLearnedVerdict("x", "crashes-server", { detail: "loader error names mod 'x'" });
     store.flushVerdictStore();
     expect(JSON.parse(fs.readFileSync(storePath, "utf8")).entries.x.learnedVerdict).toBe("crashes-server");
+  });
+
+  test("refuses to record low-confidence mixin-config / dependent learned verdicts", () => {
+    store.recordLearnedVerdict("uni", "crashes-server", {
+      filename: "+unimixins-all-1.7.10-0.3.0.jar",
+      detail: "stack frame in something"
+    });
+    store.recordLearnedVerdict("camp", "crashes-server", {
+      filename: "campfirebackport.jar",
+      detail: "mixin config campfirebackport.mixin.json"
+    });
+    store.recordLearnedVerdict("dep", "crashes-server", {
+      filename: "addon.jar",
+      detail: "dependent of quarantined mod"
+    });
+    store.recordLearnedVerdict("real", "crashes-server", {
+      filename: "bad.jar",
+      detail: "stack frame in com.example.Bad"
+    });
+    expect(store.getLearnedVerdict("uni")).toBeNull();
+    expect(store.getLearnedVerdict("camp")).toBeNull();
+    expect(store.getLearnedVerdict("dep")).toBeNull();
+    expect(store.getLearnedVerdict("real")).toBe("crashes-server");
+  });
+
+  test("load scrubs previously poisoned mixin-config learned verdicts", () => {
+    fs.writeFileSync(storePath, JSON.stringify({
+      version: 1,
+      entries: {
+        unisha: {
+          learnedVerdict: "crashes-server",
+          filename: "+unimixins-all-1.7.10-0.3.0.jar",
+          detail: "mixin config mixins.gtnhmixins.json"
+        },
+        campsha: {
+          learnedVerdict: "crashes-server",
+          filename: "campfirebackport-1.7.10-1.11.3.jar",
+          detail: "mixin config campfirebackport.mixin.json"
+        },
+        realsha: {
+          learnedVerdict: "crashes-server",
+          filename: "GTNH_custommainmenu-1.14.1.jar",
+          detail: "stack frame in lumien.custommainmenu.CustomMainMenu"
+        }
+      }
+    }));
+    store._resetForTests(storePath);
+    expect(store.getLearnedVerdict("unisha")).toBeNull();
+    expect(store.getLearnedVerdict("campsha")).toBeNull();
+    expect(store.getLearnedVerdict("realsha")).toBe("crashes-server");
+    const raw = JSON.parse(fs.readFileSync(storePath, "utf8"));
+    expect(raw.entries.unisha.learnedVerdict).toBeUndefined();
+    expect(raw.entries.campsha.learnedVerdict).toBeUndefined();
+    expect(raw.entries.realsha.learnedVerdict).toBe("crashes-server");
   });
 });
