@@ -84,6 +84,32 @@ describe("inspectModJar — strong heuristics", () => {
     expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown" });
   });
 
+  test("main entrypoint vetoes mid-size client-mixin heuristic (fusion pattern)", () => {
+    // Fusion ships ~29 client mixins and no common ones, but declares a main
+    // entrypoint + environment=* — skipping it cascade-drops Rechiseled.
+    const buf = makeJar({
+      "fabric.mod.json": JSON.stringify({
+        id: "fusion",
+        environment: "*",
+        entrypoints: { main: [ "com.example.Fusion" ], client: [ "com.example.FusionClient" ] }
+      }),
+      "fusion.mixins.json": mixinConfig({ client: Array(29).fill("ClientMixin") })
+    });
+    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "unknown", source: "no-signal" });
+  });
+
+  test("huge client-mixin set stays strong despite stub main entrypoint (fancymenu pattern)", () => {
+    const buf = makeJar({
+      "fabric.mod.json": JSON.stringify({
+        id: "fancymenu",
+        environment: "*",
+        entrypoints: { main: [ "a.Main" ], client: [ "a.Client" ], server: [ "a.Server" ] }
+      }),
+      "fancymenu.mixins.json": mixinConfig({ client: Array(65).fill("ClientMixin"), mixins: [ "A", "B", "C" ] })
+    });
+    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "client", confidence: "strong", source: "client-mixins" });
+  });
+
   test("small all-client mixin set → weak only (server libraries like CodeChickenLib ship a few client mixins)", () => {
     const buf = makeJar({
       "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n",

@@ -29,19 +29,27 @@ jest.mock("../utility/mod_inspector.js", () => ({
   flushModInspectorCache: jest.fn()
 }));
 
+jest.mock("../utility/crash_risk.js", () => ({
+  getOracle: jest.fn().mockResolvedValue(null),
+  assessCrashRisk: jest.fn().mockReturnValue({ risk: false, detail: null, reason: null })
+}));
+
 const AdmZip = require("adm-zip");
 const { installFilePlan, buildProgressBar } = require("../utility/modpack_install.js");
 const http = require("../utility/modpack_http.js");
 const sf = require("../utility/server_functions.js");
 const inspector = require("../utility/mod_inspector.js");
+const crashRisk = require("../utility/crash_risk.js");
 
 // Each downloaded "JAR" is just Buffer.from(its download URL) so mocks can branch on content.
-const ctx = () => ({
+const ctx = (overrides = {}) => ({
   i: {},
   serverId: "abc",
   userId: "u1",
   loaderType: "forge",
-  updateProgress: jest.fn().mockResolvedValue(undefined)
+  mcVersion: null,
+  updateProgress: jest.fn().mockResolvedValue(undefined),
+  ...overrides
 });
 
 const modFile = (name, sha1, providerServerSide = null) => ({
@@ -72,6 +80,8 @@ beforeEach(() => {
   sf.deleteServerFiles.mockResolvedValue(204);
   inspector.extractModDeps.mockReturnValue({ modId: null, requiredDeps: [] });
   inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
+  crashRisk.getOracle.mockResolvedValue(null);
+  crashRisk.assessCrashRisk.mockReturnValue({ risk: false, detail: null, reason: null });
 });
 
 describe("installFilePlan", () => {
@@ -89,7 +99,7 @@ describe("installFilePlan", () => {
 
     const res = await installFilePlan(ctx(), plan);
 
-    expect(res).toEqual({ unavailable: [], installed: 1, total: 1 });
+    expect(res).toEqual({ unavailable: [], installed: 1, total: 1, crashRiskWarnings: [] });
     expect(lastBatchEntries()).toEqual([ "mods/a.jar" ]);
   });
 
@@ -137,6 +147,29 @@ describe("installFilePlan", () => {
 
     expect(res.installed).toBe(2);
     expect(lastBatchEntries().sort()).toEqual([ "mods/content.jar", "mods/lib.jar" ]);
+  });
+
+  test("rescues a provider-unsupported library required by installed content (fusion/rechiseled pattern)", async () => {
+    // Fusion: no JAR client signal (main entrypoint vetoes mixins) but Modrinth says
+    // unsupported → skipped as provider-env, then rescued because Rechiseled needs it.
+    inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
+    inspector.extractModDeps.mockImplementation(buf => {
+      const s = buf.toString();
+      if (s.includes("fusion.jar")) return { modId: "fusion", requiredDeps: [] };
+      if (s.includes("rechiseled.jar")) return { modId: "rechiseled", requiredDeps: [ "fusion" ] };
+      return { modId: null, requiredDeps: [] };
+    });
+
+    const res = await installFilePlan(ctx(), {
+      modFiles: [
+        modFile("fusion.jar", "1", "unsupported"),
+        modFile("rechiseled.jar", "2", "required")
+      ],
+      extraFiles: [], overrideEntries: [], unavailable: []
+    });
+
+    expect(res.installed).toBe(2);
+    expect(lastBatchEntries().sort()).toEqual([ "mods/fusion.jar", "mods/rechiseled.jar" ]);
   });
 
   test("does not rescue strong-skipped mods: their dependents are chained out instead", async () => {
@@ -269,6 +302,66 @@ describe("installFilePlan", () => {
       modFiles: [], extraFiles: [], overrideEntries: [], unavailable
     });
     expect(res.unavailable).toBe(unavailable);
+    expect(res.crashRiskWarnings).toEqual([]);
+  });
+
+  test("warns on crash-risk for installed Fabric mods without skipping them", async () => {
+    const fakeOracle = { has: () => false, isClientApiPackage: () => false };
+    crashRisk.getOracle.mockResolvedValue(fakeOracle);
+    crashRisk.assessCrashRisk.mockReturnValue({
+      risk: true,
+      detail: "com/example/Mod --init--> net/minecraft/class_310",
+      reason: "init-reaches-client-only"
+    });
+
+    const res = await installFilePlan(
+      ctx({ loaderType: "fabric", mcVersion: "1.21.1" }),
+      {
+        modFiles: [ modFile("risky.jar", "r") ],
+        extraFiles: [],
+        overrideEntries: [],
+        unavailable: []
+      }
+    );
+
+    expect(res.installed).toBe(1);
+    expect(lastBatchEntries()).toEqual([ "mods/risky.jar" ]);
+    expect(res.crashRiskWarnings).toEqual([ {
+      filename: "risky.jar",
+      path: "mods/risky.jar",
+      detail: "com/example/Mod --init--> net/minecraft/class_310",
+      modId: null
+    } ]);
+    expect(crashRisk.getOracle).toHaveBeenCalledWith("1.21.1");
+  });
+
+  test("does not request a crash-risk oracle for Forge installs", async () => {
+    await installFilePlan(
+      ctx({ loaderType: "forge", mcVersion: "1.20.1" }),
+      { modFiles: [ modFile("a.jar", "a") ], extraFiles: [], overrideEntries: [], unavailable: [] }
+    );
+    expect(crashRisk.getOracle).not.toHaveBeenCalled();
+    expect(crashRisk.assessCrashRisk).not.toHaveBeenCalled();
+  });
+
+  test("skips crash-risk assessment for mods that were already filtered as client-only", async () => {
+    const fakeOracle = { has: () => false, isClientApiPackage: () => false };
+    crashRisk.getOracle.mockResolvedValue(fakeOracle);
+    inspector.inspectModJarCached.mockReturnValue(clientVerdict("explicit", "env-client"));
+
+    const res = await installFilePlan(
+      ctx({ loaderType: "fabric", mcVersion: "1.21.1" }),
+      {
+        modFiles: [ modFile("client.jar", "c") ],
+        extraFiles: [],
+        overrideEntries: [],
+        unavailable: []
+      }
+    );
+
+    expect(res.installed).toBe(0);
+    expect(res.crashRiskWarnings).toEqual([]);
+    expect(crashRisk.assessCrashRisk).not.toHaveBeenCalled();
   });
 });
 

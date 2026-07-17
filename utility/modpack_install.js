@@ -8,6 +8,7 @@ const msgLog = require("./logger.js");
 const { downloadFile, uploadBufferToServer } = require("./modpack_http.js");
 const { getFileUploadUrl, decompressFile, chmodServerFiles, deleteServerFiles } = require("./server_functions.js");
 const { inspectModJarCached, isClientOnlyMod, extractModDeps, flushModInspectorCache } = require("./mod_inspector.js");
+const { getOracle, assessCrashRisk } = require("./crash_risk.js");
 
 const MANIFEST_MOD_BATCH = 20;
 
@@ -26,7 +27,9 @@ function buildProgressBar({ downloaded, installed, total, unit, width = 20 }) {
 // root. Mod JARs bundled under overrides/mods/ don't go through the manifest
 // download path, so they get the same client-only inspection here (without
 // provider metadata — overrides carry no source side info).
-async function uploadOverrides(serverId, userId, overrideEntries, loaderType) {
+// Optional crashOracle/crashRiskWarnings collect dedicated-server init warnings
+// for jars that are still installed (never used as a skip signal).
+async function uploadOverrides(serverId, userId, overrideEntries, loaderType, crashOracle = null, crashRiskWarnings = null) {
   if (!overrideEntries || overrideEntries.length === 0) return;
   const overridesZip = new AdmZip();
   for (const entry of overrideEntries) {
@@ -35,6 +38,14 @@ async function uploadOverrides(serverId, userId, overrideEntries, loaderType) {
       if (isClientOnlyMod(inspection)) {
         msgLog.debugExtended(`[install-modpack] skip override mod (client-only, ${inspection.source}): ${entry.path}`);
         continue;
+      }
+      if (crashOracle && crashRiskWarnings) {
+        const risk = assessCrashRisk(entry.data, crashOracle);
+        if (risk.risk) {
+          const filename = entry.path.split("/").pop();
+          crashRiskWarnings.push({ filename, path: entry.path, detail: risk.detail, modId: null });
+          msgLog.warn(`[install-modpack] crash-risk (override): ${filename}: ${risk.detail}`);
+        }
       }
     }
     overridesZip.addFile(entry.path, entry.data, "", 0o100644 << 16);
@@ -75,17 +86,25 @@ async function uploadFileBatch(serverId, userId, items, batchIdx) {
 }
 
 // Installs a normalized plan onto a server.
-//   ctx  = { i, serverId, userId, loaderType, updateProgress }
+//   ctx  = { i, serverId, userId, loaderType, mcVersion, updateProgress }
 //          updateProgress(i, message) drives the Discord progress display.
 //   plan = { modFiles, extraFiles, overrideEntries, unavailable }
-// Returns { unavailable, installed, total }.
+// Returns { unavailable, installed, total, crashRiskWarnings }.
 async function installFilePlan(ctx, plan) {
-  const { i, serverId, userId, loaderType, updateProgress } = ctx;
+  const { i, serverId, userId, loaderType, mcVersion = null, updateProgress } = ctx;
   const { modFiles = [], extraFiles = [], overrideEntries = [], unavailable = [] } = plan;
   const update = msg => updateProgress(i, msg);
 
+  // Crash-risk oracle (Fabric/Quilt only — Forge lacks the entrypoints we walk).
+  // Failure to load is non-fatal: install continues without warnings.
+  let crashOracle = null;
+  if (mcVersion && (loaderType === "fabric" || loaderType === "quilt")) {
+    crashOracle = await getOracle(mcVersion);
+  }
+  const crashRiskWarnings = [];
+
   // Upload overrides first so server-side config is in place before mods.
-  await uploadOverrides(serverId, userId, overrideEntries, loaderType);
+  await uploadOverrides(serverId, userId, overrideEntries, loaderType, crashOracle, crashRiskWarnings);
 
   const grandTotal = modFiles.length + extraFiles.length;
   let downloadFailed = 0;
@@ -179,6 +198,22 @@ async function installFilePlan(ctx, plan) {
     }
   }
 
+  // Crash-risk warnings for mods that will actually be installed (never a skip).
+  if (crashOracle) {
+    for (const info of modInfos) {
+      if (info.isClientOnly) continue;
+      const risk = assessCrashRisk(info.buffer, crashOracle);
+      if (!risk.risk) continue;
+      crashRiskWarnings.push({
+        filename: info.filename,
+        path: info.path,
+        detail: risk.detail,
+        modId: info.modId
+      });
+      msgLog.warn(`[install-modpack] crash-risk: ${info.filename}: ${risk.detail}`);
+    }
+  }
+
   // Download extra (non-mod) files — configs etc. that need no side inspection.
   const extraInfos = [];
   for (let start = 0; start < extraFiles.length; start += MANIFEST_MOD_BATCH) {
@@ -224,7 +259,7 @@ async function installFilePlan(ctx, plan) {
     msgLog.warn(`[install-modpack] manifest install: ${installed}/${total} mods installed, ${downloadFailed} unavailable`);
   }
 
-  return { unavailable, installed, total };
+  return { unavailable, installed, total, crashRiskWarnings };
 }
 
 module.exports = { buildProgressBar, installFilePlan };

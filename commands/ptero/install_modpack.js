@@ -350,13 +350,22 @@ async function runInstallation(i, state, interaction) {
 
   // h. Place files: manifest plan install or direct upload+extract
   let unavailableMods = [];
+  let crashRiskWarnings = [];
   let manifestInstalled = 0;
   let manifestTotal = 0;
 
-  const installCtx = { i, serverId, userId: interaction.user.id, loaderType, updateProgress };
+  const effectiveMcVersion = mcVersion ?? installPlan?.mcVersion ?? null;
+  const installCtx = {
+    i,
+    serverId,
+    userId: interaction.user.id,
+    loaderType,
+    mcVersion: effectiveMcVersion,
+    updateProgress
+  };
 
   if (usedManifest) {
-    ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal } =
+    ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal, crashRiskWarnings = [] } =
       await installFilePlan(installCtx, installPlan));
   } else {
     const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
@@ -404,6 +413,15 @@ async function runInstallation(i, state, interaction) {
     });
     if (overflow > 0) lines.push(`- *...and ${overflow} more (see logs)*`);
     doneContent += `\n\n**Warning: ${unavailableMods.length} mod(s) could not be retrieved** (API download disabled, must install manually):\n${lines.join("\n")}`;
+  }
+
+  if (crashRiskWarnings.length > 0) {
+    const MAX_SHOWN = 10;
+    const shown = crashRiskWarnings.slice(0, MAX_SHOWN);
+    const overflow = crashRiskWarnings.length - shown.length;
+    const lines = shown.map(w => `- \`${w.filename}\``);
+    if (overflow > 0) lines.push(`- *...and ${overflow} more (see logs)*`);
+    doneContent += `\n\n**Warning: ${crashRiskWarnings.length} installed mod(s) may crash a dedicated server** (eager client-only init detected), they were still installed. Try removing them from \`mods/\` if boot fails:\n${lines.join("\n")}`;
   }
 
   const doneContainer = new ContainerBuilder()
