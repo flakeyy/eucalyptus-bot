@@ -533,5 +533,6 @@ module.exports = {
   reinstallServer,
   getServerInstallStatus,
   getServerDaemonType,
-  clearDaemonTypeCache
+  clearDaemonTypeCache,
+  daemonServerPath
 };
