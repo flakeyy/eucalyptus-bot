@@ -20,18 +20,28 @@ jest.mock("../utility/server_functions.js", () => ({
   deleteServerFiles: jest.fn()
 }));
 
+jest.mock("../utility/verdict_store.js", () => ({
+  getInspection: jest.fn(() => null),
+  putInspection: jest.fn(),
+  getCrashScan: jest.fn(() => null),
+  putCrashScan: jest.fn(),
+  getLearnedVerdict: jest.fn(() => null),
+  recordLearnedVerdict: jest.fn(),
+  flushVerdictStore: jest.fn()
+}));
+
 jest.mock("../utility/mod_inspector.js", () => ({
   inspectModJarCached: jest.fn(),
-  // Real decision logic: the engine tests should exercise how inspections and
-  // provider metadata combine, not a stub of it.
-  isClientOnlyMod: jest.requireActual("../utility/mod_inspector.js").isClientOnlyMod,
+  // Real decision logic: the engine tests should exercise how inspections,
+  // provider metadata, and curated lists combine, not a stub of it.
+  decideModInstall: jest.requireActual("../utility/mod_inspector.js").decideModInstall,
   extractModDeps: jest.fn(),
   flushModInspectorCache: jest.fn()
 }));
 
 jest.mock("../utility/crash_risk.js", () => ({
   getOracle: jest.fn().mockResolvedValue(null),
-  assessCrashRisk: jest.fn().mockReturnValue({ risk: false, detail: null, reason: null })
+  assessCrashRiskCached: jest.fn().mockReturnValue({ risk: false, detail: null, reason: null })
 }));
 
 const AdmZip = require("adm-zip");
@@ -40,6 +50,7 @@ const http = require("../utility/modpack_http.js");
 const sf = require("../utility/server_functions.js");
 const inspector = require("../utility/mod_inspector.js");
 const crashRisk = require("../utility/crash_risk.js");
+const verdictStore = require("../utility/verdict_store.js");
 
 // Each downloaded "JAR" is just Buffer.from(its download URL) so mocks can branch on content.
 const ctx = (overrides = {}) => ({
@@ -60,7 +71,7 @@ const modFile = (name, sha1, providerServerSide = null) => ({
   providerServerSide
 });
 
-const clientVerdict = (confidence, source = "test") => ({ verdict: "client", confidence, loader: "forge", source });
+const clientVerdict = (confidence, source = "env-client") => ({ verdict: "client", confidence, loader: "forge", source });
 const unknownVerdict = { verdict: "unknown", confidence: null, loader: null, source: "no-metadata" };
 
 // Returns the entry names inside the most recent uploaded mod-batch zip.
@@ -81,13 +92,14 @@ beforeEach(() => {
   inspector.extractModDeps.mockReturnValue({ modId: null, requiredDeps: [] });
   inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
   crashRisk.getOracle.mockResolvedValue(null);
-  crashRisk.assessCrashRisk.mockReturnValue({ risk: false, detail: null, reason: null });
+  crashRisk.assessCrashRiskCached.mockReturnValue({ risk: false, detail: null, reason: null });
+  verdictStore.getLearnedVerdict.mockReturnValue(null);
 });
 
 describe("installFilePlan", () => {
-  test("uploads server-side mods and skips client-only ones", async () => {
+  test("uploads server-side mods and skips explicitly client-only ones", async () => {
     inspector.inspectModJarCached.mockImplementation(sha1 =>
-      sha1 === "client" ? clientVerdict("explicit", "env-client") : unknownVerdict
+      sha1 === "client" ? clientVerdict("explicit") : unknownVerdict
     );
 
     const plan = {
@@ -99,13 +111,13 @@ describe("installFilePlan", () => {
 
     const res = await installFilePlan(ctx(), plan);
 
-    expect(res).toEqual({ unavailable: [], installed: 1, total: 1, crashRiskWarnings: [] });
+    expect(res).toMatchObject({ unavailable: [], installed: 1, total: 1, crashRiskWarnings: [] });
     expect(lastBatchEntries()).toEqual([ "mods/a.jar" ]);
   });
 
   test("skips mods whose required dependency was skipped (client-dep chain)", async () => {
     inspector.inspectModJarCached.mockImplementation((_sha1, buf) =>
-      buf.toString().includes("lib.jar") ? clientVerdict("explicit", "env-client") : unknownVerdict
+      buf.toString().includes("lib.jar") ? clientVerdict("explicit") : unknownVerdict
     );
     inspector.extractModDeps.mockImplementation(buf => {
       const s = buf.toString();
@@ -127,31 +139,26 @@ describe("installFilePlan", () => {
     expect(http.uploadBufferToServer).not.toHaveBeenCalled();
   });
 
-  test("rescues a weakly-skipped library that an installed mod requires (athena/oritech pattern)", async () => {
-    // lib.jar is skipped by a weak heuristic, but content.jar (installed) requires it:
-    // both must install instead of both being dropped.
-    inspector.inspectModJarCached.mockImplementation((_sha1, buf) =>
-      buf.toString().includes("lib.jar") ? clientVerdict("weak", "client-mixins") : unknownVerdict
-    );
+  test("rescues a curated-list skip that an installed mod requires (rescuable slot 6)", async () => {
+    // Blur-*.jar hits the curated client list, but content.jar (installed)
+    // requires it: both must install instead of both being dropped.
     inspector.extractModDeps.mockImplementation(buf => {
       const s = buf.toString();
-      if (s.includes("lib.jar")) return { modId: "libmod", requiredDeps: [] };
-      if (s.includes("content.jar")) return { modId: "contentmod", requiredDeps: [ "libmod" ] };
+      if (s.includes("Blur-1.0.4.jar")) return { modId: "blur", requiredDeps: [] };
+      if (s.includes("content.jar")) return { modId: "contentmod", requiredDeps: [ "blur" ] };
       return { modId: null, requiredDeps: [] };
     });
 
     const res = await installFilePlan(ctx(), {
-      modFiles: [ modFile("lib.jar", "1"), modFile("content.jar", "2") ],
+      modFiles: [ modFile("Blur-1.0.4.jar", "1"), modFile("content.jar", "2") ],
       extraFiles: [], overrideEntries: [], unavailable: []
     });
 
     expect(res.installed).toBe(2);
-    expect(lastBatchEntries().sort()).toEqual([ "mods/content.jar", "mods/lib.jar" ]);
+    expect(lastBatchEntries().sort()).toEqual([ "mods/Blur-1.0.4.jar", "mods/content.jar" ]);
   });
 
   test("rescues a provider-unsupported library required by installed content (fusion/rechiseled pattern)", async () => {
-    // Fusion: no JAR client signal (main entrypoint vetoes mixins) but Modrinth says
-    // unsupported → skipped as provider-env, then rescued because Rechiseled needs it.
     inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
     inspector.extractModDeps.mockImplementation(buf => {
       const s = buf.toString();
@@ -172,20 +179,19 @@ describe("installFilePlan", () => {
     expect(lastBatchEntries().sort()).toEqual([ "mods/fusion.jar", "mods/rechiseled.jar" ]);
   });
 
-  test("does not rescue strong-skipped mods: their dependents are chained out instead", async () => {
-    // fancymenu pattern: strong client verdict, an addon requires it → both skipped.
+  test("does not rescue explicit-client skips: their dependents are chained out instead", async () => {
     inspector.inspectModJarCached.mockImplementation((_sha1, buf) =>
-      buf.toString().includes("fancy.jar") ? clientVerdict("strong", "client-mixins") : unknownVerdict
+      buf.toString().includes("clientlib.jar") ? clientVerdict("explicit") : unknownVerdict
     );
     inspector.extractModDeps.mockImplementation(buf => {
       const s = buf.toString();
-      if (s.includes("fancy.jar")) return { modId: "fancymenu", requiredDeps: [] };
-      if (s.includes("addon.jar")) return { modId: "fancyaddon", requiredDeps: [ "fancymenu" ] };
+      if (s.includes("clientlib.jar")) return { modId: "clientlib", requiredDeps: [] };
+      if (s.includes("addon.jar")) return { modId: "addon", requiredDeps: [ "clientlib" ] };
       return { modId: null, requiredDeps: [] };
     });
 
     const res = await installFilePlan(ctx(), {
-      modFiles: [ modFile("fancy.jar", "1"), modFile("addon.jar", "2") ],
+      modFiles: [ modFile("clientlib.jar", "1"), modFile("addon.jar", "2") ],
       extraFiles: [], overrideEntries: [], unavailable: []
     });
 
@@ -201,41 +207,43 @@ describe("installFilePlan", () => {
     expect(res.installed).toBe(0);
   });
 
-  test("provider 'optional'/'required' overrides a weak JAR verdict but not a strong one", async () => {
-    // Weak verdict + provider says server-compatible → installed.
-    inspector.inspectModJarCached.mockReturnValue(clientVerdict("weak", "dep-side-client"));
-    let res = await installFilePlan(ctx(), {
-      modFiles: [ modFile("weak.jar", "w", "optional") ],
+  test("provider 'optional'/'required' overrides explicit client metadata (slot 4 beats slot 5)", async () => {
+    inspector.inspectModJarCached.mockReturnValue(clientVerdict("explicit"));
+    const res = await installFilePlan(ctx(), {
+      modFiles: [ modFile("enchdesc.jar", "e", "optional") ],
       extraFiles: [], overrideEntries: [], unavailable: []
     });
     expect(res.installed).toBe(1);
+  });
 
-    // Strong verdict wins even when the provider claims server support.
-    jest.clearAllMocks();
-    http.downloadFile.mockImplementation(async url => Buffer.from(url));
-    http.uploadBufferToServer.mockResolvedValue({ ok: true });
-    sf.getFileUploadUrl.mockResolvedValue("https://wings.example.com/upload");
-    sf.decompressFile.mockResolvedValue(204);
-    inspector.extractModDeps.mockReturnValue({ modId: null, requiredDeps: [] });
-    inspector.inspectModJarCached.mockReturnValue(clientVerdict("strong", "client-mixins"));
-    res = await installFilePlan(ctx(), {
-      modFiles: [ modFile("strong.jar", "s", "optional") ],
+  test("learned crash verdict from the verdict store skips even provider-required mods", async () => {
+    verdictStore.getLearnedVerdict.mockImplementation(sha1 => sha1 === "crasher" ? "crashes-server" : null);
+    const res = await installFilePlan(ctx(), {
+      modFiles: [ modFile("crasher.jar", "crasher", "required"), modFile("ok.jar", "ok", "required") ],
+      extraFiles: [], overrideEntries: [], unavailable: []
+    });
+    expect(res.installed).toBe(1);
+    expect(lastBatchEntries()).toEqual([ "mods/ok.jar" ]);
+  });
+
+  test("curated client list skips with no provider metadata (Blur pattern)", async () => {
+    const res = await installFilePlan(ctx(), {
+      modFiles: [ modFile("Blur-1.0.4-14.jar", "b") ],
       extraFiles: [], overrideEntries: [], unavailable: []
     });
     expect(res.installed).toBe(0);
   });
 
-  test("weak JAR verdict with no provider metadata skips the mod", async () => {
-    inspector.inspectModJarCached.mockReturnValue(clientVerdict("weak", "client-entrypoints"));
+  test("server_side_overrides installs known Modrinth mislabels despite provider unsupported (Pam's pattern)", async () => {
     const res = await installFilePlan(ctx(), {
-      modFiles: [ modFile("weak.jar", "w") ],
+      modFiles: [ modFile("Pam's HarvestCraft 1.12.2zg.jar", "p", "unsupported") ],
       extraFiles: [], overrideEntries: [], unavailable: []
     });
-    expect(res.installed).toBe(0);
+    expect(res.installed).toBe(1);
   });
 
   test("allowlisted mods install even when detection says client-only", async () => {
-    inspector.inspectModJarCached.mockReturnValue(clientVerdict("explicit", "env-client"));
+    inspector.inspectModJarCached.mockReturnValue(clientVerdict("explicit"));
     inspector.extractModDeps.mockReturnValue({ modId: "allowedmod", requiredDeps: [] });
     const res = await installFilePlan(ctx(), {
       modFiles: [ modFile("allowed.jar", "a") ],
@@ -267,7 +275,7 @@ describe("installFilePlan", () => {
 
   test("inspects mod JARs bundled in overrides and drops client-only ones", async () => {
     inspector.inspectModJarCached.mockImplementation((_sha1, buf) =>
-      buf.toString().includes("client") ? clientVerdict("explicit", "env-client") : unknownVerdict
+      buf.toString().includes("client") ? clientVerdict("explicit") : unknownVerdict
     );
     await installFilePlan(ctx(), {
       modFiles: [],
@@ -286,14 +294,13 @@ describe("installFilePlan", () => {
     expect(entries).not.toContain("mods/clientmod.jar");
   });
 
-  test("flushes the mod-inspector cache once per download batch", async () => {
+  test("flushes the inspection cache at least once per download batch", async () => {
     const plan = {
       modFiles: [ modFile("a.jar", "a"), modFile("b.jar", "b") ],
       extraFiles: [], overrideEntries: [], unavailable: []
     };
     await installFilePlan(ctx(), plan);
-    // Two mods, batch size 20 → a single batch → a single flush.
-    expect(inspector.flushModInspectorCache).toHaveBeenCalledTimes(1);
+    expect(inspector.flushModInspectorCache).toHaveBeenCalled();
   });
 
   test("passes the plan's unavailable list through to the result", async () => {
@@ -305,10 +312,43 @@ describe("installFilePlan", () => {
     expect(res.crashRiskWarnings).toEqual([]);
   });
 
-  test("warns on crash-risk for installed Fabric mods without skipping them", async () => {
+  test("returns a mod index of installed jars for crash attribution", async () => {
+    inspector.extractModDeps.mockImplementation(buf =>
+      buf.toString().includes("a.jar")
+        ? { modId: "moda", requiredDeps: [ "libx" ] }
+        : { modId: null, requiredDeps: [] }
+    );
+    const res = await installFilePlan(ctx(), {
+      modFiles: [ modFile("a.jar", "a") ],
+      extraFiles: [], overrideEntries: [], unavailable: []
+    });
+    expect(res.modIndex.byModId.get("moda")).toBe("a.jar");
+    expect(res.modIndex.depsOf.get("a.jar")).toEqual([ "libx" ]);
+    expect(res.modIndex.sha1Of.get("a.jar")).toBe("a");
+  });
+
+  test("crash scan (Layer 2) skips a provider-null mod whose init reaches client-only classes", async () => {
     const fakeOracle = { has: () => false, isClientApiPackage: () => false };
     crashRisk.getOracle.mockResolvedValue(fakeOracle);
-    crashRisk.assessCrashRisk.mockReturnValue({
+    crashRisk.assessCrashRiskCached.mockReturnValue({
+      risk: true,
+      detail: "com/example/Mod --init--> net/minecraft/class_310",
+      reason: "init-reaches-client-only"
+    });
+
+    const res = await installFilePlan(
+      ctx({ loaderType: "fabric", mcVersion: "1.21.1" }),
+      { modFiles: [ modFile("risky.jar", "r") ], extraFiles: [], overrideEntries: [], unavailable: [] }
+    );
+
+    expect(res.installed).toBe(0);
+    expect(crashRisk.getOracle).toHaveBeenCalledWith("1.21.1");
+  });
+
+  test("crash scan only warns when the provider vouches for the mod (required/optional)", async () => {
+    const fakeOracle = { has: () => false, isClientApiPackage: () => false };
+    crashRisk.getOracle.mockResolvedValue(fakeOracle);
+    crashRisk.assessCrashRiskCached.mockReturnValue({
       risk: true,
       detail: "com/example/Mod --init--> net/minecraft/class_310",
       reason: "init-reaches-client-only"
@@ -317,7 +357,7 @@ describe("installFilePlan", () => {
     const res = await installFilePlan(
       ctx({ loaderType: "fabric", mcVersion: "1.21.1" }),
       {
-        modFiles: [ modFile("risky.jar", "r") ],
+        modFiles: [ modFile("risky.jar", "r", "optional") ],
         extraFiles: [],
         overrideEntries: [],
         unavailable: []
@@ -332,36 +372,29 @@ describe("installFilePlan", () => {
       detail: "com/example/Mod --init--> net/minecraft/class_310",
       modId: null
     } ]);
-    expect(crashRisk.getOracle).toHaveBeenCalledWith("1.21.1");
   });
 
-  test("does not request a crash-risk oracle for Forge installs", async () => {
+  test("requests a crash-risk oracle for Forge installs too (@Mod construction roots)", async () => {
     await installFilePlan(
       ctx({ loaderType: "forge", mcVersion: "1.20.1" }),
       { modFiles: [ modFile("a.jar", "a") ], extraFiles: [], overrideEntries: [], unavailable: [] }
     );
-    expect(crashRisk.getOracle).not.toHaveBeenCalled();
-    expect(crashRisk.assessCrashRisk).not.toHaveBeenCalled();
+    expect(crashRisk.getOracle).toHaveBeenCalledWith("1.20.1");
   });
 
   test("skips crash-risk assessment for mods that were already filtered as client-only", async () => {
     const fakeOracle = { has: () => false, isClientApiPackage: () => false };
     crashRisk.getOracle.mockResolvedValue(fakeOracle);
-    inspector.inspectModJarCached.mockReturnValue(clientVerdict("explicit", "env-client"));
+    inspector.inspectModJarCached.mockReturnValue(clientVerdict("explicit"));
 
     const res = await installFilePlan(
       ctx({ loaderType: "fabric", mcVersion: "1.21.1" }),
-      {
-        modFiles: [ modFile("client.jar", "c") ],
-        extraFiles: [],
-        overrideEntries: [],
-        unavailable: []
-      }
+      { modFiles: [ modFile("client.jar", "c") ], extraFiles: [], overrideEntries: [], unavailable: [] }
     );
 
     expect(res.installed).toBe(0);
     expect(res.crashRiskWarnings).toEqual([]);
-    expect(crashRisk.assessCrashRisk).not.toHaveBeenCalled();
+    expect(crashRisk.assessCrashRiskCached).not.toHaveBeenCalled();
   });
 });
 

@@ -39,6 +39,10 @@ jest.mock("../utility/url_validation.js", () => ({
   validateExternalUrl: jest.fn(async () => ({ ok: true }))
 }));
 
+jest.mock("../utility/boot_verify.js", () => ({
+  verifyServerBoot: jest.fn()
+}));
+
 jest.mock("../config.json", () => ({
   debug: false,
   minecraft_nest_id: 1,
@@ -56,6 +60,8 @@ const { execute, runInstallation } = require("../commands/ptero/install_modpack.
 const serverFunctions = require("../utility/server_functions.js");
 const helpers = require("../utility/helper_functions.js");
 const perms = require("../utility/permissions.js");
+const bootVerify = require("../utility/boot_verify.js");
+const testConfig = require("../config.json");
 const { makeState, mockHappyPath, mockUpToTransfer } = require("./fixtures/modpack.js");
 
 // ─── Project ID Parsing ─────────────────────────────────────────────────────
@@ -506,5 +512,79 @@ describe("runInstallation behavior", () => {
 
     const lastCall = mockInteraction.editReply.mock.calls.at(-1)[0];
     expect(JSON.stringify(lastCall.components[0])).toContain("client modpack");
+  });
+
+  test("does not run boot verification when config.boot_verify is absent", async () => {
+    mockHappyPath(serverFunctions);
+    await runAndSettle(makeState());
+    expect(bootVerify.verifyServerBoot).not.toHaveBeenCalled();
+  });
+
+  describe("with boot_verify enabled", () => {
+    beforeEach(() => {
+      testConfig.boot_verify = { enabled: true, max_attempts: 3 };
+    });
+
+    afterEach(() => {
+      delete testConfig.boot_verify;
+    });
+
+    test("reports a verified boot and drops the crash reminder", async () => {
+      mockHappyPath(serverFunctions);
+      bootVerify.verifyServerBoot.mockResolvedValue({
+        success: true, attempts: 1, quarantined: [], reason: null, consoleTail: ""
+      });
+
+      await runAndSettle(makeState({ usingClientPack: true }));
+
+      expect(bootVerify.verifyServerBoot).toHaveBeenCalledWith(expect.objectContaining({
+        serverId: "abc123",
+        userId: "discord1",
+        settings: testConfig.boot_verify
+      }));
+      const lastCall = JSON.stringify(mockInteraction.editReply.mock.calls.at(-1)[0].components[0]);
+      expect(lastCall).toContain("Boot verified");
+      expect(lastCall).not.toContain("client modpack");
+    });
+
+    test("lists quarantined mods in the completion message", async () => {
+      mockHappyPath(serverFunctions);
+      bootVerify.verifyServerBoot.mockResolvedValue({
+        success: true,
+        attempts: 2,
+        quarantined: [ { jar: "badmod.jar", reason: "loader error names mod 'badmod'" } ],
+        reason: null,
+        consoleTail: ""
+      });
+
+      await runAndSettle(makeState());
+
+      const lastCall = JSON.stringify(mockInteraction.editReply.mock.calls.at(-1)[0].components[0]);
+      expect(lastCall).toContain("badmod.jar");
+      expect(lastCall).toContain("mods-disabled");
+    });
+
+    test("warns when verification fails", async () => {
+      mockHappyPath(serverFunctions);
+      bootVerify.verifyServerBoot.mockResolvedValue({
+        success: false, attempts: 3, quarantined: [], reason: "unattributed", consoleTail: "boom"
+      });
+
+      await runAndSettle(makeState());
+
+      const lastCall = JSON.stringify(mockInteraction.editReply.mock.calls.at(-1)[0].components[0]);
+      expect(lastCall).toContain("did not boot successfully");
+      expect(lastCall).toContain("unattributed");
+    });
+
+    test("a boot-verify crash does not fail the install completion", async () => {
+      mockHappyPath(serverFunctions);
+      bootVerify.verifyServerBoot.mockRejectedValue(new Error("ws exploded"));
+
+      await runAndSettle(makeState());
+
+      const lastCall = JSON.stringify(mockInteraction.editReply.mock.calls.at(-1)[0].components[0]);
+      expect(lastCall).toContain("Installation Complete");
+    });
   });
 });

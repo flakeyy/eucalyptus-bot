@@ -1,14 +1,16 @@
 // Shared "file-plan" install engine used by every modpack source. Given a
 // normalized plan (mod files to download, extra files, and overrides to upload),
 // it downloads and inspects mods in batches, drops client-only mods (and their
-// dependents), and uploads the survivors to the server's mods/ directory.
+// dependents) via the Layer 1 precedence table, and uploads the survivors to
+// the server's mods/ directory. Also builds the mod index the boot-verify loop
+// (Layer 3) uses for crash attribution.
 const AdmZip = require("adm-zip");
-const config = require("../config.json");
 const msgLog = require("./logger.js");
 const { downloadFile, uploadBufferToServer } = require("./modpack_http.js");
 const { getFileUploadUrl, decompressFile, chmodServerFiles, deleteServerFiles } = require("./server_functions.js");
-const { inspectModJarCached, isClientOnlyMod, extractModDeps, flushModInspectorCache } = require("./mod_inspector.js");
-const { getOracle, assessCrashRisk } = require("./crash_risk.js");
+const { inspectModJarCached, decideModInstall, extractModDeps, flushModInspectorCache } = require("./mod_inspector.js");
+const { getOracle, assessCrashRiskCached } = require("./crash_risk.js");
+const { createModIndex, addJarToModIndex } = require("./crash_attribution.js");
 
 const MANIFEST_MOD_BATCH = 20;
 
@@ -23,27 +25,49 @@ function buildProgressBar({ downloaded, installed, total, unit, width = 20 }) {
   return `\`[${dlBar}↓${ulBar}↑]\` ↓ ${Math.round(dlPct * 100)}% · ↑ ${Math.round(ulPct * 100)}% · ${unit}`;
 }
 
+// Layer 1 decision for one JAR, running the Layer 2 crash-proof scan lazily —
+// only when no earlier slot decided (provider silent, no static signal), since
+// that is the only case where the scan result matters (slot 8).
+function decideWithLayer2({ inspection, providerServerSide, modId, filename, sha1, buffer, crashOracle, mcVersion }) {
+  let decision = decideModInstall({ inspection, providerServerSide, modId, filename, sha1 });
+  if (decision.install && decision.slot === 9 && crashOracle) {
+    const risk = assessCrashRiskCached(sha1 ?? null, buffer, crashOracle, mcVersion);
+    if (risk.risk) {
+      decision = decideModInstall({ inspection, providerServerSide, modId, filename, sha1, crashRisk: risk });
+      decision.crashDetail = risk.detail;
+    }
+  }
+  return decision;
+}
+
 // Uploads override entries as a single overrides.zip extracted at the server
 // root. Mod JARs bundled under overrides/mods/ don't go through the manifest
-// download path, so they get the same client-only inspection here (without
-// provider metadata — overrides carry no source side info).
-// Optional crashOracle/crashRiskWarnings collect dedicated-server init warnings
-// for jars that are still installed (never used as a skip signal).
-async function uploadOverrides(serverId, userId, overrideEntries, loaderType, crashOracle = null, crashRiskWarnings = null) {
+// download path, so they get the same Layer 1 decision here (without provider
+// metadata — overrides carry no source side info). Installed override jars are
+// added to modIndex and get crash-risk warnings like manifest mods.
+async function uploadOverrides(serverId, userId, overrideEntries, loaderType, {
+  crashOracle = null, mcVersion = null, crashRiskWarnings = null, modIndex = null
+} = {}) {
   if (!overrideEntries || overrideEntries.length === 0) return;
   const overridesZip = new AdmZip();
   for (const entry of overrideEntries) {
     if (/^mods\/[^/]+\.jar$/i.test(entry.path)) {
       const inspection = inspectModJarCached(null, entry.data, loaderType);
-      if (isClientOnlyMod(inspection)) {
-        msgLog.debugExtended(`[install-modpack] skip override mod (client-only, ${inspection.source}): ${entry.path}`);
+      const { modId, requiredDeps } = extractModDeps(entry.data, loaderType);
+      const filename = entry.path.split("/").pop();
+      const decision = decideWithLayer2({
+        inspection, providerServerSide: null, modId, filename,
+        sha1: null, buffer: entry.data, crashOracle, mcVersion
+      });
+      if (!decision.install) {
+        msgLog.debugExtended(`[install-modpack] skip override mod (client-only, ${decision.source}): ${entry.path}`);
         continue;
       }
+      if (modIndex) addJarToModIndex(modIndex, filename, entry.data, { modId, requiredDeps });
       if (crashOracle && crashRiskWarnings) {
-        const risk = assessCrashRisk(entry.data, crashOracle);
+        const risk = assessCrashRiskCached(null, entry.data, crashOracle, mcVersion);
         if (risk.risk) {
-          const filename = entry.path.split("/").pop();
-          crashRiskWarnings.push({ filename, path: entry.path, detail: risk.detail, modId: null });
+          crashRiskWarnings.push({ filename, path: entry.path, detail: risk.detail, modId });
           msgLog.warn(`[install-modpack] crash-risk (override): ${filename}: ${risk.detail}`);
         }
       }
@@ -89,22 +113,23 @@ async function uploadFileBatch(serverId, userId, items, batchIdx) {
 //   ctx  = { i, serverId, userId, loaderType, mcVersion, updateProgress }
 //          updateProgress(i, message) drives the Discord progress display.
 //   plan = { modFiles, extraFiles, overrideEntries, unavailable }
-// Returns { unavailable, installed, total, crashRiskWarnings }.
+// Returns { unavailable, installed, total, crashRiskWarnings, modIndex }.
 async function installFilePlan(ctx, plan) {
   const { i, serverId, userId, loaderType, mcVersion = null, updateProgress } = ctx;
   const { modFiles = [], extraFiles = [], overrideEntries = [], unavailable = [] } = plan;
   const update = msg => updateProgress(i, msg);
 
-  // Crash-risk oracle (Fabric/Quilt only — Forge lacks the entrypoints we walk).
-  // Failure to load is non-fatal: install continues without warnings.
-  let crashOracle = null;
-  if (mcVersion && (loaderType === "fabric" || loaderType === "quilt")) {
-    crashOracle = await getOracle(mcVersion);
-  }
+  // Crash-proof oracle (Layer 2). All loaders: Fabric/Quilt roots come from
+  // entrypoints, Forge/NeoForge from @Mod containers; legacy versions without
+  // official mappings get a prefix-only oracle. Failure to load is non-fatal.
+  const crashOracle = mcVersion ? await getOracle(mcVersion) : null;
   const crashRiskWarnings = [];
+  const modIndex = createModIndex();
 
   // Upload overrides first so server-side config is in place before mods.
-  await uploadOverrides(serverId, userId, overrideEntries, loaderType, crashOracle, crashRiskWarnings);
+  await uploadOverrides(serverId, userId, overrideEntries, loaderType, {
+    crashOracle, mcVersion, crashRiskWarnings, modIndex
+  });
 
   const grandTotal = modFiles.length + extraFiles.length;
   let downloadFailed = 0;
@@ -115,7 +140,7 @@ async function installFilePlan(ctx, plan) {
     `**Installing mods from manifest**\nThis may take a while...\n\n${buildProgressBar({ downloaded: 0, installed: 0, total: grandTotal, unit: `${grandTotal} mods` })}`
   );
 
-  const modInfos = []; // { path, filename, buffer, sha1, isClientOnly, source, modId, requiredDeps }
+  const modInfos = []; // { path, filename, buffer, sha1, isClientOnly, rescuable, source, modId, requiredDeps }
   for (let start = 0; start < modFiles.length; start += MANIFEST_MOD_BATCH) {
     const batch = modFiles.slice(start, start + MANIFEST_MOD_BATCH);
     const results = await Promise.all(batch.map(async mod => {
@@ -132,29 +157,29 @@ async function installFilePlan(ctx, plan) {
       if (!r) continue;
       const inspection = inspectModJarCached(r.sha1, r.buffer, loaderType);
       const { modId, requiredDeps } = extractModDeps(r.buffer, loaderType);
-      // Combine JAR inspection with provider-declared server side (mrpack
-      // env.server / CurseForge→Modrinth required|optional): strong JAR
-      // verdicts win, weak ones yield to the provider, and pack-authored
-      // unsupported decides when the JAR is silent.
-      let isClientOnly = isClientOnlyMod(inspection, r.providerServerSide ?? null);
-      let source = inspection.verdict === "client" ? inspection.source : "provider-env";
-      // Manual escape hatches: the allowlist forces a mod onto the server when
-      // detection gets it wrong; the blocklist forces it off and wins overall.
-      if (isClientOnly && modId !== null && (config.mod_id_allowlist ?? []).includes(modId)) {
-        isClientOnly = false;
-        source = "allowlist";
+      // Layer 1 precedence table (see mod_inspector.decideModInstall), with the
+      // Layer 2 crash-proof scan filling slot 8 when nothing else decided.
+      const decision = decideWithLayer2({
+        inspection,
+        providerServerSide: r.providerServerSide ?? null,
+        modId,
+        filename: r.filename,
+        sha1: r.sha1 ?? null,
+        buffer: r.buffer,
+        crashOracle,
+        mcVersion
+      });
+      if (!decision.install) {
+        msgLog.debugExtended(`[install-modpack] skip (client-only, slot ${decision.slot}/${decision.source}): ${r.filename}`);
       }
-      if (!isClientOnly && modId !== null && (config.mod_id_blocklist ?? []).includes(modId)) {
-        isClientOnly = true;
-        source = "blocklist";
-      }
-      if (isClientOnly) msgLog.debugExtended(`[install-modpack] skip (client-only, ${source}): ${r.filename}`);
-      // Skips from weak heuristics or provider metadata may be rescued below if
-      // an installed mod hard-requires them; explicit/strong JAR declarations
-      // and the blocklist may not.
-      const rescuable = isClientOnly && source !== "blocklist"
-        && !(inspection.verdict === "client" && (inspection.confidence === "explicit" || inspection.confidence === "strong"));
-      modInfos.push({ ...r, isClientOnly, rescuable, source, modId, requiredDeps });
+      modInfos.push({
+        ...r,
+        isClientOnly: !decision.install,
+        rescuable: decision.rescuable,
+        source: decision.source,
+        modId,
+        requiredDeps
+      });
     }
     flushModInspectorCache();
 
@@ -163,12 +188,12 @@ async function installFilePlan(ctx, plan) {
     );
   }
 
-  // Rescue pass: a weakly-skipped mod that an installed mod hard-requires must
-  // be present server-side anyway (the loader would fail on the missing
+  // Rescue pass: a rescuably-skipped mod that an installed mod hard-requires
+  // must be present server-side anyway (the loader would fail on the missing
   // dependency), so install it rather than dropping the dependent — this is how
   // server-needed libraries with client-leaning metadata (e.g. rendering libs
   // marked unsupported on Modrinth) survive. Runs to a fixpoint so a rescued
-  // mod's own weak dependencies get rescued too.
+  // mod's own rescuable dependencies get rescued too.
   let rescued = true;
   while (rescued) {
     rescued = false;
@@ -185,13 +210,19 @@ async function installFilePlan(ctx, plan) {
     }
   }
 
-  // Propagate client-only status: if a mod's required dependency was skipped, skip the mod too.
+  // Propagate client-only status: if a mod's required dependency was skipped,
+  // skip the mod too. Provider-vouched mods (required/optional) are exempt —
+  // the pack author asserts they run server-side (their "dep" on a client mod
+  // is typically integration-only, e.g. chipped→ctm, configscreens→modmenu);
+  // if the dependency truly is hard, the boot-verify loop attributes the
+  // missing-dep failure and quarantines the dependent.
+  const providerVouched = m => m.providerServerSide === "required" || m.providerServerSide === "optional";
   const skippedModIds = new Set(modInfos.filter(m => m.isClientOnly && m.modId).map(m => m.modId));
   let propagated = true;
   while (propagated) {
     propagated = false;
     for (const info of modInfos) {
-      if (!info.isClientOnly && info.requiredDeps.some(dep => skippedModIds.has(dep))) {
+      if (!info.isClientOnly && !providerVouched(info) && info.requiredDeps.some(dep => skippedModIds.has(dep))) {
         info.isClientOnly = true;
         if (info.modId) { skippedModIds.add(info.modId); propagated = true; }
         msgLog.debugExtended(`[install-modpack] skip (client-dep chain): ${info.filename}`);
@@ -199,21 +230,25 @@ async function installFilePlan(ctx, plan) {
     }
   }
 
-  // Crash-risk warnings for mods that will actually be installed (never a skip).
-  if (crashOracle) {
-    for (const info of modInfos) {
-      if (info.isClientOnly) continue;
-      const risk = assessCrashRisk(info.buffer, crashOracle);
-      if (!risk.risk) continue;
-      crashRiskWarnings.push({
-        filename: info.filename,
-        path: info.path,
-        detail: risk.detail,
-        modId: info.modId
-      });
-      msgLog.warn(`[install-modpack] crash-risk: ${info.filename}: ${risk.detail}`);
-    }
+  // Index installed mods for crash attribution, and surface crash-risk warnings
+  // for mods that install anyway (provider vouched for them — never a skip).
+  for (const info of modInfos) {
+    if (info.isClientOnly) continue;
+    addJarToModIndex(modIndex, info.filename, info.buffer, {
+      modId: info.modId, requiredDeps: info.requiredDeps, sha1: info.sha1 ?? null
+    });
+    if (!crashOracle) continue;
+    const risk = assessCrashRiskCached(info.sha1 ?? null, info.buffer, crashOracle, mcVersion);
+    if (!risk.risk) continue;
+    crashRiskWarnings.push({
+      filename: info.filename,
+      path: info.path,
+      detail: risk.detail,
+      modId: info.modId
+    });
+    msgLog.warn(`[install-modpack] crash-risk: ${info.filename}: ${risk.detail}`);
   }
+  flushModInspectorCache();
 
   // Download extra (non-mod) files — configs etc. that need no side inspection.
   const extraInfos = [];
@@ -260,7 +295,7 @@ async function installFilePlan(ctx, plan) {
     msgLog.warn(`[install-modpack] manifest install: ${installed}/${total} mods installed, ${downloadFailed} unavailable`);
   }
 
-  return { unavailable, installed, total, crashRiskWarnings };
+  return { unavailable, installed, total, crashRiskWarnings, modIndex };
 }
 
 module.exports = { buildProgressBar, installFilePlan };

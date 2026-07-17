@@ -112,9 +112,12 @@ describe("resolveModrinthInstall", () => {
   };
 
   let result;
-  beforeAll(() => {
-    result = modrinth.resolveModrinthInstall(makeMrpack(index, entries));
+  beforeAll(async () => {
+    // No live Modrinth hits in unit tests — empty version_files keeps pack env.
+    global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
+    result = await modrinth.resolveModrinthInstall(makeMrpack(index, entries));
   });
+  afterAll(() => jest.restoreAllMocks());
 
   test("reads loader and mc version from dependencies", () => {
     expect(result.kind).toBe("plan");
@@ -145,8 +148,28 @@ describe("resolveModrinthInstall", () => {
     expect(byPath["options.txt"]).not.toBe("client-opts");
   });
 
-  test("returns null for a non-mrpack buffer", () => {
-    expect(modrinth.resolveModrinthInstall(Buffer.from("nope"))).toBeNull();
+  test("returns null for a non-mrpack buffer", async () => {
+    expect(await modrinth.resolveModrinthInstall(Buffer.from("nope"))).toBeNull();
+  });
+
+  test("prefers Modrinth project server_side over pack env when the hash resolves", async () => {
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          a: { project_id: "p1", files: [ { primary: true, url: "https://cdn/a.jar", filename: "a.jar" } ] }
+        })
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ([ { id: "p1", server_side: "unsupported" } ])
+      });
+    const plan = await modrinth.resolveModrinthInstall(makeMrpack(index, entries));
+    const a = plan.plan.modFiles.find(m => m.path === "mods/a.jar");
+    expect(a.providerServerSide).toBe("unsupported"); // project wins over env.server=required
+    jest.restoreAllMocks();
   });
 });
 
@@ -215,13 +238,13 @@ describe("getServerSideBySlugs", () => {
 });
 
 describe("projectServerSideForCurseforge", () => {
-  test("keeps required/optional for rescuing weak JAR verdicts", () => {
+  test("passes through Modrinth project side labels unchanged", () => {
     expect(modrinth.projectServerSideForCurseforge("required")).toBe("required");
     expect(modrinth.projectServerSideForCurseforge("optional")).toBe("optional");
+    expect(modrinth.projectServerSideForCurseforge("unsupported")).toBe("unsupported");
   });
 
-  test("drops unsupported so mislabeled Modrinth projects cannot skip installs", () => {
-    expect(modrinth.projectServerSideForCurseforge("unsupported")).toBeNull();
+  test("maps non-strings to null", () => {
     expect(modrinth.projectServerSideForCurseforge(null)).toBeNull();
     expect(modrinth.projectServerSideForCurseforge(undefined)).toBeNull();
   });

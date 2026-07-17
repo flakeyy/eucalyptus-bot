@@ -1,12 +1,17 @@
-// Crash-risk scanner: detects mods whose dedicated-server init path eagerly
-// references Minecraft classes that only exist on the client (e.g. XaeroLib).
-// This is a WARNING signal only — it must not drive client-only install skips.
+// Crash-risk scanner (Layer 2): detects mods whose dedicated-server init path
+// eagerly references Minecraft classes that only exist on the client.
 //
 // Pipeline:
-//   1. Roots = fabric/quilt main|server entrypoints (incl. JiJ nested jars)
+//   1. Roots = fabric/quilt main|server entrypoints (incl. JiJ nested jars),
+//      or Forge/NeoForge @Mod container classes (constructed on dedicated
+//      servers, so their construction path must be client-clean)
 //   2. Eager <init>/<clinit> reachability with virtual dispatch
 //   3. ServiceLoader providers only when their interface is on that graph
 //   4. Flag if a reached ref is in the client-only class oracle
+//
+// Usage: a hit is a rescuable SKIP signal at Layer 1 precedence slot 8 when the
+// provider is silent/unsupported, and a warning only when the provider says
+// required/optional.
 
 "use strict";
 
@@ -14,9 +19,17 @@ const fs = require("fs");
 const path = require("path");
 const AdmZip = require("adm-zip");
 const msgLog = require("./logger.js");
+const { getCrashScan, putCrashScan } = require("./verdict_store.js");
 
 const CACHE_DIR = path.join(__dirname, "../crash_risk_cache");
 const USER_AGENT = "pterobot/discord-bot";
+
+// @Mod annotation descriptors across Forge eras (1.7 FML → modern NeoForge).
+const FORGE_MOD_ANNOTATIONS = [
+  "Lcpw/mods/fml/common/Mod;",
+  "Lnet/minecraftforge/fml/common/Mod;",
+  "Lnet/neoforged/fml/common/Mod;"
+];
 
 // ── Classfile: CP + init/clinit code refs ───────────────────────────────────
 
@@ -547,6 +560,28 @@ function collectServerEntrypoints(zip) {
   return [ ...names ];
 }
 
+// Forge/NeoForge roots: every @Mod-annotated class is constructed on dedicated
+// servers, so its construction path is the eager init surface. Includes JiJ
+// nested jars (META-INF/jarjar).
+function collectForgeModRoots(zip) {
+  const names = new Set();
+  const scan = z => {
+    for (const e of z.getEntries()) {
+      if (e.isDirectory) continue;
+      if (/^META-INF\/(jars|jarjar)\/.+\.jar$/.test(e.entryName)) {
+        try { scan(new AdmZip(e.getData())); } catch { /* ignore */ }
+        continue;
+      }
+      if (!e.entryName.endsWith(".class")) continue;
+      const buf = e.getData();
+      if (!FORGE_MOD_ANNOTATIONS.some(m => buf.indexOf(m) !== -1)) continue;
+      names.add(e.entryName.replace(/\.class$/, "").replace(/\\/g, "/"));
+    }
+  };
+  scan(zip);
+  return [ ...names ];
+}
+
 function listServiceProviders(zip) {
   const map = new Map();
   const scan = z => {
@@ -590,14 +625,21 @@ function scanCrashRisk(buffer, oracle, { maxDepth = 8, maxNodes = 500 } = {}) {
     return { risk: false, reason: "bad-zip", detail: null, scanned: 0, depth: 0 };
   }
 
-  const roots = collectServerEntrypoints(zip);
+  // Fabric/Quilt roots (declared server-side entrypoints), falling back to
+  // Forge/NeoForge @Mod containers (always constructed on dedicated servers).
+  let rootVia = "entrypoint";
+  let roots = collectServerEntrypoints(zip);
+  if (roots.length === 0) {
+    roots = collectForgeModRoots(zip);
+    rootVia = "mod-construct";
+  }
   if (roots.length === 0) {
     return { risk: false, reason: "no-server-entrypoint", detail: null, scanned: 0, depth: 0 };
   }
 
   const services = listServiceProviders(zip);
   const visited = new Set();
-  const queue = roots.map(n => ({ name: n, d: 0, via: "entrypoint" }));
+  const queue = roots.map(n => ({ name: n, d: 0, via: rootVia }));
   let scanned = 0;
 
   const considerHit = (className, via, host) => {
@@ -707,12 +749,33 @@ async function downloadAndBuildOracle(mcVersion, cachePath) {
   }, cachePath);
 }
 
+// Prefix-only fallback oracle for versions without official Mojang mappings
+// (pre-1.14.4, i.e. the legacy 1.7-1.12 Forge era). SRG preserves class names,
+// so net/minecraft/client/* prefixes still identify client-only classes there.
+function buildPrefixOracle() {
+  return {
+    size: 0,
+    officialClientOnly: 0,
+    prefixOnly: true,
+    has() { return false; },
+    isClientApiPackage(className) {
+      if (!className) return false;
+      return className.startsWith("net/minecraftforge/client/")
+        || className.startsWith("net/neoforged/neoforge/client/")
+        || className.startsWith("net/fabricmc/fabric/api/client/")
+        || className.startsWith("net/minecraft/client/")
+        || className.startsWith("com/mojang/blaze3d/");
+    }
+  };
+}
+
 // In-memory oracle cache for the process lifetime (one per MC version).
 const oracleMemo = new Map();
 
 /**
  * Loads or builds the client-only class oracle for a Minecraft version.
- * Returns null when the version/mappings are unavailable (caller should skip).
+ * Falls back to a prefix-only oracle when official mappings are unavailable
+ * (legacy versions); returns null only when no version is known at all.
  */
 async function getOracle(mcVersion) {
   if (!mcVersion || typeof mcVersion !== "string") return null;
@@ -728,8 +791,8 @@ async function getOracle(mcVersion) {
       oracle = await downloadAndBuildOracle(mcVersion, cachePath);
     }
   } catch (e) {
-    msgLog.warn(`[crash-risk] oracle unavailable for ${mcVersion}: ${e.message}`);
-    oracle = null;
+    msgLog.warn(`[crash-risk] mapping oracle unavailable for ${mcVersion} (${e.message}); using prefix-only oracle`);
+    oracle = buildPrefixOracle();
   }
   oracleMemo.set(mcVersion, oracle);
   return oracle;
@@ -749,14 +812,32 @@ function assessCrashRisk(buffer, oracle) {
   };
 }
 
+// Like assessCrashRisk but consults the verdict store first, keyed by
+// sha1 + MC version (the oracle differs per version).
+function assessCrashRiskCached(sha1, buffer, oracle, mcVersion) {
+  if (!oracle || !buffer) return { risk: false, detail: null, reason: "no-oracle" };
+  const cacheKey = `${mcVersion ?? "any"}:v1`;
+  if (sha1) {
+    const cached = getCrashScan(sha1, cacheKey);
+    if (cached) return cached;
+  }
+  const result = assessCrashRisk(buffer, oracle);
+  if (sha1) putCrashScan(sha1, cacheKey, result);
+  return result;
+}
+
 module.exports = {
+  FORGE_MOD_ANNOTATIONS,
   parseClassFile,
   buildAndCacheOracle,
   loadOracleFromCache,
+  buildPrefixOracle,
   scanCrashRisk,
   collectServerEntrypoints,
+  collectForgeModRoots,
   getOracle,
   assessCrashRisk,
+  assessCrashRiskCached,
   openZip: buffer => new AdmZip(buffer),
   // test helpers
   _oracleMemo: oracleMemo,

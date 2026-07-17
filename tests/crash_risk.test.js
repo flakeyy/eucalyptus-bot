@@ -2,9 +2,12 @@ const AdmZip = require("adm-zip");
 const {
   scanCrashRisk,
   collectServerEntrypoints,
+  collectForgeModRoots,
   assessCrashRisk,
+  buildPrefixOracle,
   openZip
 } = require("../utility/crash_risk.js");
+const { makeClassFile } = require("./fixtures/classfile.js");
 
 function makeJar(files) {
   const zip = new AdmZip();
@@ -77,5 +80,69 @@ describe("scanCrashRisk / assessCrashRisk", () => {
       })
     });
     expect(scanCrashRisk(buf, oracle).risk).toBe(false);
+  });
+});
+
+describe("Forge @Mod construction roots", () => {
+  const oracle = buildPrefixOracle();
+
+  test("collectForgeModRoots finds @Mod-annotated classes", () => {
+    const buf = makeJar({
+      "com/example/MyMod.class": makeClassFile({ className: "com/example/MyMod", modMarker: true }),
+      "com/example/Helper.class": makeClassFile({ className: "com/example/Helper" })
+    });
+    expect(collectForgeModRoots(openZip(buf))).toEqual([ "com/example/MyMod" ]);
+  });
+
+  test("flags a @Mod class whose <clinit> eagerly constructs a client class (Blur pattern)", () => {
+    const buf = makeJar({
+      "mcmod.info": "[{ \"modid\": \"x\" }]",
+      "com/example/ClientMod.class": makeClassFile({
+        className: "com/example/ClientMod",
+        modMarker: true,
+        initNewClass: "net/minecraft/client/Minecraft"
+      })
+    });
+    const result = scanCrashRisk(buf, oracle);
+    expect(result.risk).toBe(true);
+    expect(result.reason).toBe("init-reaches-client-only");
+    expect(result.detail).toContain("net/minecraft/client/Minecraft");
+  });
+
+  test("does not flag a @Mod class with a clean construction path (Pam's pattern)", () => {
+    const buf = makeJar({
+      "mcmod.info": "[{ \"modid\": \"x\" }]",
+      "com/example/ContentMod.class": makeClassFile({
+        className: "com/example/ContentMod",
+        modMarker: true,
+        initNewClass: "com/example/Recipes"
+      }),
+      "com/example/Recipes.class": makeClassFile({ className: "com/example/Recipes" })
+    });
+    expect(scanCrashRisk(buf, oracle).risk).toBe(false);
+  });
+
+  test("fabric entrypoints take precedence over Forge roots in universal JARs", () => {
+    const buf = makeJar({
+      "fabric.mod.json": JSON.stringify({ id: "x", entrypoints: { main: [ "com.example.Main" ] } }),
+      "com/example/ForgeOnlyClient.class": makeClassFile({
+        className: "com/example/ForgeOnlyClient",
+        modMarker: true,
+        initNewClass: "net/minecraft/client/Minecraft"
+      })
+    });
+    // Roots = fabric main only; the forge-only class is never visited.
+    expect(scanCrashRisk(buf, oracle).risk).toBe(false);
+  });
+});
+
+describe("buildPrefixOracle (legacy fallback)", () => {
+  const oracle = buildPrefixOracle();
+
+  test("matches client API package prefixes but no mapped names", () => {
+    expect(oracle.isClientApiPackage("net/minecraft/client/Minecraft")).toBe(true);
+    expect(oracle.isClientApiPackage("com/mojang/blaze3d/Blaze3D")).toBe(true);
+    expect(oracle.isClientApiPackage("net/minecraft/server/MinecraftServer")).toBe(false);
+    expect(oracle.has("net/minecraft/class_310")).toBe(false);
   });
 });

@@ -266,9 +266,8 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
   const noUrl = modFiles.filter(f => !f.downloadUrl);
 
   // Build SHA1 map across all mod files for a single combined Modrinth lookup,
-  // which supplies both fallback download URLs and per-mod server-side hints
+  // which supplies both fallback download URLs and per-mod server-side metadata
   // (CurseForge's own API has no reliable client/server side information).
-  // Only Modrinth required/optional are attached — see projectServerSideForCurseforge.
   const sha1ToFile = new Map();
   for (const f of modFiles) {
     const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
