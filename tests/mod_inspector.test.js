@@ -7,7 +7,8 @@ jest.mock("../utility/verdict_store.js", () => ({
   getInspection: jest.fn(() => null),
   putInspection: jest.fn(),
   getLearnedVerdict: jest.fn(() => null),
-  flushVerdictStore: jest.fn()
+  flushVerdictStore: jest.fn(),
+  isMixinInfrastructureJar: jest.requireActual("../utility/verdict_store.js").isMixinInfrastructureJar
 }));
 
 const AdmZip = require("adm-zip");
@@ -275,6 +276,17 @@ describe("decideModInstall — precedence table", () => {
       sha1: "abc", learnedVerdict: "crashes-server"
     });
     expect(d).toMatchObject({ install: false, slot: 3, source: "learned-crashes-server", rescuable: false });
+  });
+
+  test("slot 3: UniMixins is never skipped via learned verdict (MixinTweaker provider)", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection,
+      sha1: "uni",
+      filename: "+unimixins-all-1.7.10-0.3.0.jar",
+      modId: "unimixins",
+      learnedVerdict: "crashes-server"
+    });
+    expect(d).toMatchObject({ install: true, slot: 9, source: "default" });
   });
 
   test("slot 3: learned verdict is consulted from the verdict store by sha1", () => {

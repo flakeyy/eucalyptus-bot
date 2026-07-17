@@ -27,7 +27,8 @@ jest.mock("../utility/verdict_store.js", () => ({
   putCrashScan: jest.fn(),
   getLearnedVerdict: jest.fn(() => null),
   recordLearnedVerdict: jest.fn(),
-  flushVerdictStore: jest.fn()
+  flushVerdictStore: jest.fn(),
+  isMixinInfrastructureJar: jest.requireActual("../utility/verdict_store.js").isMixinInfrastructureJar
 }));
 
 jest.mock("../utility/mod_inspector.js", () => ({
