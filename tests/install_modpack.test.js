@@ -21,7 +21,9 @@ jest.mock("../utility/server_functions.js", () => ({
   listServerFiles: jest.fn(),
   deleteServerFiles: jest.fn(),
   getFileUploadUrl: jest.fn(),
-  decompressFile: jest.fn()
+  decompressFile: jest.fn(),
+  writeServerFile: jest.fn().mockResolvedValue(204),
+  renameServerFiles: jest.fn().mockResolvedValue(204)
 }));
 
 jest.mock("../utility/helper_functions.js", () => ({

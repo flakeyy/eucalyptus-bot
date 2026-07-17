@@ -27,6 +27,7 @@ jest.mock("../utility/server_functions.js", () => ({
   setServerPowerState: jest.fn().mockResolvedValue(204),
   listServerFiles: jest.fn().mockResolvedValue([]),
   getFileContents: jest.fn().mockResolvedValue(null),
+  writeServerFile: jest.fn().mockResolvedValue(204),
   createServerDirectory: jest.fn().mockResolvedValue(204),
   renameServerFiles: jest.fn().mockResolvedValue(204)
 }));
@@ -73,13 +74,14 @@ const bootSuccess = ws => {
 const bootCrash = lines => ws => {
   ws.emit("powerStateChange", "starting");
   for (const line of lines) ws.emit("consoleLine", line);
+  // Offline after a crash marker confirms the process died (see watchBootAttempt).
   ws.emit("powerStateChange", "offline");
 };
 
 const ctx = (overrides = {}) => ({
   serverId: "abc",
   userId: "u1",
-  settings: { max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000 },
+  settings: { max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000, crash_flush_ms: 0 },
   ...overrides
 });
 
@@ -151,7 +153,7 @@ describe("verifyServerBoot", () => {
     ]);
     sf.getFileContents.mockResolvedValue("-- MOD backpacked --\n\tMod File: /data/mods/backpacked-1.16.5-1.4.2.jar\n");
 
-    scriptBoots([ bootCrash([ "[main/ERROR]: some crash" ]), bootSuccess ]);
+    scriptBoots([ bootCrash([ "Minecraft has crashed", "[main/ERROR]: some crash" ]), bootSuccess ]);
 
     const res = await verifyServerBoot(ctx({ modIndex: index }));
 
@@ -182,12 +184,12 @@ describe("verifyServerBoot", () => {
     scriptBoots([
       bootCrash([ "Minecraft has crashed" ]),
       // Second failure: LaunchWrapper death, no new crash report.
-      bootCrash([ "java.lang.ClassNotFoundException: org.spongepowered.asm.launch.MixinTweaker" ])
+      bootCrash([ "Failed to start the minecraft server", "java.lang.ClassNotFoundException: org.spongepowered.asm.launch.MixinTweaker" ])
     ]);
 
     const res = await verifyServerBoot(ctx({
       modIndex: index,
-      settings: { max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000 }
+      settings: { max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000, crash_flush_ms: 0 }
     }));
 
     expect(res.success).toBe(false);
@@ -198,7 +200,7 @@ describe("verifyServerBoot", () => {
   });
 
   test("stops with reason 'unattributed' when the crash matches nothing", async () => {
-    scriptBoots([ bootCrash([ "[main/ERROR]: something exploded mysteriously" ]) ]);
+    scriptBoots([ bootCrash([ "Failed to start the minecraft server", "[main/ERROR]: something exploded mysteriously" ]) ]);
     const res = await verifyServerBoot(ctx({ modIndex: createModIndex() }));
     expect(res).toMatchObject({ success: false, attempts: 1, reason: "unattributed" });
     expect(sf.renameServerFiles).not.toHaveBeenCalled();

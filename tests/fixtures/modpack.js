@@ -48,6 +48,8 @@ function mockHappyPath(serverFunctions, { firstListResult = [] } = {}) {
   serverFunctions.getServerInstallStatus.mockResolvedValue(null);
   serverFunctions.getFileUploadUrl.mockResolvedValue("https://wings.example.com/upload?token=x");
   serverFunctions.decompressFile.mockResolvedValue(204);
+  serverFunctions.writeServerFile.mockResolvedValue(204);
+  serverFunctions.renameServerFiles.mockResolvedValue(204);
   global.fetch = jest.fn()
     .mockResolvedValueOnce(makeStreamResponse())  // download
     .mockResolvedValueOnce({ ok: true });         // upload
