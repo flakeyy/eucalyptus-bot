@@ -96,7 +96,9 @@ function watchBootAttempt(serverId, userId, timeoutMs) {
   });
 }
 
-// Fetches the newest crash report text, or null.
+// Fetches the newest crash report, or null. Returns { name, text } so callers
+// can detect when LaunchWrapper-style failures leave no new report and the
+// previous crash would otherwise be re-attributed forever.
 async function fetchLatestCrashReport(serverId, userId) {
   const files = await listServerFiles(serverId, userId, "/crash-reports").catch(() => null);
   if (!files || files.length === 0) return null;
@@ -104,7 +106,9 @@ async function fetchLatestCrashReport(serverId, userId) {
     .filter(f => f.attributes?.is_file && /\.txt$/i.test(f.attributes?.name ?? ""))
     .sort((a, b) => new Date(b.attributes.modified_at ?? 0) - new Date(a.attributes.modified_at ?? 0))[0];
   if (!newest) return null;
-  return getFileContents(serverId, userId, `/crash-reports/${newest.attributes.name}`);
+  const name = newest.attributes.name;
+  const text = await getFileContents(serverId, userId, `/crash-reports/${name}`);
+  return text === null || text === undefined ? null : { name, text };
 }
 
 // Moves jars from mods/ to mods-disabled/ and records learned verdicts.
@@ -145,6 +149,8 @@ async function verifyServerBoot(ctx) {
   const started = Date.now();
   const quarantined = [];
   const quarantinedModIds = [];
+  const quarantinedJars = new Set();
+  let lastCrashReportName = null;
   let consoleTail = "";
 
   for (let attempt = 1; attempt <= settings.max_attempts; attempt++) {
@@ -178,7 +184,17 @@ async function verifyServerBoot(ctx) {
       await setServerPowerState(ctx.serverId, ctx.userId, "kill").catch(() => {});
     }
 
-    const crashReportText = await fetchLatestCrashReport(ctx.serverId, ctx.userId);
+    const latestCrash = await fetchLatestCrashReport(ctx.serverId, ctx.userId);
+    // Ignore a crash report we already acted on — early LaunchWrapper failures
+    // (e.g. after quarantining UniMixins) often write no new report.
+    let crashReportText = null;
+    if (latestCrash && latestCrash.name !== lastCrashReportName) {
+      crashReportText = latestCrash.text;
+      lastCrashReportName = latestCrash.name;
+    } else if (latestCrash && latestCrash.name === lastCrashReportName) {
+      msgLog.warn(`[boot-verify] ${ctx.serverId}: ignoring stale crash report ${latestCrash.name}`);
+    }
+
     const attribution = attributeCrash({
       crashReportText,
       consoleTail: result.consoleTail,
@@ -186,16 +202,19 @@ async function verifyServerBoot(ctx) {
       quarantinedModIds
     });
 
-    if (attribution.jars.length === 0) {
-      msgLog.warn(`[boot-verify] ${ctx.serverId}: crash could not be attributed to a mod; stopping loop`);
+    const freshJars = attribution.jars.filter(j => !quarantinedJars.has(j));
+    if (freshJars.length === 0) {
+      msgLog.warn(`[boot-verify] ${ctx.serverId}: crash could not be attributed to a new mod; stopping loop`);
       return { success: false, attempts: attempt, quarantined, reason: "unattributed", consoleTail };
     }
 
-    const toQuarantine = expandWithDependents(modIndex, attribution.jars);
+    const toQuarantine = expandWithDependents(modIndex, freshJars)
+      .filter(j => !quarantinedJars.has(j));
     const reasonsByJar = new Map(attribution.reasons.map(r => [ r.jar, r.reason ]));
     await quarantineJars({ ...ctx, modIndex }, toQuarantine, reasonsByJar);
     for (const jar of toQuarantine) {
       quarantined.push({ jar, reason: reasonsByJar.get(jar) ?? "dependent of quarantined mod" });
+      quarantinedJars.add(jar);
       const id = modIndex.modIdOf?.get(jar);
       if (id) quarantinedModIds.push(id);
     }
