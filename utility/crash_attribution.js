@@ -107,6 +107,10 @@ function extractCrashSignals(text) {
     m = line.match(/[^()]{0,80}\(([a-z][\w-]*)\) (?:has failed to load|encountered an error)/i);
     if (m) out.modIds.add(m[1].toLowerCase());
 
+    // Forge 1.7.x FML: "Caught exception from custommainmenu"
+    m = line.match(/Caught exception from ([\w-]+)/i);
+    if (m) out.modIds.add(m[1].toLowerCase());
+
     // Fabric entrypoint failures: "Could not execute entrypoint stage 'main' due to errors, provided by 'modid'!"
     m = line.match(/provided by '([\w-]+)'/i);
     if (m) out.modIds.add(m[1].toLowerCase());
@@ -131,12 +135,16 @@ function extractCrashSignals(text) {
     m = line.match(/Mod '([\w-]+)' requires '([\w-]+)'/i);
     if (m) out.missingDeps.add(m[2].toLowerCase());
 
-    // Mixin errors: "... in config [foo.mixins.json]" / "from mod (modid)"
-    for (const mm of line.matchAll(/([\w.-]+mixins?[\w.-]*\.json)/gi)) {
-      out.mixinConfigs.add(mm[1]);
+    // Mixin *failure* lines only. Crash-report System Details (and helpers like
+    // MoreCrashInfo) inventory every loaded config — treating those as offenders
+    // quarantines innocent mixin providers (e.g. UniMixins) and bricks the pack.
+    if (/mixin apply failed|critical injection failure|Unable to apply [Mm]ixin|Error applying [Mm]ixin|@Mixin target .+ was not found|in config \[/i.test(line)) {
+      for (const mm of line.matchAll(/([\w.-]+mixins?[\w.-]*\.json)/gi)) {
+        out.mixinConfigs.add(mm[1]);
+      }
+      m = line.match(/from mod \(?([\w-]+)\)?/i);
+      if (m) out.modIds.add(m[1].toLowerCase());
     }
-    m = line.match(/from mod \(?([\w-]+)\)?/i);
-    if (m && /mixin/i.test(line)) out.modIds.add(m[1].toLowerCase());
 
     // Stack frames: "at com.example.mod.Foo.bar(Foo.java:10)" — skip JRE/loader frames.
     m = line.match(/^at ([\w$.]+)\.[\w$<>]+\(/);

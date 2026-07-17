@@ -159,6 +159,44 @@ describe("verifyServerBoot", () => {
     expect(res.quarantined.map(q => q.jar)).toEqual([ "backpacked-1.16.5-1.4.2.jar" ]);
   });
 
+  test("does not re-quarantine from a stale crash report when later boots fail differently", async () => {
+    const index = createModIndex();
+    addJarToModIndex(index, "badmod.jar", makeJar({ "com/bad/Mod.class": "x" }), {
+      modId: "badmod", sha1: "sha-bad"
+    });
+    addJarToModIndex(index, "unimixins.jar", makeJar({ "mixins.gtnhmixins.json": "{}" }), {
+      modId: "unimixins", sha1: "sha-uni"
+    });
+
+    sf.listServerFiles.mockResolvedValue([
+      { attributes: { is_file: true, name: "crash-first.txt", modified_at: "2026-07-17T03:47:45Z" } }
+    ]);
+    // Inventory-style mixin names must not expand the quarantine set.
+    sf.getFileContents.mockResolvedValue([
+      "Caught exception from badmod",
+      "at com.bad.Mod.init(Mod.java:1)",
+      "Mixin Configs:",
+      "mixins.gtnhmixins.json"
+    ].join("\n"));
+
+    scriptBoots([
+      bootCrash([ "Minecraft has crashed" ]),
+      // Second failure: LaunchWrapper death, no new crash report.
+      bootCrash([ "java.lang.ClassNotFoundException: org.spongepowered.asm.launch.MixinTweaker" ])
+    ]);
+
+    const res = await verifyServerBoot(ctx({
+      modIndex: index,
+      settings: { max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000 }
+    }));
+
+    expect(res.success).toBe(false);
+    expect(res.reason).toBe("unattributed");
+    expect(res.attempts).toBe(2);
+    expect(res.quarantined.map(q => q.jar)).toEqual([ "badmod.jar" ]);
+    expect(sf.renameServerFiles).toHaveBeenCalledTimes(1);
+  });
+
   test("stops with reason 'unattributed' when the crash matches nothing", async () => {
     scriptBoots([ bootCrash([ "[main/ERROR]: something exploded mysteriously" ]) ]);
     const res = await verifyServerBoot(ctx({ modIndex: createModIndex() }));

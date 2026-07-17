@@ -52,10 +52,27 @@ describe("extractCrashSignals", () => {
     expect([ ...s.modIds ]).not.toContain("sodium-extra");
   });
 
-  test("mixin config names are captured", () => {
+  test("mixin config names are captured from failure lines", () => {
     const s = extractCrashSignals("Mixin apply failed fancymenu.mixins.json:MixinTitleScreen from mod (fancymenu)");
     expect([ ...s.mixinConfigs ]).toContain("fancymenu.mixins.json");
     expect([ ...s.modIds ]).toContain("fancymenu");
+  });
+
+  test("mixin config inventory listings are ignored (not failures)", () => {
+    const inventory = [
+      "Mixin Configs:",
+      "\tmixins.gtnhmixins.json | com.gtnewhorizon.mixins | 1000 | true | 12",
+      "\te4mc_retro_minecraft.mixins.json | com.e4mc.mixin | 1000 | true | 3",
+      "\tcoretweaks.mixin.json | makamys.coretweaks.mixin | 500 | false | 8",
+      "\tcampfirebackport.mixin.json | connectionwith.campfire | 1000 | true | 2"
+    ].join("\n");
+    const s = extractCrashSignals(inventory);
+    expect([ ...s.mixinConfigs ]).toEqual([]);
+  });
+
+  test("Forge 1.7 Caught exception from captures the mod id", () => {
+    const s = extractCrashSignals("[Server thread/ERROR] [FML]: Caught exception from custommainmenu");
+    expect([ ...s.modIds ]).toContain("custommainmenu");
   });
 });
 
@@ -127,6 +144,38 @@ describe("attributeCrash", () => {
       index
     });
     expect(result.jars).toEqual([ "fancy.jar" ]);
+  });
+
+  test("System Details mixin inventory does not quarantine innocent providers", () => {
+    const index = indexWith({
+      "+unimixins-all-1.7.10-0.3.0.jar": {
+        entries: { "mixins.gtnhmixins.json": "{}" },
+        meta: { modId: "unimixins" }
+      },
+      "GTNH_coretweaks-0.3.4.7-GTNH.jar": {
+        entries: {
+          "coretweaks.mixin.json": "{}",
+          "makamys/coretweaks/optimization/TransformerProxy.class": "x"
+        },
+        meta: { modId: "coretweaks" }
+      },
+      "GTNH_custommainmenu-1.14.1.jar": {
+        entries: { "lumien/custommainmenu/CustomMainMenu.class": "x" },
+        meta: { modId: "custommainmenu" }
+      }
+    });
+    const crash = [
+      "[Server thread/ERROR] [FML]: Caught exception from custommainmenu",
+      "java.lang.NoClassDefFoundError: net/minecraft/client/gui/GuiScreen",
+      "at lumien.custommainmenu.CustomMainMenu.preInit(CustomMainMenu.java:47)",
+      "at makamys.coretweaks.optimization.transformerproxy.TransformerProxy.invokeNextHandler(TransformerProxy.java:53)",
+      "-- System Details --",
+      "Mixin Configs:",
+      "mixins.gtnhmixins.json",
+      "coretweaks.mixin.json"
+    ].join("\n");
+    const result = attributeCrash({ crashReportText: crash, index });
+    expect(result.jars).toEqual([ "GTNH_custommainmenu-1.14.1.jar" ]);
   });
 
   test("returns empty attribution when nothing matches", () => {
