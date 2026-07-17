@@ -3,6 +3,7 @@
 const EventEmitter = require("events");
 const WebSocket = require("ws");
 const { clientApiCall } = require("./helper_functions.js");
+const { daemonServerPath } = require("./server_functions.js");
 const msgLog = require("./logger.js");
 
 const RECONNECT_DELAY_MS = 2000;
@@ -34,8 +35,14 @@ class PterodactylWebSocket extends EventEmitter {
   }
 
   async _fetchToken() {
-    const res = await clientApiCall(`client/servers/${this._serverId}/websocket`, "GET", null, this._userId);
-    const data = await res.body.json();
+    // Pyrodactyl nests websocket under /client/servers/{wings|elytra}/{id}/websocket.
+    const path = await daemonServerPath(this._serverId, this._userId, "websocket");
+    const res = await clientApiCall(path, "GET", null, this._userId);
+    const data = await res.body.json().catch(() => null);
+    if (res.statusCode !== 200 || !data?.data?.token || !data?.data?.socket) {
+      const detail = data?.errors?.[0]?.detail ?? `HTTP ${res.statusCode}`;
+      throw new Error(`websocket credentials failed for ${this._serverId}: ${detail}`);
+    }
     return { token: data.data.token, socketUrl: data.data.socket };
   }
 
