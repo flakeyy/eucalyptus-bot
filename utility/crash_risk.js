@@ -211,6 +211,7 @@ function parseClassFile(buf) {
     thisClassName: thisName,
     superClassName: className(superClass),
     interfaces: interfaces.filter(Boolean),
+    fieldTypes,
     initClassRefs,
     eagerInvokes,
     methods,

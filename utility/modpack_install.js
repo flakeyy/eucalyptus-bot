@@ -132,9 +132,10 @@ async function installFilePlan(ctx, plan) {
       if (!r) continue;
       const inspection = inspectModJarCached(r.sha1, r.buffer, loaderType);
       const { modId, requiredDeps } = extractModDeps(r.buffer, loaderType);
-      // Combine JAR inspection with provider-declared server side (Modrinth
-      // project metadata / mrpack env.server): strong JAR verdicts win, weak
-      // ones yield to the provider, and the provider decides when the JAR is silent.
+      // Combine JAR inspection with provider-declared server side (mrpack
+      // env.server / CurseForge→Modrinth required|optional): strong JAR
+      // verdicts win, weak ones yield to the provider, and pack-authored
+      // unsupported decides when the JAR is silent.
       let isClientOnly = isClientOnlyMod(inspection, r.providerServerSide ?? null);
       let source = inspection.verdict === "client" ? inspection.source : "provider-env";
       // Manual escape hatches: the allowlist forces a mod onto the server when

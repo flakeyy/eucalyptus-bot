@@ -3,7 +3,7 @@ require("dotenv").config();
 const CURSEFORGE_BASE_URL = "https://api.curseforge.com/v1";
 const msgLog = require("./logger.js");
 const AdmZip = require("adm-zip");
-const { analyzeModrinthFiles, getServerSideBySlugs } = require("./modrinth.js");
+const { analyzeModrinthFiles, getServerSideBySlugs, projectServerSideForCurseforge } = require("./modrinth.js");
 
 // CurseForge classId for actual mods. Manifest entries with any other classId
 // (resource packs 12, shaders 6552, worlds 17, etc.) are not installed to mods/.
@@ -266,8 +266,9 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
   const noUrl = modFiles.filter(f => !f.downloadUrl);
 
   // Build SHA1 map across all mod files for a single combined Modrinth lookup,
-  // which supplies both fallback download URLs and per-mod server-side metadata
+  // which supplies both fallback download URLs and per-mod server-side hints
   // (CurseForge's own API has no reliable client/server side information).
+  // Only Modrinth required/optional are attached — see projectServerSideForCurseforge.
   const sha1ToFile = new Map();
   for (const f of modFiles) {
     const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
@@ -320,15 +321,16 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
 
   const planModFiles = rawMods.map(mod => {
     const filename = decodeURIComponent(mod.downloadUrl.split("/").pop());
+    const rawSide = (mod.sha1 ? serverSideByHash.get(mod.sha1) : undefined)
+      ?? serverSideBySlug.get(slugByModId.get(mod.modId))
+      ?? null;
     return {
       path: `mods/${filename}`,
       filename,
       downloadUrl: mod.downloadUrl,
       sha1: mod.sha1 ?? null,
       displayName: mod.displayName ?? filename,
-      providerServerSide: (mod.sha1 ? serverSideByHash.get(mod.sha1) : undefined)
-        ?? serverSideBySlug.get(slugByModId.get(mod.modId))
-        ?? null
+      providerServerSide: projectServerSideForCurseforge(rawSide)
     };
   });
 

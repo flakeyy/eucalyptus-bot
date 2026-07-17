@@ -214,6 +214,19 @@ describe("getServerSideBySlugs", () => {
   });
 });
 
+describe("projectServerSideForCurseforge", () => {
+  test("keeps required/optional for rescuing weak JAR verdicts", () => {
+    expect(modrinth.projectServerSideForCurseforge("required")).toBe("required");
+    expect(modrinth.projectServerSideForCurseforge("optional")).toBe("optional");
+  });
+
+  test("drops unsupported so mislabeled Modrinth projects cannot skip installs", () => {
+    expect(modrinth.projectServerSideForCurseforge("unsupported")).toBeNull();
+    expect(modrinth.projectServerSideForCurseforge(null)).toBeNull();
+    expect(modrinth.projectServerSideForCurseforge(undefined)).toBeNull();
+  });
+});
+
 describe("getModrinthModpack", () => {
   afterEach(() => jest.restoreAllMocks());
 

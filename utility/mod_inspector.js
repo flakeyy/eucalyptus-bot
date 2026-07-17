@@ -2,13 +2,25 @@ const AdmZip = require("adm-zip");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { parseClassFile } = require("./crash_risk.js");
 
 const CACHE_PATH = path.join(__dirname, "../mod_inspector_cache.json");
 // Bump when detection heuristics change so cached verdicts are recomputed.
-const CACHE_VERSION = "v3";
+const CACHE_VERSION = "v4";
 
 let cache = null;
 let cacheDirty = false;
+
+// @Mod annotation descriptors across Forge eras (1.7 FML → modern NeoForge).
+const FORGE_MOD_ANNOTATIONS = [
+  "Lcpw/mods/fml/common/Mod;",
+  "Lnet/minecraftforge/fml/common/Mod;",
+  "Lnet/neoforged/fml/common/Mod;"
+];
+
+function isMcClientClass(name) {
+  return typeof name === "string" && name.startsWith("net/minecraft/client/");
+}
 
 function loadCache() {
   if (cache !== null) return;
@@ -74,6 +86,167 @@ function parseForgeTomlSignals(content) {
     if (modId === "forge" || modId === "neoforge") out.loaderDepSide = side;
   }
   return out;
+}
+
+// Reads @Mod(clientSideOnly=true) from a classfile's RuntimeVisibleAnnotations.
+// Returns true/false when the element is present, or null when the class is not
+// a Forge @Mod container (or the attribute is absent/unreadable).
+function readModClientSideOnly(buf) {
+  if (!buf || buf.length < 10 || buf.readUInt32BE(0) !== 0xCAFEBABE) return null;
+  const cpCount = buf.readUInt16BE(8);
+  const tags = new Array(cpCount);
+  const values = new Array(cpCount);
+  let offset = 10;
+  try {
+    for (let i = 1; i < cpCount; i++) {
+      const tag = buf[offset++];
+      tags[i] = tag;
+      if (tag === 1) {
+        const len = buf.readUInt16BE(offset); offset += 2;
+        values[i] = buf.toString("utf8", offset, offset + len); offset += len;
+      } else if (tag === 7 || tag === 8 || tag === 16 || tag === 19 || tag === 20) {
+        values[i] = buf.readUInt16BE(offset); offset += 2;
+      } else if (tag === 3 || tag === 4) {
+        values[i] = buf.readInt32BE(offset); offset += 4;
+      } else if (tag === 5 || tag === 6) {
+        offset += 8; i++;
+      } else if (tag === 9 || tag === 10 || tag === 11 || tag === 12 || tag === 17 || tag === 18) {
+        offset += 4;
+      } else if (tag === 15) {
+        offset += 3;
+      } else {
+        return null;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  const utf8 = i => (typeof values[i] === "string" ? values[i] : null);
+
+  const skipFieldsMethods = () => {
+    offset += 6; // access, this, super
+    const ifaceCount = buf.readUInt16BE(offset); offset += 2 + ifaceCount * 2;
+    const skipMembers = count => {
+      for (let m = 0; m < count; m++) {
+        offset += 6; // access, name, desc
+        const attrCount = buf.readUInt16BE(offset); offset += 2;
+        for (let a = 0; a < attrCount; a++) {
+          const len = buf.readUInt32BE(offset + 2);
+          offset += 6 + len;
+        }
+      }
+    };
+    const fieldCount = buf.readUInt16BE(offset); offset += 2;
+    skipMembers(fieldCount);
+    const methodCount = buf.readUInt16BE(offset); offset += 2;
+    skipMembers(methodCount);
+  };
+
+  try {
+    skipFieldsMethods();
+  } catch {
+    return null;
+  }
+
+  if (offset + 2 > buf.length) return null;
+  const attrCount = buf.readUInt16BE(offset); offset += 2;
+  for (let a = 0; a < attrCount; a++) {
+    if (offset + 6 > buf.length) return null;
+    const nameIdx = buf.readUInt16BE(offset);
+    const len = buf.readUInt32BE(offset + 2);
+    offset += 6;
+    const attrEnd = offset + len;
+    if (attrEnd > buf.length) return null;
+    if (utf8(nameIdx) === "RuntimeVisibleAnnotations" && len >= 2) {
+      let p = offset;
+      const numAnnotations = buf.readUInt16BE(p); p += 2;
+      for (let n = 0; n < numAnnotations; n++) {
+        if (p + 4 > attrEnd) break;
+        const type = utf8(buf.readUInt16BE(p)); p += 2;
+        const numPairs = buf.readUInt16BE(p); p += 2;
+        const isMod = FORGE_MOD_ANNOTATIONS.includes(type);
+        for (let e = 0; e < numPairs; e++) {
+          if (p + 3 > attrEnd) break;
+          const elemName = utf8(buf.readUInt16BE(p)); p += 2;
+          const tag = buf[p++];
+          if (tag === 90 /* Z boolean */ && p + 2 <= attrEnd) {
+            const constIdx = buf.readUInt16BE(p); p += 2;
+            if (isMod && elemName === "clientSideOnly") {
+              return values[constIdx] === 1;
+            }
+          } else if (tag === 115 /* s string */ && p + 2 <= attrEnd) {
+            p += 2;
+          } else if (tag === 101 /* e enum */ && p + 4 <= attrEnd) {
+            p += 4;
+          } else if (tag === 99 /* c class */ && p + 2 <= attrEnd) {
+            p += 2;
+          } else if (tag === 64 /* @ nested */) {
+            // Skip nested annotation roughly: abandon this attribute
+            return isMod ? false : null;
+          } else if (tag === 91 /* [ array */ && p + 2 <= attrEnd) {
+            // Skip arrays — clientSideOnly is never an array
+            return isMod ? false : null;
+          } else if ((tag === 66 || tag === 67 || tag === 73 || tag === 83 || tag === 70 || tag === 68
+            || tag === 74 || tag === 115) && p + 2 <= attrEnd) {
+            // B C I S F D J s — const pool index (J/D still 2-byte index)
+            p += 2;
+          } else {
+            return null;
+          }
+        }
+        if (isMod) return false; // @Mod present but clientSideOnly absent/default
+      }
+    }
+    offset = attrEnd;
+  }
+  return null;
+}
+
+// Scans Forge @Mod container classes for dedicated-server crash signals.
+// Catches 1.7-era client mods (Blur, Sound Filters, BetterPlacement) that ship
+// only mcmod.info and no mods.toml side metadata:
+//   - @Mod(clientSideOnly=true) → explicit
+//   - eager <init>/<clinit> or field types referencing net/minecraft/client/*
+//   - in-JAR field types that extend/implement a client class (Blur→ShaderResourcePack)
+// Deliberately ignores raw constant-pool client names: @SideOnly methods leave
+// those behind on universal mods (BiblioCraft) without breaking the server.
+function scanForgeModClientSignals(zip) {
+  const classBuffers = new Map();
+  for (const e of zip.getEntries()) {
+    if (e.isDirectory || !e.entryName.endsWith(".class")) continue;
+    const name = e.entryName.replace(/\.class$/, "").replace(/\\/g, "/");
+    classBuffers.set(name, e.getData());
+  }
+
+  let clientSideOnly = false;
+  let refsClient = false;
+
+  for (const buf of classBuffers.values()) {
+    if (!FORGE_MOD_ANNOTATIONS.some(m => buf.indexOf(m) !== -1)) continue;
+
+    const annotated = readModClientSideOnly(buf);
+    if (annotated === true) clientSideOnly = true;
+
+    const cf = parseClassFile(buf);
+    if (!cf) continue;
+
+    if (isMcClientClass(cf.superClassName) || cf.interfaces.some(isMcClientClass)) refsClient = true;
+    if (cf.initClassRefs.some(isMcClientClass)) refsClient = true;
+    if ((cf.fieldTypes ?? []).some(isMcClientClass)) refsClient = true;
+
+    for (const ft of cf.fieldTypes ?? []) {
+      const nestedBuf = classBuffers.get(ft);
+      if (!nestedBuf) continue;
+      const nested = parseClassFile(nestedBuf);
+      if (!nested) continue;
+      if (isMcClientClass(nested.superClassName) || nested.interfaces.some(isMcClientClass)) {
+        refsClient = true;
+      }
+    }
+  }
+
+  return { clientSideOnly, refsClient };
 }
 
 // Inspects a mod JAR buffer and classifies its side.
@@ -207,16 +380,30 @@ function inspectModJar(buffer, loaderType = null) {
     }
   }
 
+  // 4. Legacy Forge bytecode: @Mod containers that crash dedicated servers at
+  // construct (no mods.toml side field). Skip when inspecting as Fabric/Quilt.
+  if (!loaderType || isTomlLoader) {
+    const forgeScan = scanForgeModClientSignals(zip);
+    if (forgeScan.clientSideOnly) {
+      return { verdict: "client", confidence: "explicit", loader: "forge", source: "mod-annotation-clientSideOnly" };
+    }
+    if (forgeScan.refsClient) {
+      return { verdict: "client", confidence: "strong", loader: "forge", source: "mod-class-client-ref" };
+    }
+  }
+
   const presentLoader = fabric ? "fabric" : quilt ? "quilt" : neo ? "neoforge" : forge ? "forge" : null;
   return { verdict: "unknown", confidence: null, loader: presentLoader, source: presentLoader ? "no-signal" : "no-metadata" };
 }
 
-// Combines a JAR inspection with provider-side metadata (Modrinth server_side /
-// mrpack env.server: "required" | "optional" | "unsupported" | null) into the
-// final skip decision. Returns true when the mod should not be installed.
+// Combines a JAR inspection with provider-side metadata (mrpack env.server, or
+// CurseForge→Modrinth required/optional hints: "required" | "optional" |
+// "unsupported" | null) into the final skip decision. Returns true when the
+// mod should not be installed.
 //   - explicit/strong client verdicts are always trusted
 //   - weak verdicts yield to a provider that says the mod runs on servers
-//   - with no JAR signal, the provider's "unsupported" is followed
+//   - with no JAR signal, pack-authored "unsupported" (mrpack) is followed;
+//     CurseForge installs never pass Modrinth project "unsupported" here
 function isClientOnlyMod(inspection, providerServerSide = null) {
   if (inspection.verdict === "client") {
     if (inspection.confidence === "weak") {
@@ -317,4 +504,11 @@ function extractModDeps(buffer, loaderType = null) {
     ?? { modId: null, requiredDeps: [] };
 }
 
-module.exports = { inspectModJar, inspectModJarCached, isClientOnlyMod, extractModDeps, flushModInspectorCache };
+module.exports = {
+  inspectModJar,
+  inspectModJarCached,
+  isClientOnlyMod,
+  extractModDeps,
+  flushModInspectorCache,
+  scanForgeModClientSignals
+};
