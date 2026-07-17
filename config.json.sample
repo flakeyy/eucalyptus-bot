@@ -35,7 +35,10 @@
         "fancymenu",
         "notenoughanimations",
         "oculus",
-        "legendarytooltips"
+        "legendarytooltips",
+        "xaerominimap",
+        "xaeroworldmap",
+        "xaerolib"
     ],
     "mod_id_allowlist": [],
     "minecraft_java_map": {

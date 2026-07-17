@@ -110,11 +110,12 @@ async function main() {
       continue;
     }
 
-    if (result.source === "no-metadata") unknown++;
-    else if (result.isClientOnly) clientOnly++;
+    const isClient = result.verdict === "client";
+    if (result.source === "no-metadata" || result.source === "error") unknown++;
+    else if (isClient) clientOnly++;
     else serverCompat++;
 
-    const tag = result.isClientOnly ? "CLIENT-ONLY" : (result.source === "no-metadata" ? "unknown" : "server-compat");
+    const tag = isClient ? `CLIENT-ONLY (${result.confidence})` : (result.source === "no-metadata" ? "unknown" : "server-compat");
     console.log(
       item.label.slice(0, COL.name).padEnd(COL.name) + "  " +
       (result.loader ?? "-").padEnd(COL.loader) + "  " +

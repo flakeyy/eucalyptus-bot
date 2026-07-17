@@ -8,6 +8,7 @@ logs
 .claude
 CLAUDE.md
 mod_inspector_cache.json
+crash_risk_cache/
 
 # SQLite database files
 *.db

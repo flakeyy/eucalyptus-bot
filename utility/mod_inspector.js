@@ -5,7 +5,7 @@ const path = require("path");
 
 const CACHE_PATH = path.join(__dirname, "../mod_inspector_cache.json");
 // Bump when detection heuristics change so cached verdicts are recomputed.
-const CACHE_VERSION = "v2";
+const CACHE_VERSION = "v3";
 
 let cache = null;
 let cacheDirty = false;
@@ -154,6 +154,15 @@ function inspectModJar(buffer, loaderType = null) {
     commonMixins += (mixinConfig.mixins ?? []).length;
     serverMixins += (mixinConfig.server ?? []).length;
   }
+  // A main/server entrypoint means the JAR loads on a dedicated server. Libraries
+  // like Fusion ship large client-only mixin sets but still declare main — treating
+  // those as client-only drops server content mods that hard-depend on them.
+  // UI overhauls (FancyMenu) also declare stub main/server entrypoints, so an
+  // overwhelming mixin set still wins as strong client despite the entrypoint.
+  const fabricEntrypoints = Object.keys(fabric?.entrypoints ?? {});
+  const quiltEntrypoints = Object.keys(quilt?.quilt_loader?.entrypoints ?? {});
+  const hasServerEntrypoint = [ ...fabricEntrypoints, ...quiltEntrypoints ]
+    .some(e => e === "main" || e === "server");
 
   // 2. Strong heuristics.
   // A universal JAR that declares client-only for another loader is almost
@@ -165,14 +174,23 @@ function inspectModJar(buffer, loaderType = null) {
   // content, only occurs in client-only mods (UI/render overhauls). Small
   // all-client mixin sets also occur in server-needed libraries whose only
   // mixins happen to be client tweaks, so those are downgraded to weak below.
+  // Mid-size sets with a main entrypoint (Fusion ~29) are left unknown so
+  // dep-rescue can keep them when content mods require them; huge sets
+  // (FancyMenu ~65+) stay strong client even with stub main/server entrypoints.
   const totalMixins = clientMixins + commonMixins + serverMixins;
-  const mixinDominant = !hasDataContent && totalMixins > 0 && clientMixins / totalMixins >= 0.95;
-  if (mixinDominant && clientMixins >= 20) {
+  const mixinDominant = !hasDataContent
+    && totalMixins > 0 && clientMixins / totalMixins >= 0.95;
+  const strongMixinClient = mixinDominant && clientMixins >= 20
+    && (!hasServerEntrypoint || clientMixins >= 50);
+  if (strongMixinClient) {
     return { verdict: "client", confidence: "strong", loader: loaderType, source: "client-mixins" };
   }
 
   // 3. Weak heuristics — skipped entirely when the JAR shows server content.
-  const contradicted = hasDataContent || commonMixins >= 5;
+  // Mid-size client-mixin libs with a main entrypoint are not weakly flagged
+  // either (same Fusion rationale as above).
+  const contradicted = hasDataContent || commonMixins >= 5
+    || (hasServerEntrypoint && clientMixins < 50);
   if (!contradicted) {
     if (mixinDominant && clientMixins >= 2) {
       return { verdict: "client", confidence: "weak", loader: loaderType, source: "client-mixins" };
@@ -183,9 +201,8 @@ function inspectModJar(buffer, loaderType = null) {
     if (ownToml && ownToml.depSides.length > 0 && ownToml.depSides.every(s => s === "CLIENT")) {
       return { verdict: "client", confidence: "weak", loader: tomlLoader, source: "all-deps-client" };
     }
-    const entrypoints = Object.keys(fabric?.entrypoints ?? {});
-    if ((!loaderType || !isTomlLoader) && entrypoints.includes("client")
-        && !entrypoints.includes("main") && !entrypoints.includes("server")) {
+    if ((!loaderType || !isTomlLoader) && fabricEntrypoints.includes("client")
+        && !fabricEntrypoints.includes("main") && !fabricEntrypoints.includes("server")) {
       return { verdict: "client", confidence: "weak", loader: "fabric", source: "client-entrypoints" };
     }
   }
