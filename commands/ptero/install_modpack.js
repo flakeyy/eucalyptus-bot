@@ -9,7 +9,8 @@ const { getUserId, reconstructCommand, userHasClientApiKey, applicationApiCall }
 const {
   getClientServers, setServerPowerState, getServerResourceInfoById,
   changeServerEgg, reinstallServer, getServerInstallStatus,
-  listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile
+  listServerFiles, deleteServerFiles, getFileUploadUrl, decompressFile,
+  writeServerFile, renameServerFiles
 } = require("../../utility/server_functions.js");
 const { getErrorMessage } = require("../../utility/error_messages.js");
 const { isManifestZip } = require("../../utility/curseforge.js");
@@ -27,6 +28,83 @@ function isServerStarterZip(buffer) {
   } catch {
     return false;
   }
+}
+
+// CurseForge server packs sometimes wrap everything in a single top-level folder
+// (e.g. Server-Files-1.1.1/mods/...). After extract, Forge/Fabric still look in
+// /mods at the server root — hoist that folder up when we detect it.
+function detectNestedServerPackRoot(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    const entries = zip.getEntries()
+      .map(e => e.entryName.replace(/\\/g, "/"))
+      .filter(n => n && !n.endsWith("/"));
+    if (entries.length === 0) return null;
+    const tops = [ ...new Set(entries.map(n => n.split("/")[0])) ];
+    if (tops.length !== 1) return null;
+    const root = tops[0];
+    const hasNestedMods = entries.some(n => n.startsWith(`${root}/mods/`) && /\.jar$/i.test(n));
+    const hasRootMods = entries.some(n => n.startsWith("mods/") && /\.jar$/i.test(n));
+    return hasNestedMods && !hasRootMods ? root : null;
+  } catch {
+    return null;
+  }
+}
+
+function countJarModsInZip(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    return zip.getEntries().filter(e => {
+      const n = e.entryName.replace(/\\/g, "/");
+      return /(?:^|\/)mods\/[^/]+\.jar$/i.test(n) && !e.isDirectory;
+    }).length;
+  } catch {
+    return 0;
+  }
+}
+
+async function countServerModJars(serverId, userId) {
+  const files = await listServerFiles(serverId, userId, "/mods");
+  if (!files) return 0;
+  return files.filter(f => f.attributes?.is_file && /\.jar$/i.test(f.attributes.name || "")).length;
+}
+
+async function hoistNestedServerPack(serverId, userId, nestName) {
+  const nested = await listServerFiles(serverId, userId, `/${nestName}`);
+  if (!nested || nested.length === 0) return false;
+  const moves = nested.map(f => ({
+    from: `${nestName}/${f.attributes.name}`,
+    to: f.attributes.name
+  }));
+  // Rename in batches — panel APIs can reject huge single payloads.
+  const BATCH = 50;
+  for (let i = 0; i < moves.length; i += BATCH) {
+    const status = await renameServerFiles(serverId, userId, "/", moves.slice(i, i + BATCH));
+    if (status < 200 || status >= 300) {
+      msgLog.error(`[install-modpack] hoist rename failed for ${nestName} batch @${i}: HTTP ${status}`);
+      return false;
+    }
+  }
+  await deleteServerFiles(serverId, userId, [ nestName ]).catch(() => {});
+  msgLog.log(`[install-modpack] hoisted nested server-pack folder "${nestName}/" to server root`);
+  return true;
+}
+
+// Panel decompress is synchronous on Wings but proxies/Elytra can return early or
+// 5xx on large archives while work is still finishing — poll until jar count
+// matches expectations or we time out.
+async function waitForExtractedMods(serverId, userId, expectedJars, timeoutMs = 180_000) {
+  if (expectedJars <= 0) return 0;
+  const start = Date.now();
+  let last = 0;
+  while (Date.now() - start < timeoutMs) {
+    last = await countServerModJars(serverId, userId);
+    // Allow a little slack for client-only jars we may later skip, but we need
+    // a real extract — require at least half the zip's mods/ jars on disk.
+    if (last >= Math.max(1, Math.floor(expectedJars * 0.5))) return last;
+    await new Promise(r => setTimeout(r, 3000));
+  }
+  return last;
 }
 
 function parseServerStarterConfig(buffer) {
@@ -230,7 +308,7 @@ async function runInstallation(i, state, interaction) {
   } catch (err) {
     msgLog.error(`[install-modpack] download failed: ${err.message}`);
     await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-    return;
+    return { ok: false, stage: "download", error: err.message };
   }
 
   let buffer = Buffer.concat(chunks);
@@ -240,7 +318,7 @@ async function runInstallation(i, state, interaction) {
     const ssConfig = parseServerStarterConfig(buffer);
     if (!ssConfig?.modpackUrl) {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-      return;
+      return { ok: false, stage: "serverstarter", error: "missing modpackUrl" };
     }
     await updateProgress(i, "Downloading modpack from ServerStarter URL...");
     try {
@@ -251,7 +329,7 @@ async function runInstallation(i, state, interaction) {
     } catch (err) {
       msgLog.error(`[install-modpack] ServerStarter modpackUrl download failed: ${err.message}`);
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-      return;
+      return { ok: false, stage: "serverstarter-download", error: err.message };
     }
     buffer = Buffer.concat(chunks);
   }
@@ -268,7 +346,7 @@ async function runInstallation(i, state, interaction) {
     );
     if (!resolution || resolution.kind !== "plan") {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_DOWNLOAD_FAILED"));
-      return;
+      return { ok: false, stage: "resolve-plan", error: "manifest resolution failed" };
     }
     installPlan = resolution.plan;
   }
@@ -291,7 +369,7 @@ async function runInstallation(i, state, interaction) {
   if (!serverStopped) {
     msgLog.error(`[install-modpack] server ${serverId} did not stop in time; install aborted`);
     await updateProgress(i, getErrorMessage("MODPACK_SERVER_STOP_TIMEOUT"));
-    return;
+    return { ok: false, stage: "stop", error: "server stop timeout" };
   }
 
   // e. Delete files
@@ -313,7 +391,7 @@ async function runInstallation(i, state, interaction) {
   if (eggChangeStatus < 200 || eggChangeStatus >= 300) {
     msgLog.error(`[install-modpack] egg change failed for ${serverId} (status ${eggChangeStatus})`);
     await updateProgress(i, getErrorMessage("MODPACK_EGG_CHANGE_FAILED"));
-    return;
+    return { ok: false, stage: "egg-change", error: `HTTP ${eggChangeStatus}` };
   }
 
   // g. Reinstall server, then wait until the panel confirms the install actually
@@ -328,7 +406,7 @@ async function runInstallation(i, state, interaction) {
   if (reinstallStatus < 200 || reinstallStatus >= 300) {
     msgLog.error(`[install-modpack] reinstall failed for ${serverId} (status ${reinstallStatus})`);
     await updateProgress(i, getErrorMessage("MODPACK_REINSTALL_FAILED"));
-    return;
+    return { ok: false, stage: "reinstall", error: `HTTP ${reinstallStatus}` };
   }
   let reinstallFinished = false;
   for (let attempt = 0; attempt < INSTALL_POLL.MAX_ATTEMPTS; attempt++) {
@@ -338,7 +416,7 @@ async function runInstallation(i, state, interaction) {
     if (installState === "install_failed" || installState === "reinstall_failed") {
       msgLog.error(`[install-modpack] reinstall reported "${installState}" for ${serverId}`);
       await updateProgress(i, getErrorMessage("MODPACK_REINSTALL_FAILED"));
-      return;
+      return { ok: false, stage: "reinstall", error: installState };
     }
     reinstallFinished = true; // null / idle — install complete
     break;
@@ -346,7 +424,7 @@ async function runInstallation(i, state, interaction) {
   if (!reinstallFinished) {
     msgLog.error(`[install-modpack] reinstall did not finish in time for ${serverId}`);
     await updateProgress(i, getErrorMessage("MODPACK_REINSTALL_TIMEOUT"));
-    return;
+    return { ok: false, stage: "reinstall", error: "timeout" };
   }
 
   // h. Place files: manifest plan install or direct upload+extract
@@ -373,7 +451,7 @@ async function runInstallation(i, state, interaction) {
     const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
     if (!uploadUrl) {
       await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-      return;
+      return { ok: false, stage: "upload", error: "no upload URL" };
     }
     await updateProgress(i, `Uploading **${targetFile.displayName}**...`);
     try {
@@ -384,18 +462,73 @@ async function runInstallation(i, state, interaction) {
     } catch (err) {
       msgLog.error(`[install-modpack] upload failed: ${err.message}`);
       await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-      return;
+      return { ok: false, stage: "upload", error: err.message };
     }
 
+    const expectedModJars = countJarModsInZip(buffer);
+    const nestedRoot = detectNestedServerPackRoot(buffer);
+
     await updateProgress(i, "Extracting files...");
-    await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+    const decompressStatus = await decompressFile(serverId, interaction.user.id, "/", targetFile.displayName);
+    if (decompressStatus < 200 || decompressStatus >= 300) {
+      msgLog.error(`[install-modpack] decompress failed for ${serverId}: HTTP ${decompressStatus}`);
+      await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+      return { ok: false, stage: "decompress", error: `HTTP ${decompressStatus}` };
+    }
+
+    // Delete the archive so it doesn't confuse later listing / eat disk.
+    await deleteServerFiles(serverId, interaction.user.id, [ targetFile.displayName ]).catch(() => {});
+
+    if (nestedRoot) {
+      await updateProgress(i, `Flattening nested server-pack folder (\`${nestedRoot}/\`)...`);
+      const hoisted = await hoistNestedServerPack(serverId, interaction.user.id, nestedRoot);
+      if (!hoisted) {
+        msgLog.error(`[install-modpack] failed to hoist nested folder ${nestedRoot} on ${serverId}`);
+        await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+        return { ok: false, stage: "hoist", error: `failed to hoist ${nestedRoot}` };
+      }
+    }
+
+    if (expectedModJars > 0) {
+      await updateProgress(i, `Verifying mods extracted (expect ~${expectedModJars} jars)...`);
+      const onDisk = await waitForExtractedMods(serverId, interaction.user.id, expectedModJars);
+      if (onDisk < Math.max(1, Math.floor(expectedModJars * 0.5))) {
+        msgLog.error(
+          `[install-modpack] extract verification failed for ${serverId}: ` +
+          `only ${onDisk}/${expectedModJars} jars in mods/ after decompress` +
+          (decompressStatus === 204 ? " (decompress returned 204 but files missing — likely timeout/partial extract)" : "")
+        );
+        await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
+        return {
+          ok: false,
+          stage: "extract-verify",
+          error: `only ${onDisk}/${expectedModJars} mod jars on disk after extract`
+        };
+      }
+      msgLog.log(`[install-modpack] extract verified: ${onDisk} jars in mods/ (zip had ${expectedModJars})`);
+      manifestInstalled = onDisk;
+      manifestTotal = expectedModJars;
+    }
   }
 
   // i. Done — but bail out as a failure if a manifest install couldn't place a single mod.
   if (usedManifest && manifestTotal > 0 && manifestInstalled === 0) {
     msgLog.error(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install failed: 0/${manifestTotal} mods installed: ${modpackName} | ${serverId}`);
     await updateProgress(i, getErrorMessage("MODPACK_FILE_UPLOAD_FAILED"));
-    return;
+    return { ok: false, stage: "place-mods", error: `0/${manifestTotal} mods installed` };
+  }
+
+  // i1. Accept the Minecraft EULA so boot-verify (and first user start) can
+  // actually reach "Done". Reinstall leaves eula=false / missing eula.txt.
+  try {
+    const eulaStatus = await writeServerFile(
+      serverId, interaction.user.id, "/eula.txt", "eula=true\n"
+    );
+    if (eulaStatus < 200 || eulaStatus >= 300) {
+      msgLog.warn(`[install-modpack] eula.txt write returned HTTP ${eulaStatus} for ${serverId}`);
+    }
+  } catch (err) {
+    msgLog.warn(`[install-modpack] eula.txt write failed for ${serverId}: ${err.message}`);
   }
 
   // i2. Boot verification (Layer 3): start the server and empirically confirm
@@ -473,6 +606,16 @@ async function runInstallation(i, state, interaction) {
     .setAccentColor(COLORS.SUCCESS)
     .addTextDisplayComponents(text => text.setContent(doneContent));
   await i.editReply({ components: [ doneContainer ], flags: MessageFlags.IsComponentsV2 }).catch(() => {});
+
+  return {
+    ok: true,
+    usedManifest,
+    manifestInstalled,
+    manifestTotal,
+    unavailableMods,
+    crashRiskWarnings,
+    bootResult
+  };
 }
 
 module.exports = {

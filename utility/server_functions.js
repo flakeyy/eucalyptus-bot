@@ -339,6 +339,37 @@ async function getFileContents(serverId, discordId, filePath) {
   }
 }
 
+// Writes raw text contents to a file on the server (creates or overwrites).
+// Used to accept eula.txt before boot-verify. Returns the HTTP status code.
+async function writeServerFile(serverId, discordId, filePath, contents) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return -1;
+  // Wings expects a raw body (text/plain), not JSON — call the client API
+  // directly rather than going through clientApiCall's JSON content-type.
+  const db = require("./database.js");
+  const user = db.getUserByDiscordId(discordId);
+  if (!user?.panelAPIKey) return -1;
+  const path = await daemonServerPath(
+    validatedId, discordId, `files/write?file=${encodeURIComponent(filePath)}`
+  );
+  const result = await fetch(`${process.env.PANEL_URL.replace(/\/$/, "")}/api/${path}`, {
+    method: "POST",
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "text/plain",
+      Authorization: `Bearer ${user.panelAPIKey}`
+    },
+    body: contents
+  });
+  if (!result.ok) {
+    try {
+      const responseBody = await result.text();
+      msgLog.debugExtended(`[writeServerFile] ${result.status}: ${responseBody}`);
+    } catch { /* ignore */ }
+  }
+  return result.status;
+}
+
 // Renames/moves files on the server. files = [{ from, to }] relative to root.
 // Used by the boot-verify loop to quarantine crashing mods into mods-disabled/.
 async function renameServerFiles(serverId, discordId, root, files) {
@@ -523,6 +554,7 @@ module.exports = {
   listServerFiles,
   deleteServerFiles,
   getFileContents,
+  writeServerFile,
   renameServerFiles,
   getFileUploadUrl,
   chmodServerFiles,

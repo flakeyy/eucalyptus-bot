@@ -11,7 +11,7 @@ const msgLog = require("./logger.js");
 const { PterodactylWebSocket } = require("./pterodactyl_websocket.js");
 const {
   setServerPowerState, listServerFiles, getFileContents,
-  createServerDirectory, renameServerFiles
+  createServerDirectory, renameServerFiles, writeServerFile
 } = require("./server_functions.js");
 const { attributeCrash, expandWithDependents, createModIndex } = require("./crash_attribution.js");
 const { recordLearnedVerdict, flushVerdictStore } = require("./verdict_store.js");
@@ -21,7 +21,11 @@ const DEFAULTS = {
   // First boot of a big pack can take minutes (worldgen); loader failures die
   // in 30-90s, so a generous ceiling costs nothing on the crash path.
   success_timeout_ms: 600_000,
-  total_budget_ms: 1_800_000
+  total_budget_ms: 1_800_000,
+  // After the first crash marker, wait briefly so attribution lines that follow
+  // on the same boot are still in the consoleTail — then finish before a panel
+  // auto-restart can merge a second boot into this attempt.
+  crash_flush_ms: 1_500
 };
 
 const CONSOLE_TAIL_LINES = 400;
@@ -37,7 +41,11 @@ const CRASH_MARKERS = [
   /Loading errors encountered/i,
   /LoadingFailedException/,
   /ModResolutionException/,
-  /Mixin apply failed/i
+  /Mixin apply failed/i,
+  /has failed to load correctly/i,
+  // EULA gate — process exits cleanly; still a failed boot for our loop.
+  /agree to the EULA/i,
+  /Failed to load eula\.txt/i
 ];
 
 function stripAnsi(s) {
@@ -47,19 +55,26 @@ function stripAnsi(s) {
 
 // Starts the server and watches one boot attempt.
 // Resolves { outcome: "success" | "crash" | "timeout" | "ws-error", consoleTail }.
-function watchBootAttempt(serverId, userId, timeoutMs) {
+//
+// Crash detection is console-marker driven (not offline-driven): Fabric/Forge
+// launchers re-exec after unpacking, and this panel auto-restarts once on crash.
+// Offline alone is ignored. After a crash marker we flush a short window of
+// follow-up console lines for attribution, then finish before an auto-restart
+// can merge boots. Silent deaths (no marker) fall through to timeout.
+function watchBootAttempt(serverId, userId, timeoutMs, crashFlushMs = DEFAULTS.crash_flush_ms) {
   return new Promise(resolve => {
     const tail = [];
-    let sawStarting = false;
     let lastState = null;
     let settled = false;
     let crashSuspected = false;
+    let crashFlushTimer = null;
     const ws = new PterodactylWebSocket(serverId, userId);
 
     const finish = outcome => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      if (crashFlushTimer) clearTimeout(crashFlushTimer);
       ws.close();
       resolve({ outcome, consoleTail: tail.join("\n") });
     };
@@ -75,14 +90,16 @@ function watchBootAttempt(serverId, userId, timeoutMs) {
       tail.push(line);
       if (tail.length > CONSOLE_TAIL_LINES) tail.shift();
       if (SUCCESS_RE.test(line)) finish("success");
-      else if (CRASH_MARKERS.some(re => re.test(line))) crashSuspected = true;
+      else if (CRASH_MARKERS.some(re => re.test(line))) {
+        crashSuspected = true;
+        if (!crashFlushTimer) {
+          crashFlushTimer = setTimeout(() => finish("crash"), crashFlushMs);
+        }
+      }
     });
 
     ws.on("powerStateChange", state => {
       lastState = state;
-      if (state === "starting" || state === "running") sawStarting = true;
-      // Offline after the boot began = the process died.
-      if (state === "offline" && sawStarting) finish("crash");
     });
 
     ws.on("error", () => { /* reconnect is handled internally; timer bounds us */ });
@@ -167,7 +184,9 @@ async function verifyServerBoot(ctx) {
     msgLog.log(`[boot-verify] ${ctx.serverId}: boot attempt ${attempt}/${settings.max_attempts}`);
 
     const result = await watchBootAttempt(
-      ctx.serverId, ctx.userId, Math.min(settings.success_timeout_ms, budgetLeft)
+      ctx.serverId, ctx.userId,
+      Math.min(settings.success_timeout_ms, budgetLeft),
+      settings.crash_flush_ms
     );
     consoleTail = result.consoleTail;
 
@@ -177,6 +196,15 @@ async function verifyServerBoot(ctx) {
     }
     if (result.outcome === "ws-error") {
       return { success: false, attempts: attempt, quarantined, reason: "ws-error", consoleTail };
+    }
+
+    // EULA gate: reinstall leaves eula unaccepted. Accept and retry without
+    // burning a quarantine slot.
+    if (/agree to the EULA/i.test(consoleTail) || /Failed to load eula\.txt/i.test(consoleTail)) {
+      msgLog.warn(`[boot-verify] ${ctx.serverId}: EULA not accepted; writing eula.txt and retrying`);
+      await setServerPowerState(ctx.serverId, ctx.userId, "kill").catch(() => {});
+      await writeServerFile(ctx.serverId, ctx.userId, "/eula.txt", "eula=true\n").catch(() => {});
+      continue;
     }
 
     // Make sure a hung/zombie boot is actually stopped before we touch files.
