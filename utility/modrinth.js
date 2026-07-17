@@ -121,6 +121,16 @@ async function getServerSideBySlugs(slugs) {
   return result;
 }
 
+// CurseForge has no client/server side field, so installs borrow Modrinth's
+// project-level server_side. Only "required"/"optional" are trusted — they can
+// rescue a weak JAR client verdict. "unsupported" is dropped: author-set
+// Modrinth labels are frequently wrong for content mods, and following them
+// when the JAR is silent skips packs (e.g. Pam's HarvestCraft). Pack-authored
+// mrpack env.server still passes "unsupported" through unchanged.
+function projectServerSideForCurseforge(serverSide) {
+  return serverSide === "required" || serverSide === "optional" ? serverSide : null;
+}
+
 // Returns our internal loader name for a Modrinth loaders array (project/version).
 function mapModrinthLoader(loaders) {
   if (!Array.isArray(loaders)) return null;
@@ -251,6 +261,7 @@ function resolveModrinthInstall(buffer) {
 module.exports = {
   analyzeModrinthFiles,
   getServerSideBySlugs,
+  projectServerSideForCurseforge,
   mapModrinthLoader,
   loaderFromMrpackDeps,
   mcVersionFromMrpackDeps,
