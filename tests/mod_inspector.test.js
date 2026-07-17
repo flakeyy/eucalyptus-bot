@@ -1,19 +1,36 @@
-const AdmZip = require("adm-zip");
-const { inspectModJar, isClientOnlyMod, extractModDeps } = require("../utility/mod_inspector.js");
+jest.mock("../config.json", () => ({
+  mod_id_blocklist: [ "blockedmod", "fancymenu" ],
+  mod_id_allowlist: [ "allowedmod" ]
+}), { virtual: true });
 
-// Build an in-memory JAR with the given entries: { path: stringContent }.
+jest.mock("../utility/verdict_store.js", () => ({
+  getInspection: jest.fn(() => null),
+  putInspection: jest.fn(),
+  getLearnedVerdict: jest.fn(() => null),
+  flushVerdictStore: jest.fn()
+}));
+
+const AdmZip = require("adm-zip");
+const {
+  inspectModJar, decideModInstall, isClientOnlyMod, extractModDeps
+} = require("../utility/mod_inspector.js");
+const verdictStore = require("../utility/verdict_store.js");
+
+// Build an in-memory JAR with the given entries: { path: content }.
 function makeJar(entries) {
   const zip = new AdmZip();
   for (const [ filePath, content ] of Object.entries(entries)) {
-    zip.addFile(filePath, Buffer.from(content));
+    zip.addFile(filePath, Buffer.isBuffer(content) ? content : Buffer.from(content));
   }
   return zip.toBuffer();
 }
 
-const mixinConfig = ({ client = [], mixins = [], server = [] }) =>
-  JSON.stringify({ package: "com.example.mixin", client, mixins, server });
+beforeEach(() => {
+  jest.clearAllMocks();
+  verdictStore.getLearnedVerdict.mockReturnValue(null);
+});
 
-// ─── inspectModJar ──────────────────────────────────────────────────────────
+// ─── inspectModJar: explicit declarations only ──────────────────────────────
 
 describe("inspectModJar — explicit declarations", () => {
   test("fabric: environment=client → explicit client", () => {
@@ -48,146 +65,45 @@ describe("inspectModJar — explicit declarations", () => {
     const buf = makeJar({ "fabric.mod.json": JSON.stringify({ id: "x" }) });
     expect(inspectModJar(buf)).toMatchObject({ verdict: "unknown", loader: "fabric", source: "no-signal" });
   });
-});
 
-describe("inspectModJar — strong heuristics", () => {
-  test("universal JAR: forge load with embedded fabric env=client → strong client (ambientsounds pattern)", () => {
+  test("universal JAR: forge load with embedded fabric env=client → strong cross-loader (ambientsounds pattern)", () => {
     const buf = makeJar({
       "fabric.mod.json": JSON.stringify({ id: "x", environment: "client" }),
       "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"minecraft\"\nside=\"BOTH\"\n"
     });
     expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "client", confidence: "strong", source: "cross-loader-env" });
   });
-
-  test("overwhelmingly client mixin set → strong client (fancymenu/oculus pattern)", () => {
-    const buf = makeJar({
-      "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"minecraft\"\nside=\"BOTH\"\n",
-      "x.mixins.json": mixinConfig({ client: Array(20).fill("ClientMixin") })
-    });
-    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "client", confidence: "strong", source: "client-mixins" });
-  });
-
-  test("client mixins below the dominance threshold → no mixin verdict (simple-voice-chat pattern)", () => {
-    const buf = makeJar({
-      "fabric.mod.json": JSON.stringify({ id: "x" }),
-      "x.mixins.json": mixinConfig({ client: Array(9).fill("C"), mixins: [ "Common" ] })
-    });
-    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "unknown" });
-  });
-
-  test("datapack content vetoes the mixin heuristic", () => {
-    const buf = makeJar({
-      "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n",
-      "x.mixins.json": mixinConfig({ client: Array(20).fill("C") }),
-      "data/x/recipes/thing.json": "{}"
-    });
-    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown" });
-  });
-
-  test("main entrypoint vetoes mid-size client-mixin heuristic (fusion pattern)", () => {
-    // Fusion ships ~29 client mixins and no common ones, but declares a main
-    // entrypoint + environment=* — skipping it cascade-drops Rechiseled.
-    const buf = makeJar({
-      "fabric.mod.json": JSON.stringify({
-        id: "fusion",
-        environment: "*",
-        entrypoints: { main: [ "com.example.Fusion" ], client: [ "com.example.FusionClient" ] }
-      }),
-      "fusion.mixins.json": mixinConfig({ client: Array(29).fill("ClientMixin") })
-    });
-    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "unknown", source: "no-signal" });
-  });
-
-  test("huge client-mixin set stays strong despite stub main entrypoint (fancymenu pattern)", () => {
-    const buf = makeJar({
-      "fabric.mod.json": JSON.stringify({
-        id: "fancymenu",
-        environment: "*",
-        entrypoints: { main: [ "a.Main" ], client: [ "a.Client" ], server: [ "a.Server" ] }
-      }),
-      "fancymenu.mixins.json": mixinConfig({ client: Array(65).fill("ClientMixin"), mixins: [ "A", "B", "C" ] })
-    });
-    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "client", confidence: "strong", source: "client-mixins" });
-  });
-
-  test("small all-client mixin set → weak only (server libraries like CodeChickenLib ship a few client mixins)", () => {
-    const buf = makeJar({
-      "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n",
-      "x.mixins.json": mixinConfig({ client: Array(4).fill("ClientMixin") })
-    });
-    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "client", confidence: "weak", source: "client-mixins" });
-  });
-
-  test("a single client mixin is not enough evidence (geckolib pattern)", () => {
-    const buf = makeJar({
-      "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n",
-      "x.mixins.json": mixinConfig({ client: [ "OnlyOne" ] })
-    });
-    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown" });
-  });
 });
 
-describe("inspectModJar — weak heuristics", () => {
-  test("forge: minecraft dependency side=CLIENT → weak client", () => {
-    const toml = "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"minecraft\"\nside=\"CLIENT\"\n";
-    const buf = makeJar({ "META-INF/mods.toml": toml });
-    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "client", confidence: "weak", source: "dep-side-client" });
-  });
+describe("inspectModJar — deleted weak tier stays deleted", () => {
+  const mixinConfig = ({ client = [], mixins = [], server = [] }) =>
+    JSON.stringify({ package: "com.example.mixin", client, mixins, server });
 
-  test("forge: forge dependency side=CLIENT → weak client (oculus/controlling pattern)", () => {
-    const toml = "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"forge\"\nside=\"CLIENT\"\n[[dependencies.x]]\nmodId=\"minecraft\"\nside=\"BOTH\"\n";
-    const buf = makeJar({ "META-INF/mods.toml": toml });
-    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "client", confidence: "weak", source: "dep-side-client" });
-  });
-
-  test("forge: every declared dependency side is CLIENT → weak client (embeddium pattern)", () => {
-    const toml = "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"oculus\"\nside=\"CLIENT\"\n[[dependencies.x]]\nmodId=\"other\"\nside=\"CLIENT\"\n";
-    const buf = makeJar({ "META-INF/mods.toml": toml });
-    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "client", confidence: "weak", source: "all-deps-client" });
-  });
-
-  test("fabric: only client/modmenu entrypoints → weak client (entityculling pattern)", () => {
-    const buf = makeJar({ "fabric.mod.json": JSON.stringify({ id: "x", entrypoints: { client: [ "a.b.C" ], modmenu: [ "a.b.M" ] } }) });
-    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "client", confidence: "weak", source: "client-entrypoints" });
-  });
-
-  test("fabric: main entrypoint present → entrypoint heuristic does not fire", () => {
-    const buf = makeJar({ "fabric.mod.json": JSON.stringify({ id: "x", entrypoints: { main: [ "a.b.M" ], client: [ "a.b.C" ] } }) });
-    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "unknown" });
-  });
-
-  test("server-content evidence vetoes dep-side heuristics (supplementaries pattern)", () => {
-    const toml = "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"minecraft\"\nside=\"CLIENT\"\n";
+  test("large client mixin sets are no longer a signal (fancymenu/emi are handled by blocklist/provider)", () => {
     const buf = makeJar({
-      "META-INF/mods.toml": toml,
-      "x.mixins.json": mixinConfig({ client: Array(33).fill("C"), mixins: Array(74).fill("M") }),
-      "data/x/recipes/thing.json": "{}"
+      "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n",
+      "x.mixins.json": mixinConfig({ client: Array(80).fill("ClientMixin") })
     });
+    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown", source: "no-signal" });
+  });
+
+  test("forge dependency side=CLIENT is no longer a signal", () => {
+    const toml = "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"minecraft\"\nside=\"CLIENT\"\n";
+    const buf = makeJar({ "META-INF/mods.toml": toml });
     expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown" });
+  });
+
+  test("client-only fabric entrypoints are no longer a signal", () => {
+    const buf = makeJar({ "fabric.mod.json": JSON.stringify({ id: "x", entrypoints: { client: [ "a.b.C" ] } }) });
+    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "unknown" });
   });
 });
 
 // Build a minimal Java classfile. `modMarker` plants a Forge @Mod descriptor in
 // the CP so scanForgeModClientSignals treats the class as a mod container.
-// `initNewClass` emits `new <class>; pop; return` in <clinit> (eager client ref).
-// `fieldDesc` adds an instance field (e.g. "Lnet/minecraft/client/Minecraft;").
-// `interfaces` lists interface class names the class implements.
-function makeClassFile({
-  className,
-  superName = "java/lang/Object",
-  interfaces = [],
-  modMarker = true,
-  initNewClass = null,
-  fieldDesc = null
-}) {
-  const strings = [ className, superName, ...interfaces ];
-  if (modMarker) strings.push("Lcpw/mods/fml/common/Mod;");
-  if (initNewClass) strings.push(initNewClass, "<clinit>", "()V", "Code");
-  if (fieldDesc) {
-    strings.push("f", fieldDesc);
-    for (const m of fieldDesc.match(/L([^;]+);/g) || []) strings.push(m.slice(1, -1));
-  }
-
+// `modAnnotation: true|false|null` emits a RuntimeVisibleAnnotations class
+// attribute with @Mod(clientSideOnly=<bool>) (null → no annotation attribute).
+function makeClassFile({ className, superName = "java/lang/Object", modMarker = true, modAnnotation = null }) {
   const utf8Index = new Map();
   const cp = []; // 1-based entries as buffers
   const addUtf8 = s => {
@@ -210,50 +126,37 @@ function makeClassFile({
     cp.push(entry);
     return cp.length;
   };
+  const addInt = v => {
+    const entry = Buffer.alloc(5);
+    entry[0] = 3;
+    entry.writeInt32BE(v, 1);
+    cp.push(entry);
+    return cp.length;
+  };
 
-  for (const s of strings) addUtf8(s);
   const thisIdx = addClass(className);
   const superIdx = addClass(superName);
-  const ifaceIdxs = interfaces.map(addClass);
-  let initNewIdx = null;
-  if (initNewClass) initNewIdx = addClass(initNewClass);
-
-  // Ensure marker utf8 exists even if unused as a type
   if (modMarker) addUtf8("Lcpw/mods/fml/common/Mod;");
 
-  const methods = [];
-  if (initNewClass) {
-    // Code: new #initNewIdx; pop; return
-    const codeBytes = Buffer.from([ 187, (initNewIdx >> 8) & 0xff, initNewIdx & 0xff, 87, 177 ]);
-    const codeAttr = Buffer.alloc(2 + 4 + 2 + 2 + 4 + codeBytes.length + 2 + 2);
-    let o = 0;
-    codeAttr.writeUInt16BE(addUtf8("Code"), o); o += 2;
-    const codeAttrLenPos = o; o += 4;
-    codeAttr.writeUInt16BE(2, o); o += 2; // max_stack
-    codeAttr.writeUInt16BE(0, o); o += 2; // max_locals
-    codeAttr.writeUInt32BE(codeBytes.length, o); o += 4;
-    codeBytes.copy(codeAttr, o); o += codeBytes.length;
-    codeAttr.writeUInt16BE(0, o); o += 2; // exception_table_length
-    codeAttr.writeUInt16BE(0, o); o += 2; // attributes_count
-    codeAttr.writeUInt32BE(o - codeAttrLenPos - 4, codeAttrLenPos);
-
-    const method = Buffer.alloc(8 + codeAttr.length);
-    method.writeUInt16BE(0x0008, 0); // ACC_STATIC
-    method.writeUInt16BE(addUtf8("<clinit>"), 2);
-    method.writeUInt16BE(addUtf8("()V"), 4);
-    method.writeUInt16BE(1, 6); // one attribute
-    codeAttr.copy(method, 8);
-    methods.push(method);
-  }
-
-  const fields = [];
-  if (fieldDesc) {
-    const field = Buffer.alloc(8);
-    field.writeUInt16BE(0, 0); // access
-    field.writeUInt16BE(addUtf8("f"), 2);
-    field.writeUInt16BE(addUtf8(fieldDesc), 4);
-    field.writeUInt16BE(0, 6); // no attributes
-    fields.push(field);
+  const classAttrBufs = [];
+  if (modAnnotation !== null) {
+    const rvaName = addUtf8("RuntimeVisibleAnnotations");
+    const typeIdx = addUtf8("Lcpw/mods/fml/common/Mod;");
+    const elemIdx = addUtf8("clientSideOnly");
+    const constIdx = addInt(modAnnotation ? 1 : 0);
+    // num_annotations(2) + type(2) + num_pairs(2) + [name(2) tag(1) const(2)]
+    const body = Buffer.alloc(2 + 2 + 2 + 5);
+    body.writeUInt16BE(1, 0);
+    body.writeUInt16BE(typeIdx, 2);
+    body.writeUInt16BE(1, 4);
+    body.writeUInt16BE(elemIdx, 6);
+    body[8] = 90; // 'Z' boolean
+    body.writeUInt16BE(constIdx, 9);
+    const attr = Buffer.alloc(6 + body.length);
+    attr.writeUInt16BE(rvaName, 0);
+    attr.writeUInt32BE(body.length, 2);
+    body.copy(attr, 6);
+    classAttrBufs.push(attr);
   }
 
   const cpCount = cp.length + 1;
@@ -263,105 +166,65 @@ function makeClassFile({
   header.writeUInt16BE(0, 6);
   header.writeUInt16BE(cpCount, 8);
 
-  const afterCp = Buffer.alloc(6 + 2 + ifaceIdxs.length * 2);
+  const afterCp = Buffer.alloc(8);
   afterCp.writeUInt16BE(0x0021, 0); // ACC_PUBLIC ACC_SUPER
   afterCp.writeUInt16BE(thisIdx, 2);
   afterCp.writeUInt16BE(superIdx, 4);
-  afterCp.writeUInt16BE(ifaceIdxs.length, 6);
-  ifaceIdxs.forEach((idx, i) => afterCp.writeUInt16BE(idx, 8 + i * 2));
+  afterCp.writeUInt16BE(0, 6); // no interfaces
 
-  const fieldCount = Buffer.alloc(2);
-  fieldCount.writeUInt16BE(fields.length, 0);
-  const methodCount = Buffer.alloc(2);
-  methodCount.writeUInt16BE(methods.length, 0);
+  const counts = Buffer.alloc(4); // 0 fields, 0 methods
   const classAttrs = Buffer.alloc(2);
-  classAttrs.writeUInt16BE(0, 0);
+  classAttrs.writeUInt16BE(classAttrBufs.length, 0);
 
-  return Buffer.concat([ header, ...cp, afterCp, fieldCount, ...fields, methodCount, ...methods, classAttrs ]);
-}
-
-function makeForgeJar(classes) {
-  const entries = { "mcmod.info": "[{ \"modid\": \"x\" }]" };
-  for (const [ name, opts ] of Object.entries(classes)) {
-    entries[`${name}.class`] = makeClassFile({ className: name, ...opts });
-  }
-  // makeJar expects string content — pass Buffers via a local zip builder
-  const zip = new AdmZip();
-  for (const [ filePath, content ] of Object.entries(entries)) {
-    zip.addFile(filePath, Buffer.isBuffer(content) ? content : Buffer.from(content));
-  }
-  return zip.toBuffer();
+  return Buffer.concat([ header, ...cp, afterCp, counts, classAttrs, ...classAttrBufs ]);
 }
 
 describe("inspectModJar — legacy Forge @Mod bytecode", () => {
-  test("eager <clinit> ref to net/minecraft/client → strong client (Sound Filters pattern)", () => {
-    const buf = makeForgeJar({
-      "com/example/ClientMod": { initNewClass: "net/minecraft/client/Minecraft" }
+  test("@Mod(clientSideOnly=true) → explicit client (EnchantmentDescriptions 1.12 pattern)", () => {
+    const buf = makeJar({
+      "mcmod.info": "[{ \"modid\": \"x\" }]",
+      "com/example/ClientMod.class": makeClassFile({ className: "com/example/ClientMod", modAnnotation: true })
     });
     expect(inspectModJar(buf, "forge")).toMatchObject({
-      verdict: "client", confidence: "strong", source: "mod-class-client-ref"
+      verdict: "client", confidence: "explicit", source: "mod-annotation-clientSideOnly"
     });
   });
 
-  test("field type net/minecraft/client → strong client", () => {
-    const buf = makeForgeJar({
-      "com/example/ClientMod": { fieldDesc: "Lnet/minecraft/client/Minecraft;" }
-    });
-    expect(inspectModJar(buf, "forge")).toMatchObject({
-      verdict: "client", confidence: "strong", source: "mod-class-client-ref"
-    });
-  });
-
-  test("in-JAR field type implementing a client interface → strong client (Blur pattern)", () => {
-    const buf = makeForgeJar({
-      "com/example/ClientMod": { fieldDesc: "Lcom/example/ShaderPack;" },
-      "com/example/ShaderPack": {
-        modMarker: false,
-        interfaces: [ "net/minecraft/client/resources/IResourceManagerReloadListener" ]
-      }
-    });
-    expect(inspectModJar(buf, "forge")).toMatchObject({
-      verdict: "client", confidence: "strong", source: "mod-class-client-ref"
-    });
-  });
-
-  test("@Mod class with no client linkage stays unknown (Pam's / BiblioCraft pattern)", () => {
-    const buf = makeForgeJar({
-      "com/example/ContentMod": {}
+  test("@Mod(clientSideOnly=false) → unknown", () => {
+    const buf = makeJar({
+      "mcmod.info": "[{ \"modid\": \"x\" }]",
+      "com/example/ContentMod.class": makeClassFile({ className: "com/example/ContentMod", modAnnotation: false })
     });
     expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown" });
   });
 
-  test("raw CP client names without eager linkage do not flag (BiblioCraft @SideOnly pattern)", () => {
-    // Class CP mentions a client type only as an unused UTF8/Class entry via
-    // initNewClass omitted — plant a Class CP entry by using it as superName? That
-    // would flag. Instead: no client field/init; only the Mod marker.
-    const buf = makeForgeJar({ "com/example/UniversalMod": {} });
+  test("mixed multi-mod JAR (one clientSideOnly, one not) does NOT count (CraftTweaker pattern)", () => {
+    const buf = makeJar({
+      "mcmod.info": "[{ \"modid\": \"x\" }]",
+      "com/example/MainMod.class": makeClassFile({ className: "com/example/MainMod", modAnnotation: false }),
+      "com/example/ClientSub.class": makeClassFile({ className: "com/example/ClientSub", modAnnotation: true })
+    });
+    expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown" });
+  });
+
+  test("clean @Mod with no annotation data → unknown/no-metadata (no more forge-mod-no-client-ref rescue)", () => {
+    const buf = makeJar({
+      "mcmod.info": "[{ \"modid\": \"x\" }]",
+      "com/example/ContentMod.class": makeClassFile({ className: "com/example/ContentMod" })
+    });
     expect(inspectModJar(buf, "forge")).toMatchObject({ verdict: "unknown" });
   });
 
   test("does not run when inspecting as fabric", () => {
-    const zip = new AdmZip();
-    zip.addFile("fabric.mod.json", Buffer.from(JSON.stringify({ id: "x" })));
-    zip.addFile("com/example/ClientMod.class", makeClassFile({
-      className: "com/example/ClientMod",
-      initNewClass: "net/minecraft/client/Minecraft"
-    }));
-    expect(inspectModJar(zip.toBuffer(), "fabric")).toMatchObject({ verdict: "unknown", loader: "fabric" });
+    const buf = makeJar({
+      "fabric.mod.json": JSON.stringify({ id: "x" }),
+      "com/example/ClientMod.class": makeClassFile({ className: "com/example/ClientMod", modAnnotation: true })
+    });
+    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "unknown", loader: "fabric" });
   });
 });
 
 describe("inspectModJar — loader preference and fallbacks", () => {
-  test("multi-loader JAR + loaderType=fabric: forge dep sides do not leak across loaders", () => {
-    const buf = makeJar({
-      "fabric.mod.json": JSON.stringify({ id: "x" }),
-      "META-INF/mods.toml": "[[mods]]\nmodId=\"x\"\n[[dependencies.x]]\nmodId=\"minecraft\"\nside=\"CLIENT\"\n"
-    });
-    // Dep-side declarations are weak signals scoped to their own loader; only
-    // explicit env/clientSideOnly declarations cross loaders (as "strong").
-    expect(inspectModJar(buf, "fabric")).toMatchObject({ verdict: "unknown" });
-  });
-
   test("loaderType=quilt with no quilt.mod.json falls back to fabric.mod.json", () => {
     const buf = makeJar({ "fabric.mod.json": JSON.stringify({ id: "x", environment: "client" }) });
     expect(inspectModJar(buf, "quilt")).toMatchObject({ verdict: "client", confidence: "explicit" });
@@ -377,29 +240,113 @@ describe("inspectModJar — loader preference and fallbacks", () => {
   });
 });
 
-// ─── isClientOnlyMod ────────────────────────────────────────────────────────
+// ─── decideModInstall: the Layer 1 precedence table ─────────────────────────
 
-describe("isClientOnlyMod — combining JAR verdicts with provider metadata", () => {
-  const verdict = confidence => ({ verdict: "client", confidence, loader: "forge", source: "test" });
-  const unknown = { verdict: "unknown", confidence: null, loader: null, source: "no-signal" };
+describe("decideModInstall — precedence table", () => {
+  const clientInspection = { verdict: "client", confidence: "explicit", loader: "forge", source: "env-client" };
+  const unknownInspection = { verdict: "unknown", confidence: null, loader: null, source: "no-signal" };
 
-  test("explicit and strong verdicts are trusted over the provider", () => {
-    expect(isClientOnlyMod(verdict("explicit"), "required")).toBe(true);
-    expect(isClientOnlyMod(verdict("strong"), "optional")).toBe(true);
+  test("slot 1: blocklist beats everything, never rescuable", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection, providerServerSide: "required", modId: "blockedmod"
+    });
+    expect(d).toMatchObject({ install: false, slot: 1, source: "blocklist", rescuable: false });
   });
 
-  test("weak verdicts yield to a provider that says the mod runs on servers", () => {
-    expect(isClientOnlyMod(verdict("weak"), "optional")).toBe(false);
-    expect(isClientOnlyMod(verdict("weak"), "required")).toBe(false);
-    expect(isClientOnlyMod(verdict("weak"), "unsupported")).toBe(true);
-    expect(isClientOnlyMod(verdict("weak"), null)).toBe(true);
-    expect(isClientOnlyMod(verdict("weak"))).toBe(true);
+  test("slot 2: allowlist installs over explicit client metadata", () => {
+    const d = decideModInstall({
+      inspection: clientInspection, providerServerSide: "unsupported", modId: "allowedmod"
+    });
+    expect(d).toMatchObject({ install: true, slot: 2, source: "allowlist" });
   });
 
-  test("with no JAR signal pack-authored unsupported is followed", () => {
-    expect(isClientOnlyMod(unknown, "unsupported")).toBe(true);
-    expect(isClientOnlyMod(unknown, "optional")).toBe(false);
-    expect(isClientOnlyMod(unknown, null)).toBe(false);
+  test("slot 2: server_side_overrides rescues known Modrinth mislabels (Pam's pattern)", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection,
+      providerServerSide: "unsupported",
+      filename: "Pam's HarvestCraft 1.12.2zg.jar"
+    });
+    expect(d).toMatchObject({ install: true, slot: 2, source: "server-side-override" });
+  });
+
+  test("slot 3: learned crash verdict skips even when the provider says required", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection, providerServerSide: "required",
+      sha1: "abc", learnedVerdict: "crashes-server"
+    });
+    expect(d).toMatchObject({ install: false, slot: 3, source: "learned-crashes-server", rescuable: false });
+  });
+
+  test("slot 3: learned verdict is consulted from the verdict store by sha1", () => {
+    verdictStore.getLearnedVerdict.mockReturnValue("crashes-server");
+    const d = decideModInstall({ inspection: unknownInspection, sha1: "deadbeef" });
+    expect(d).toMatchObject({ install: false, slot: 3 });
+    expect(verdictStore.getLearnedVerdict).toHaveBeenCalledWith("deadbeef");
+  });
+
+  test("slot 4: provider required/optional installs over explicit client metadata", () => {
+    expect(decideModInstall({ inspection: clientInspection, providerServerSide: "required" }))
+      .toMatchObject({ install: true, slot: 4 });
+    expect(decideModInstall({ inspection: clientInspection, providerServerSide: "optional" }))
+      .toMatchObject({ install: true, slot: 4 });
+  });
+
+  test("slot 5: explicit client metadata skips on unsupported/null, never rescuable", () => {
+    expect(decideModInstall({ inspection: clientInspection, providerServerSide: "unsupported" }))
+      .toMatchObject({ install: false, slot: 5, source: "env-client", rescuable: false });
+    expect(decideModInstall({ inspection: clientInspection }))
+      .toMatchObject({ install: false, slot: 5, rescuable: false });
+  });
+
+  test("slot 6: curated client list skips, rescuable (Blur pattern)", () => {
+    const d = decideModInstall({ inspection: unknownInspection, filename: "Blur-1.0.4-14.jar" });
+    expect(d).toMatchObject({ install: false, slot: 6, source: "curated-client-list", rescuable: true });
+  });
+
+  test("slot 6: provider required/optional beats the curated list", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection, providerServerSide: "optional", filename: "Blur-1.0.4-14.jar"
+    });
+    expect(d).toMatchObject({ install: true, slot: 4 });
+  });
+
+  test("slot 7: provider unsupported skips unknowns, rescuable (fusion pattern)", () => {
+    const d = decideModInstall({ inspection: unknownInspection, providerServerSide: "unsupported" });
+    expect(d).toMatchObject({ install: false, slot: 7, source: "provider-unsupported", rescuable: true });
+  });
+
+  test("slot 8: crash-proof scan hit skips, rescuable", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection,
+      crashRisk: { risk: true, detail: "a --init--> net/minecraft/client/Minecraft" }
+    });
+    expect(d).toMatchObject({ install: false, slot: 8, source: "crash-risk", rescuable: true });
+  });
+
+  test("slot 9: default installs", () => {
+    expect(decideModInstall({ inspection: unknownInspection })).toMatchObject({ install: true, slot: 9 });
+  });
+});
+
+describe("isClientOnlyMod — boolean wrapper", () => {
+  const clientInspection = { verdict: "client", confidence: "explicit", loader: "forge", source: "env-client" };
+  const unknownInspection = { verdict: "unknown", confidence: null, loader: null, source: "no-signal" };
+
+  test("provider required/optional always installs", () => {
+    expect(isClientOnlyMod(clientInspection, "required")).toBe(false);
+    expect(isClientOnlyMod(clientInspection, "optional")).toBe(false);
+  });
+
+  test("explicit client skips when the provider does not vouch", () => {
+    expect(isClientOnlyMod(clientInspection, "unsupported")).toBe(true);
+    expect(isClientOnlyMod(clientInspection, null)).toBe(true);
+    expect(isClientOnlyMod(clientInspection)).toBe(true);
+  });
+
+  test("with no JAR signal pack-authored unsupported is followed; null installs", () => {
+    expect(isClientOnlyMod(unknownInspection, "unsupported")).toBe(true);
+    expect(isClientOnlyMod(unknownInspection, "optional")).toBe(false);
+    expect(isClientOnlyMod(unknownInspection, null)).toBe(false);
   });
 });
 

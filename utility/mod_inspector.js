@@ -2,43 +2,44 @@ const AdmZip = require("adm-zip");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const { parseClassFile } = require("./crash_risk.js");
+const config = require("../config.json");
+const { FORGE_MOD_ANNOTATIONS } = require("./crash_risk.js");
+const {
+  getInspection, putInspection, getLearnedVerdict, flushVerdictStore
+} = require("./verdict_store.js");
 
-const CACHE_PATH = path.join(__dirname, "../mod_inspector_cache.json");
-// Bump when detection heuristics change so cached verdicts are recomputed.
-const CACHE_VERSION = "v4";
+// Bump when detection logic changes so cached verdicts are recomputed.
+const CACHE_VERSION = "v8";
 
-let cache = null;
-let cacheDirty = false;
+// ── Curated lists (Layer 1 slots 2 and 6) ───────────────────────────────────
 
-// @Mod annotation descriptors across Forge eras (1.7 FML → modern NeoForge).
-const FORGE_MOD_ANNOTATIONS = [
-  "Lcpw/mods/fml/common/Mod;",
-  "Lnet/minecraftforge/fml/common/Mod;",
-  "Lnet/neoforged/fml/common/Mod;"
-];
-
-function isMcClientClass(name) {
-  return typeof name === "string" && name.startsWith("net/minecraft/client/");
-}
-
-function loadCache() {
-  if (cache !== null) return;
+function loadCuratedList(filename) {
   try {
-    cache = JSON.parse(fs.readFileSync(CACHE_PATH, "utf8"));
+    const data = JSON.parse(fs.readFileSync(path.join(__dirname, "../data", filename), "utf8"));
+    return {
+      modIds: new Set((data.modIds ?? []).map(s => s.toLowerCase())),
+      filenamePrefixes: (data.filenamePrefixes ?? []).map(s => s.toLowerCase()),
+      sha1s: new Set(data.sha1s ?? [])
+    };
   } catch {
-    cache = {};
+    return { modIds: new Set(), filenamePrefixes: [], sha1s: new Set() };
   }
 }
 
-// Persists the cache to disk only when there are unwritten entries. Callers
-// (e.g. the install engine) invoke this once per batch instead of paying a
-// synchronous full-file write for every inspected JAR.
-function flushModInspectorCache() {
-  if (!cacheDirty || cache === null) return;
-  fs.writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2));
-  cacheDirty = false;
+const CLIENT_SIDE_MODS = loadCuratedList("client_side_mods.json");
+const SERVER_SIDE_OVERRIDES = loadCuratedList("server_side_overrides.json");
+
+function matchesCuratedList(list, { modId = null, filename = null, sha1 = null } = {}) {
+  if (sha1 && list.sha1s.has(sha1)) return true;
+  if (modId && list.modIds.has(modId.toLowerCase())) return true;
+  if (filename) {
+    const base = filename.split("/").pop().toLowerCase();
+    if (list.filenamePrefixes.some(p => base.startsWith(p))) return true;
+  }
+  return false;
 }
+
+// ── Metadata parsing ────────────────────────────────────────────────────────
 
 // Parses mod metadata JSON, tolerating the lenient JSON that mod loaders accept
 // (GSON allows raw control characters inside string literals — e.g. multi-line
@@ -66,26 +67,9 @@ function lenientJsonParse(text) {
   try { return JSON.parse(out); } catch { return null; }
 }
 
-// Extracts side-detection signals from a Forge/NeoForge mods.toml.
-//   clientSideOnly - top-level clientSideOnly=true flag (authoritative)
-//   mcDepSide      - side declared on the minecraft dependency, if any
-//   loaderDepSide  - side declared on the forge/neoforge dependency, if any
-//   depSides       - every side value declared across dependency blocks
-function parseForgeTomlSignals(content) {
-  const out = {
-    clientSideOnly: /^\s*clientSideOnly\s*=\s*true/im.test(content),
-    mcDepSide: null,
-    loaderDepSide: null,
-    depSides: []
-  };
-  for (const block of content.split(/\[\[dependencies\./).slice(1)) {
-    const modId = (block.match(/modId\s*=\s*"([^"]+)"/) || [])[1];
-    const side = (block.match(/side\s*=\s*"(\w+)"/) || [])[1] ?? null;
-    if (side) out.depSides.push(side);
-    if (modId === "minecraft") out.mcDepSide = side;
-    if (modId === "forge" || modId === "neoforge") out.loaderDepSide = side;
-  }
-  return out;
+// Reads the explicit clientSideOnly flag from a Forge/NeoForge mods.toml.
+function tomlClientSideOnly(content) {
+  return /^\s*clientSideOnly\s*=\s*true/im.test(content);
 }
 
 // Reads @Mod(clientSideOnly=true) from a classfile's RuntimeVisibleAnnotations.
@@ -203,68 +187,49 @@ function readModClientSideOnly(buf) {
   return null;
 }
 
-// Scans Forge @Mod container classes for dedicated-server crash signals.
-// Catches 1.7-era client mods (Blur, Sound Filters, BetterPlacement) that ship
-// only mcmod.info and no mods.toml side metadata:
-//   - @Mod(clientSideOnly=true) → explicit
-//   - eager <init>/<clinit> or field types referencing net/minecraft/client/*
-//   - in-JAR field types that extend/implement a client class (Blur→ShaderResourcePack)
-// Deliberately ignores raw constant-pool client names: @SideOnly methods leave
-// those behind on universal mods (BiblioCraft) without breaking the server.
+// Scans Forge @Mod container classes for the explicit clientSideOnly annotation.
+// Only explicit when every readable @Mod annotation is clientSideOnly=true
+// (mixed multi-mod JARs like CraftTweaker 1.12 with one client submodule do NOT
+// count).
 function scanForgeModClientSignals(zip) {
-  const classBuffers = new Map();
+  let modAnnoCount = 0;
+  let clientSideOnlyCount = 0;
+  let foundModClass = false;
+
   for (const e of zip.getEntries()) {
     if (e.isDirectory || !e.entryName.endsWith(".class")) continue;
-    const name = e.entryName.replace(/\.class$/, "").replace(/\\/g, "/");
-    classBuffers.set(name, e.getData());
-  }
-
-  let clientSideOnly = false;
-  let refsClient = false;
-
-  for (const buf of classBuffers.values()) {
+    const buf = e.getData();
     if (!FORGE_MOD_ANNOTATIONS.some(m => buf.indexOf(m) !== -1)) continue;
+    foundModClass = true;
 
     const annotated = readModClientSideOnly(buf);
-    if (annotated === true) clientSideOnly = true;
-
-    const cf = parseClassFile(buf);
-    if (!cf) continue;
-
-    if (isMcClientClass(cf.superClassName) || cf.interfaces.some(isMcClientClass)) refsClient = true;
-    if (cf.initClassRefs.some(isMcClientClass)) refsClient = true;
-    if ((cf.fieldTypes ?? []).some(isMcClientClass)) refsClient = true;
-
-    for (const ft of cf.fieldTypes ?? []) {
-      const nestedBuf = classBuffers.get(ft);
-      if (!nestedBuf) continue;
-      const nested = parseClassFile(nestedBuf);
-      if (!nested) continue;
-      if (isMcClientClass(nested.superClassName) || nested.interfaces.some(isMcClientClass)) {
-        refsClient = true;
-      }
+    if (annotated === true) {
+      modAnnoCount++;
+      clientSideOnlyCount++;
+    } else if (annotated === false) {
+      modAnnoCount++;
     }
   }
 
-  return { clientSideOnly, refsClient };
+  const clientSideOnly = modAnnoCount > 0 && clientSideOnlyCount === modAnnoCount;
+  return { clientSideOnly, foundModClass };
 }
 
-// Inspects a mod JAR buffer and classifies its side.
+// Inspects a mod JAR buffer for EXPLICIT client-only declarations only.
 // loaderType ("fabric"|"quilt"|"forge"|"neoforge"|null) selects which metadata is
 // authoritative when a JAR ships support for multiple loaders (universal JAR).
 //
 // Returns { verdict, confidence, loader, source }:
-//   verdict    - "client" (client-only) or "unknown" (no client-only evidence)
-//   confidence - for "client": "explicit" (declared by the mod), "strong"
-//                (high-precision heuristic), or "weak" (heuristic that should be
-//                overridden by provider metadata when available); null otherwise
+//   verdict    - "client" (self-declared client-only) or "unknown"
+//   confidence - "explicit" (declared for the target loader) or "strong"
+//                (declared for another loader in a universal JAR); null otherwise
 //   loader     - loader whose metadata produced the signal (or was present)
-//   source     - human-readable signal name for logging
+//   source     - signal name for logging
 //
-// Heuristics were tuned against a labeled corpus of real mods (see git history):
-// explicit/strong signals had zero false positives; weak signals are correct on
-// client mods but occasionally fire on server mods with sloppy metadata, so the
-// install engine lets provider (Modrinth) side metadata rescue those.
+// The old weak-heuristic tier (mixin-count thresholds, dep sides, GUI supers,
+// client CP mentions) was deleted: it was overfit to specific mods and its job
+// is now done by the curated client list (slot 6), the crash-proof scan
+// (slot 8), and the boot-verify loop (Layer 3).
 function inspectModJar(buffer, loaderType = null) {
   let zip;
   try {
@@ -277,15 +242,15 @@ function inspectModJar(buffer, loaderType = null) {
     const entry = zip.getEntry(name);
     return entry ? lenientJsonParse(entry.getData().toString("utf8")) : null;
   };
-  const readToml = name => {
+  const readTomlClientOnly = name => {
     const entry = zip.getEntry(name);
-    return entry ? parseForgeTomlSignals(entry.getData().toString("utf8")) : null;
+    return entry ? tomlClientSideOnly(entry.getData().toString("utf8")) : null;
   };
 
   const fabric = readJson("fabric.mod.json");
   const quilt = readJson("quilt.mod.json");
-  const forge = readToml("META-INF/mods.toml");
-  const neo = readToml("META-INF/neoforge.mods.toml");
+  const forge = readTomlClientOnly("META-INF/mods.toml");
+  const neo = readTomlClientOnly("META-INF/neoforge.mods.toml");
 
   const fabricEnv = typeof fabric?.environment === "string" ? fabric.environment : null;
   // Quilt declares environment under minecraft.environment (older mods used quilt_loader).
@@ -295,9 +260,9 @@ function inspectModJar(buffer, loaderType = null) {
   // mirror actual loader compatibility (Quilt loads Fabric mods, NeoForge reads
   // legacy mods.toml).
   const isTomlLoader = loaderType === "forge" || loaderType === "neoforge";
-  const preferredToml = loaderType === "neoforge" ? (neo ?? forge) : loaderType === "forge" ? forge : null;
+  const preferredTomlClientOnly = loaderType === "neoforge" ? (neo ?? forge) : loaderType === "forge" ? forge : null;
   const preferredEnv = loaderType === "quilt" ? (quiltEnv ?? fabricEnv) : loaderType === "fabric" ? fabricEnv : null;
-  const anyToml = preferredToml ?? neo ?? forge;
+  const anyTomlClientOnly = preferredTomlClientOnly ?? neo ?? forge;
   const anyEnv = preferredEnv ?? quiltEnv ?? fabricEnv;
 
   const envLoader = quiltEnv !== null && (loaderType === "quilt" || fabricEnv === null) ? "quilt" : "fabric";
@@ -305,130 +270,142 @@ function inspectModJar(buffer, loaderType = null) {
 
   // 1. Explicit declarations in the target loader's own metadata.
   const ownEnv = loaderType ? preferredEnv : anyEnv;
-  const ownToml = loaderType ? preferredToml : anyToml;
+  const ownTomlClientOnly = loaderType ? preferredTomlClientOnly : anyTomlClientOnly;
   if (ownEnv === "client" && (!loaderType || !isTomlLoader)) {
     return { verdict: "client", confidence: "explicit", loader: envLoader, source: "env-client" };
   }
-  if (ownToml?.clientSideOnly) {
+  if (ownTomlClientOnly) {
     return { verdict: "client", confidence: "explicit", loader: tomlLoader, source: "clientSideOnly" };
   }
 
-  // Server-content evidence used to corroborate or veto heuristics below.
-  const hasDataContent = zip.getEntries().some(e =>
-    /^data\/[^/]+\/(recipes?|loot_tables?|worldgen|structures|advancements?)\//.test(e.entryName)
-  );
-  let clientMixins = 0, commonMixins = 0, serverMixins = 0;
-  for (const e of zip.getEntries()) {
-    if (e.isDirectory || e.entryName.includes("/")) continue; // mixin configs live at the JAR root
-    if (!/mixins?.*\.json$/i.test(e.entryName) || /refmap/i.test(e.entryName)) continue;
-    const mixinConfig = lenientJsonParse(e.getData().toString("utf8"));
-    if (!mixinConfig?.package) continue;
-    clientMixins += (mixinConfig.client ?? []).length;
-    commonMixins += (mixinConfig.mixins ?? []).length;
-    serverMixins += (mixinConfig.server ?? []).length;
-  }
-  // A main/server entrypoint means the JAR loads on a dedicated server. Libraries
-  // like Fusion ship large client-only mixin sets but still declare main — treating
-  // those as client-only drops server content mods that hard-depend on them.
-  // UI overhauls (FancyMenu) also declare stub main/server entrypoints, so an
-  // overwhelming mixin set still wins as strong client despite the entrypoint.
-  const fabricEntrypoints = Object.keys(fabric?.entrypoints ?? {});
-  const quiltEntrypoints = Object.keys(quilt?.quilt_loader?.entrypoints ?? {});
-  const hasServerEntrypoint = [ ...fabricEntrypoints, ...quiltEntrypoints ]
-    .some(e => e === "main" || e === "server");
-
-  // 2. Strong heuristics.
-  // A universal JAR that declares client-only for another loader is almost
-  // certainly client-only on this loader too (mods rarely differ per loader).
-  if (anyEnv === "client" || anyToml?.clientSideOnly) {
+  // 2. Cross-loader declarations: a universal JAR that declares client-only for
+  // another loader is almost certainly client-only on this loader too.
+  if (anyEnv === "client" || anyTomlClientOnly) {
     return { verdict: "client", confidence: "strong", loader: anyEnv === "client" ? envLoader : tomlLoader, source: "cross-loader-env" };
   }
-  // A large mixin set that is overwhelmingly client-targeted, with no datapack
-  // content, only occurs in client-only mods (UI/render overhauls). Small
-  // all-client mixin sets also occur in server-needed libraries whose only
-  // mixins happen to be client tweaks, so those are downgraded to weak below.
-  // Mid-size sets with a main entrypoint (Fusion ~29) are left unknown so
-  // dep-rescue can keep them when content mods require them; huge sets
-  // (FancyMenu ~65+) stay strong client even with stub main/server entrypoints.
-  const totalMixins = clientMixins + commonMixins + serverMixins;
-  const mixinDominant = !hasDataContent
-    && totalMixins > 0 && clientMixins / totalMixins >= 0.95;
-  const strongMixinClient = mixinDominant && clientMixins >= 20
-    && (!hasServerEntrypoint || clientMixins >= 50);
-  if (strongMixinClient) {
-    return { verdict: "client", confidence: "strong", loader: loaderType, source: "client-mixins" };
-  }
 
-  // 3. Weak heuristics — skipped entirely when the JAR shows server content.
-  // Mid-size client-mixin libs with a main entrypoint are not weakly flagged
-  // either (same Fusion rationale as above).
-  const contradicted = hasDataContent || commonMixins >= 5
-    || (hasServerEntrypoint && clientMixins < 50);
-  if (!contradicted) {
-    if (mixinDominant && clientMixins >= 2) {
-      return { verdict: "client", confidence: "weak", loader: loaderType, source: "client-mixins" };
-    }
-    if (ownToml?.mcDepSide === "CLIENT" || ownToml?.loaderDepSide === "CLIENT") {
-      return { verdict: "client", confidence: "weak", loader: tomlLoader, source: "dep-side-client" };
-    }
-    if (ownToml && ownToml.depSides.length > 0 && ownToml.depSides.every(s => s === "CLIENT")) {
-      return { verdict: "client", confidence: "weak", loader: tomlLoader, source: "all-deps-client" };
-    }
-    if ((!loaderType || !isTomlLoader) && fabricEntrypoints.includes("client")
-        && !fabricEntrypoints.includes("main") && !fabricEntrypoints.includes("server")) {
-      return { verdict: "client", confidence: "weak", loader: "fabric", source: "client-entrypoints" };
-    }
-  }
-
-  // 4. Legacy Forge bytecode: @Mod containers that crash dedicated servers at
-  // construct (no mods.toml side field). Skip when inspecting as Fabric/Quilt.
+  // 3. Legacy Forge bytecode: @Mod(clientSideOnly=true) containers (no mods.toml
+  // side field). Skipped when inspecting as Fabric/Quilt.
   if (!loaderType || isTomlLoader) {
     const forgeScan = scanForgeModClientSignals(zip);
     if (forgeScan.clientSideOnly) {
       return { verdict: "client", confidence: "explicit", loader: "forge", source: "mod-annotation-clientSideOnly" };
     }
-    if (forgeScan.refsClient) {
-      return { verdict: "client", confidence: "strong", loader: "forge", source: "mod-class-client-ref" };
-    }
   }
 
-  const presentLoader = fabric ? "fabric" : quilt ? "quilt" : neo ? "neoforge" : forge ? "forge" : null;
+  const presentLoader = fabric ? "fabric" : quilt ? "quilt" : neo !== null ? "neoforge" : forge !== null ? "forge" : null;
   return { verdict: "unknown", confidence: null, loader: presentLoader, source: presentLoader ? "no-signal" : "no-metadata" };
 }
 
-// Combines a JAR inspection with provider-side metadata (mrpack env.server, or
-// CurseForge→Modrinth required/optional hints: "required" | "optional" |
-// "unsupported" | null) into the final skip decision. Returns true when the
-// mod should not be installed.
-//   - explicit/strong client verdicts are always trusted
-//   - weak verdicts yield to a provider that says the mod runs on servers
-//   - with no JAR signal, pack-authored "unsupported" (mrpack) is followed;
-//     CurseForge installs never pass Modrinth project "unsupported" here
-function isClientOnlyMod(inspection, providerServerSide = null) {
-  if (inspection.verdict === "client") {
-    if (inspection.confidence === "weak") {
-      return providerServerSide !== "optional" && providerServerSide !== "required";
-    }
-    return true;
+// ── Layer 1 decision: the precedence table ──────────────────────────────────
+//
+// Every input is either deterministic (config lists, provider metadata,
+// explicit self-declarations) or self-correcting (learned verdicts from the
+// boot-verify loop). Slots, first match wins:
+//   1. config blocklist                          → skip,    never rescued
+//   2. config allowlist / server_side_overrides  → install
+//   3. learned crash verdict (VerdictStore sha1) → skip,    never rescued
+//   4. provider required/optional                → install
+//   5. explicit self-declared client metadata    → skip,    never rescued
+//   6. curated client-side list                  → skip,    rescuable
+//   7. provider unsupported                      → skip,    rescuable
+//   8. Layer 2 crash-proof scan hit              → skip,    rescuable
+//   9. default                                   → install
+//
+// "rescuable" skips may be reversed by the dependency-rescue fixpoint in
+// modpack_install.js when an installed mod hard-requires the skipped one.
+function decideModInstall({
+  inspection,
+  providerServerSide = null,
+  modId = null,
+  filename = null,
+  sha1 = null,
+  learnedVerdict = null,
+  crashRisk = null
+} = {}) {
+  const skip = (slot, source, rescuable) => ({ install: false, slot, source, rescuable });
+  const install = (slot, source) => ({ install: true, slot, source, rescuable: false });
+
+  // 1. Config blocklist.
+  if (modId !== null && (config.mod_id_blocklist ?? []).includes(modId)) {
+    return skip(1, "blocklist", false);
   }
-  return providerServerSide === "unsupported";
+
+  // 2. Config allowlist + known Modrinth mislabels.
+  if (modId !== null && (config.mod_id_allowlist ?? []).includes(modId)) {
+    return install(2, "allowlist");
+  }
+  if (matchesCuratedList(SERVER_SIDE_OVERRIDES, { modId, filename, sha1 })) {
+    return install(2, "server-side-override");
+  }
+
+  // 3. Learned verdict from the boot-verify loop.
+  const learned = learnedVerdict ?? getLearnedVerdict(sha1);
+  if (learned === "crashes-server") {
+    return skip(3, "learned-crashes-server", false);
+  }
+
+  // 4. Provider says the mod belongs on the server — never drop it.
+  if (providerServerSide === "required" || providerServerSide === "optional") {
+    return install(4, "provider-server-side");
+  }
+
+  // 5. Explicit self-declared client-only metadata.
+  if (inspection?.verdict === "client") {
+    return skip(5, inspection.source, false);
+  }
+
+  // 6. Curated client-only list.
+  if (matchesCuratedList(CLIENT_SIDE_MODS, { modId, filename, sha1 })) {
+    return skip(6, "curated-client-list", true);
+  }
+
+  // 7. Provider says client-only.
+  if (providerServerSide === "unsupported") {
+    return skip(7, "provider-unsupported", true);
+  }
+
+  // 8. Layer 2 crash-proof scan (computed lazily by the caller — only reaches
+  // here when the provider is silent and no static signal fired).
+  if (crashRisk?.risk) {
+    return skip(8, "crash-risk", true);
+  }
+
+  // 9. Default: install. A kept harmless client mod costs RAM, not correctness;
+  // the boot-verify loop mops up anything that actually crashes the server.
+  return install(9, "default");
 }
 
-// Like inspectModJar but checks an on-disk cache keyed by SHA1+loaderType first.
-// If sha1 is null, computes it from the buffer.
-// Writes new results to cache before returning.
-function inspectModJarCached(sha1, buffer, loaderType = null) {
-  loadCache();
+// Boolean view of decideModInstall for callers that only need skip/install
+// (eval harness, tests). opts may carry modId/filename/sha1/learnedVerdict/crashRisk.
+function isClientOnlyMod(inspection, providerServerSide = null, opts = {}) {
+  return !decideModInstall({ inspection, providerServerSide, ...opts }).install;
+}
 
+// True when a mod is on the known-Modrinth-mislabel list (server-side despite
+// an upstream 'unsupported' label). The eval harness uses this as a truth
+// correction; the install path uses it at precedence slot 2.
+function isKnownServerSideMod(ref) {
+  return matchesCuratedList(SERVER_SIDE_OVERRIDES, ref);
+}
+
+// Like inspectModJar but checks the verdict store (keyed by SHA1+loaderType+
+// CACHE_VERSION) first. If sha1 is null, computes it from the buffer.
+function inspectModJarCached(sha1, buffer, loaderType = null) {
   const hash = sha1 ?? crypto.createHash("sha1").update(buffer).digest("hex");
-  const key = `${hash}:${loaderType ?? "any"}:${CACHE_VERSION}`;
-  if (cache[key]?.verdict) return cache[key];
+  const cacheKey = `${loaderType ?? "any"}:${CACHE_VERSION}`;
+  const cached = getInspection(hash, cacheKey);
+  if (cached?.verdict) return cached;
 
   const result = inspectModJar(buffer, loaderType);
-  cache[key] = result;
-  cacheDirty = true;
-
+  putInspection(hash, cacheKey, result);
   return result;
+}
+
+// Kept as the historical name used by the install engine; flushes the verdict
+// store (which replaced mod_inspector_cache.json).
+function flushModInspectorCache() {
+  flushVerdictStore();
 }
 
 // IDs that are always present on a server and should not trigger dependency propagation.
@@ -507,8 +484,12 @@ function extractModDeps(buffer, loaderType = null) {
 module.exports = {
   inspectModJar,
   inspectModJarCached,
+  decideModInstall,
   isClientOnlyMod,
   extractModDeps,
   flushModInspectorCache,
-  scanForgeModClientSignals
+  scanForgeModClientSignals,
+  matchesCuratedList,
+  isKnownServerSideMod,
+  CACHE_VERSION
 };

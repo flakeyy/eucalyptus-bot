@@ -24,6 +24,12 @@
         "quilt": 0
     },
     "mc_version_variable": "MC_VERSION",
+    "boot_verify": {
+        "enabled": true,
+        "max_attempts": 5,
+        "success_timeout_ms": 600000,
+        "total_budget_ms": 1800000
+    },
     "java_images": {
         "8": "ghcr.io/pterodactyl/yolks:java_8",
         "11": "ghcr.io/pterodactyl/yolks:java_11",

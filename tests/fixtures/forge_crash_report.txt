@@ -1,0 +1,42 @@
+---- Minecraft Crash Report ----
+// Shall we play a game?
+
+Time: 7/17/26, 2:03 AM
+Description: Mod loading error has occurred
+
+java.lang.Exception: Mod Loading has failed
+	at net.minecraftforge.logging.CrashReportExtender.dumpModLoadingCrashReport(CrashReportExtender.java:85) ~[forge:?] {re:classloading}
+	at net.minecraftforge.fml.server.ServerModLoader.load(ServerModLoader.java:51) ~[forge:?] {re:classloading}
+	at net.minecraft.server.Main.main(Main.java:95) ~[?:?] {re:classloading}
+	at java.lang.reflect.Method.invoke(Method.java:566) ~[?:?] {}
+	at net.minecraftforge.fml.loading.FMLServerLaunchProvider.lambda$launchService$0(FMLServerLaunchProvider.java:51) ~[forge-1.16.5-36.2.39.jar:36.2] {}
+
+
+A detailed walkthrough of the error, its code path and all known details is as follows:
+---------------------------------------------------------------------------------------
+
+-- Head --
+Thread: main
+Stacktrace:
+	at com.mrcrayfish.backpacked.Backpacked.<init>(Backpacked.java:45) ~[backpacked:1.4.2] {re:classloading}
+
+-- MOD backpacked --
+Details:
+	Mod File: /data/mods/backpacked-1.16.5-1.4.2.jar
+	Failure message: Backpacked (backpacked) has failed to load correctly
+		java.lang.NoClassDefFoundError: net/minecraft/client/gui/screen/Screen
+	Mod Version: 1.4.2
+	Mod Issue URL: NOT PROVIDED
+	Exception message: java.lang.NoClassDefFoundError: net/minecraft/client/gui/screen/Screen
+Stacktrace:
+	at com.mrcrayfish.backpacked.Backpacked.<init>(Backpacked.java:45) ~[backpacked:1.4.2] {re:classloading}
+	at java.lang.Class.newInstance(Class.java:584) ~[?:?] {}
+	at net.minecraftforge.fml.javafmlmod.FMLModContainer.constructMod(FMLModContainer.java:81) ~[javafmllanguage-1.16.5-36.2.39.jar:36.2] {}
+
+-- System Details --
+Details:
+	Minecraft Version: 1.16.5
+	Operating System: Linux (amd64) version 5.15.0
+	Java Version: 11.0.19, Eclipse Adoptium
+	Is Modded: Definitely; Server brand changed to 'forge'
+	Type: Dedicated Server (map_server.txt)

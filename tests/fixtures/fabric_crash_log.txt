@@ -1,0 +1,12 @@
+[02:03:11] [main/INFO]: Loading Minecraft 1.20.1 with Fabric Loader 0.15.11
+[02:03:12] [main/WARN]: Mod resolution completed
+[02:03:14] [main/ERROR]: Minecraft has crashed!
+net.fabricmc.loader.impl.FormattedException: java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'xaerominimap'!
+	at net.fabricmc.loader.impl.game.minecraft.MinecraftGameProvider.launch(MinecraftGameProvider.java:658)
+	at net.fabricmc.loader.impl.launch.knot.Knot.launch(Knot.java:74)
+	at net.fabricmc.loader.impl.launch.knot.KnotServer.main(KnotServer.java:23)
+Caused by: java.lang.RuntimeException: Could not execute entrypoint stage 'main' due to errors, provided by 'xaerominimap'!
+	at net.fabricmc.loader.impl.entrypoint.EntrypointUtils.lambda$invoke0$0(EntrypointUtils.java:51)
+Caused by: java.lang.NoClassDefFoundError: net/minecraft/class_310
+	at xaero.minimap.XaeroMinimap.onInitialize(XaeroMinimap.java:32)
+	at net.fabricmc.loader.impl.util.ExceptionUtil.gatherExceptions(ExceptionUtil.java:33)

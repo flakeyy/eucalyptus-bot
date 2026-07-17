@@ -321,6 +321,41 @@ async function deleteServerFiles(serverId, discordId, filenames) {
   return apiResult.statusCode;
 }
 
+// Reads a file's raw contents from the server. Returns the text, or null on
+// any failure (missing file, permission, non-200).
+async function getFileContents(serverId, discordId, filePath) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return null;
+  const path = await daemonServerPath(validatedId, discordId, `files/contents?file=${encodeURIComponent(filePath)}`);
+  const apiResult = await clientApiCall(path, "GET", null, discordId);
+  if (apiResult.statusCode !== 200) {
+    try { await apiResult.body.text(); } catch { /* drain */ }
+    return null;
+  }
+  try {
+    return await apiResult.body.text();
+  } catch {
+    return null;
+  }
+}
+
+// Renames/moves files on the server. files = [{ from, to }] relative to root.
+// Used by the boot-verify loop to quarantine crashing mods into mods-disabled/.
+async function renameServerFiles(serverId, discordId, root, files) {
+  const validatedId = validateString(serverId);
+  if (!validatedId) return -1;
+  const body = JSON.stringify({ root, files });
+  const path = await daemonServerPath(validatedId, discordId, "files/rename");
+  const apiResult = await clientApiCall(path, "PUT", body, discordId);
+  if (apiResult.statusCode !== 204) {
+    try {
+      const responseBody = await apiResult.body.text();
+      msgLog.debugExtended(`[renameServerFiles] ${apiResult.statusCode}: ${responseBody}`);
+    } catch { /* ignore */ }
+  }
+  return apiResult.statusCode;
+}
+
 async function getFileUploadUrl(serverId, discordId) {
   const validatedId = validateString(serverId);
   if (!validatedId) return null;
@@ -487,6 +522,8 @@ module.exports = {
   getAvailableUserMemory,
   listServerFiles,
   deleteServerFiles,
+  getFileContents,
+  renameServerFiles,
   getFileUploadUrl,
   chmodServerFiles,
   createServerDirectory,

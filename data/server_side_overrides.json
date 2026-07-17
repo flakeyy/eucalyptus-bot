@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "Known Modrinth mislabels: mods marked server 'unsupported' upstream that are",
+    "in fact needed (or perfectly functional) on dedicated servers. Consulted at",
+    "Layer 1 precedence slot 2 (with the config allowlist) — a match always",
+    "installs. Matching: exact sha1, case-insensitive modId, or case-insensitive",
+    "filename prefix on the JAR basename.",
+    "flywheel/athena: rendering libraries that dedicated servers must still have",
+    "because Create/Chipped hard-require them (they no-op server-side)."
+  ],
+  "modIds": [
+    "harvestcraft",
+    "vanillafix",
+    "bwncr",
+    "flywheel",
+    "athena"
+  ],
+  "filenamePrefixes": [
+    "Pam's HarvestCraft",
+    "VanillaFix-",
+    "badwithernocookiereloaded-",
+    "flywheel-",
+    "athena-"
+  ],
+  "sha1s": [
+    "a064b434253305424755943dd66f389855ade953",
+    "646fc28aa81773662e33a3b447e830b816528fc9",
+    "11ab53b71d86a7da97e5fa1a1705b62aa8da2b9c"
+  ]
+}

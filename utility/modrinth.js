@@ -122,13 +122,12 @@ async function getServerSideBySlugs(slugs) {
 }
 
 // CurseForge has no client/server side field, so installs borrow Modrinth's
-// project-level server_side. Only "required"/"optional" are trusted — they can
-// rescue a weak JAR client verdict. "unsupported" is dropped: author-set
-// Modrinth labels are frequently wrong for content mods, and following them
-// when the JAR is silent skips packs (e.g. Pam's HarvestCraft). Pack-authored
-// mrpack env.server still passes "unsupported" through unchanged.
+// project-level server_side as provider metadata for the precedence table.
+// Pass required/optional/unsupported through unchanged — "unsupported" is a
+// rescuable skip (slot 7), reversed by server_side_overrides or dep-rescue
+// when the label is wrong.
 function projectServerSideForCurseforge(serverSide) {
-  return serverSide === "required" || serverSide === "optional" ? serverSide : null;
+  return typeof serverSide === "string" ? serverSide : null;
 }
 
 // Returns our internal loader name for a Modrinth loaders array (project/version).
@@ -204,13 +203,13 @@ function parseMrpackIndex(buffer) {
 }
 
 // Resolves a downloaded .mrpack into a normalized install plan for the shared
-// engine. The index declares each file's server side via env.server: for mods/
-// JARs we pass that through as provider metadata that the engine combines with
-// its own JAR inspection (see isClientOnlyMod); non-mod files (configs,
-// resource packs) are dropped outright when env.server is unsupported.
+// engine. The index declares each file's server side via env.server; when a
+// JAR hash matches a Modrinth project we prefer that project's server_side
+// (pack authors often leave env.server=required on client mods). Non-mod files
+// (configs, resource packs) are dropped when env.server is unsupported.
 // overrides/ and server-overrides/ are merged (server wins); client-overrides/
 // is skipped. Returns null if the zip has no parseable index.
-function resolveModrinthInstall(buffer) {
+async function resolveModrinthInstall(buffer) {
   const index = parseMrpackIndex(buffer);
   if (!index) return null;
 
@@ -237,6 +236,18 @@ function resolveModrinthInstall(buffer) {
       // Non-mod files can't be JAR-inspected, so the index is authoritative.
       if (serverEnv === "unsupported") continue;
       extraFiles.push({ path: file.path, downloadUrl, sha1 });
+    }
+  }
+
+  // Prefer Modrinth project server_side over pack env when the hash resolves.
+  // Lazy packs mark nearly everything env.server=required, which would otherwise
+  // rescue weak JAR client signals (entityculling, skinlayers, etc.).
+  const sha1s = modFiles.map(m => m.sha1).filter(Boolean);
+  if (sha1s.length > 0) {
+    const { serverSideByHash } = await analyzeModrinthFiles(sha1s);
+    for (const mod of modFiles) {
+      const projectSide = mod.sha1 ? serverSideByHash.get(mod.sha1) : null;
+      if (projectSide) mod.providerServerSide = projectSide;
     }
   }
 

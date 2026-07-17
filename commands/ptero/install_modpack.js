@@ -15,6 +15,7 @@ const { getErrorMessage } = require("../../utility/error_messages.js");
 const { isManifestZip } = require("../../utility/curseforge.js");
 const { downloadToBuffer, streamUploadToServer } = require("../../utility/modpack_http.js");
 const { buildProgressBar, installFilePlan } = require("../../utility/modpack_install.js");
+const { verifyServerBoot } = require("../../utility/boot_verify.js");
 const { detectProvider, lookupModpack, listModpackFiles, resolveModpackInstall } = require("../../utility/modpack_providers.js");
 const AdmZip = require("adm-zip");
 const config = require("../../config.json");
@@ -353,6 +354,7 @@ async function runInstallation(i, state, interaction) {
   let crashRiskWarnings = [];
   let manifestInstalled = 0;
   let manifestTotal = 0;
+  let modIndex = null;
 
   const effectiveMcVersion = mcVersion ?? installPlan?.mcVersion ?? null;
   const installCtx = {
@@ -365,7 +367,7 @@ async function runInstallation(i, state, interaction) {
   };
 
   if (usedManifest) {
-    ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal, crashRiskWarnings = [] } =
+    ({ unavailable: unavailableMods, installed: manifestInstalled, total: manifestTotal, crashRiskWarnings = [], modIndex = null } =
       await installFilePlan(installCtx, installPlan));
   } else {
     const uploadUrl = await getFileUploadUrl(serverId, interaction.user.id);
@@ -396,11 +398,54 @@ async function runInstallation(i, state, interaction) {
     return;
   }
 
+  // i2. Boot verification (Layer 3): start the server and empirically confirm
+  // it boots, quarantining crash-attributed mods and retrying. Progress updates
+  // are best-effort — the loop can outlive the 15-min interaction token — so
+  // the final outcome always goes to the logs as well.
+  let bootResult = null;
+  if (config.boot_verify?.enabled) {
+    await updateProgress(i, "Verifying server boot (this can take several minutes)...");
+    try {
+      bootResult = await verifyServerBoot({
+        serverId,
+        userId: interaction.user.id,
+        modIndex,
+        settings: config.boot_verify,
+        onProgress: msg => updateProgress(i, msg).catch(() => {})
+      });
+    } catch (err) {
+      msgLog.error(`[install-modpack] boot verification errored for ${serverId}: ${err.message}`);
+    }
+    if (bootResult) {
+      msgLog.log(
+        `${interaction.user.username}/${interaction.user.id} | [install-modpack] boot verify: ` +
+        `${bootResult.success ? "success" : `failed (${bootResult.reason})`} after ${bootResult.attempts} attempt(s), ` +
+        `${bootResult.quarantined.length} quarantined | ${serverId}`
+      );
+      if (!bootResult.success && bootResult.consoleTail) {
+        msgLog.warn(`[install-modpack] ${serverId} final console tail:\n${bootResult.consoleTail.split("\n").slice(-40).join("\n")}`);
+      }
+    }
+  }
+
   let doneContent = `**Installation Complete**\n\n**${modpackName}** has been installed on **${serverName}**.`;
   msgLog.log(`${interaction.user.username}/${interaction.user.id} | [install-modpack] install success: ${modpackName} | ${serverId} `);
 
-  if (usingClientPack || usedManifest) {
+  if (bootResult?.success) {
+    doneContent += "\n\n**Boot verified:** the server started successfully.";
+  } else if (bootResult && !bootResult.success) {
+    doneContent += `\n\n**Warning:** the server did not boot successfully during verification (${bootResult.reason}). Please report to <@${process.env.ADMIN_DISCORD_ID}>.`;
+  } else if (usingClientPack || usedManifest) {
     doneContent += `\n\n**Reminder:** A client modpack/manifest install was used, please report to <@${process.env.ADMIN_DISCORD_ID}> if you encounter a crash at server boot.`;
+  }
+
+  if (bootResult?.quarantined?.length > 0) {
+    const MAX_SHOWN = 10;
+    const shown = bootResult.quarantined.slice(0, MAX_SHOWN);
+    const overflow = bootResult.quarantined.length - shown.length;
+    const lines = shown.map(q => `- \`${q.jar}\` — ${q.reason}`);
+    if (overflow > 0) lines.push(`- *...and ${overflow} more (see logs)*`);
+    doneContent += `\n\n**${bootResult.quarantined.length} mod(s) crashed the server and were moved to \`mods-disabled/\`:**\n${lines.join("\n")}`;
   }
 
   if (unavailableMods.length > 0) {

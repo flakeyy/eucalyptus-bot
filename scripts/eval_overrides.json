@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "Frozen ground-truth overrides for the pack-corpus eval (hand-triaged from the",
+    "2026-07-17 REPORT.md FP/FN rows). Keyed by JAR sha1. label is the GOLDEN",
+    "install decision for a dedicated server: 'client' = must be skipped,",
+    "'server' = must be installed. Applied on top of Modrinth project labels by",
+    "scripts/eval_pack_corpus.js so accuracy is measured against stable truth.",
+    "Notes record why the Modrinth label was kept or overridden."
+  ],
+  "overrides": {
+    "67208d4ef2fe6a691f2cf863139077dd4b1d9c8f": { "label": "client", "filename": "fancymenu_fabric_3.8.1_MC_1.20.1.jar", "note": "FancyMenu: client-only UI overhaul; config blocklist; Modrinth server=optional is a courtesy label" },
+    "65903483bbf770824d821c6065309648aae95304": { "label": "client", "filename": "fancymenu_fabric_3.8.1_MC_1.21.1.jar", "note": "FancyMenu (see above)" },
+    "f33a40f7d33585e781d90d00d156178e369ae8ed": { "label": "client", "filename": "fancymenu_forge_3.7.0_MC_1.20.1.jar", "note": "FancyMenu (see above)" },
+    "e84fa5a9786236dc50a46a4a207175a597e7cbe6": { "label": "client", "filename": "fancymenu_fabric_3.5.2_MC_1.18.2.jar", "note": "FancyMenu (see above)" },
+    "addcca3debe2f2d813ae0b7d0628ad269eaa1c9e": { "label": "client", "filename": "fancymenu_forge_3.1.2_MC_1.18.2.jar", "note": "FancyMenu (see above)" },
+    "289f98d41e7fb78667cae8eb85b075a50921942e": { "label": "client", "filename": "fancymenu_forge_3.3.2_MC_1.19.2.jar", "note": "FancyMenu (see above)" },
+    "1fef1d8ab0dc2dec116bc6d6cb6f789fd33b23b0": { "label": "client", "filename": "fancymenu_forge_3.8.1_MC_1.20.1.jar", "note": "FancyMenu (see above)" },
+    "061a2c1ae0563d9d433928c243c58ee9b45f630f": { "label": "client", "filename": "fancymenu_neoforge_3.8.1_MC_1.21.1.jar", "note": "FancyMenu (see above)" },
+    "463d81a560492e441b397852359dbcd12a04aa72": { "label": "client", "filename": "fancymenu_fabric_3.7.0_MC_1.20.1.jar", "note": "FancyMenu (see above)" },
+    "3217f4a8fdaa919fc11d03f07306edc868efa0d6": { "label": "client", "filename": "fancymenu_forge_3.5.0_MC_1.20.1.jar", "note": "FancyMenu (see above)" },
+    "00352348e54d4cd1826891d5dbbb97bca41d33b9": { "label": "client", "filename": "fancymenu_forge_3.7.0_MC_1.18.2.jar", "note": "FancyMenu (see above)" },
+
+    "646fc28aa81773662e33a3b447e830b816528fc9": { "label": "server", "filename": "VanillaFix-1.0.10-150.jar", "note": "VanillaFix: bugfix mod that runs fine on dedicated servers; Modrinth 'unsupported' is a mislabel (seeded into data/server_side_overrides.json)" },
+    "a064b434253305424755943dd66f389855ade953": { "label": "server", "filename": "Pam's HarvestCraft 1.12.2zg.jar", "note": "Pam's HarvestCraft: server-needed content mod; Modrinth 'unsupported' is a known mislabel (seeded into data/server_side_overrides.json)" },
+    "11ab53b71d86a7da97e5fa1a1705b62aa8da2b9c": { "label": "server", "filename": "badwithernocookiereloaded-1.12.2-3.4.18.jar", "note": "BWNCR: server-side mod (silences wither/dragon broadcast sounds); Modrinth 'unsupported' is a mislabel (seeded into data/server_side_overrides.json)" },
+
+    "d8049d6ec86befcd100a0ff0fc8ebc289f735997": { "label": "server", "filename": "emi-1.1.22+1.20.1+forge.jar", "note": "EMI: has a real server component (recipe sync); old client-mixins heuristic was wrong, Modrinth optional is right" },
+    "f9204f839906f986ffb824877c33d7e2ba977085": { "label": "server", "filename": "emi-1.1.24+1.19.2+forge.jar", "note": "EMI (see above)" },
+    "c52ef239d9d3d3473312d3f57bd8e730155ee5a5": { "label": "server", "filename": "cloth-config-6.2.57-fabric.jar", "note": "Cloth Config: server-needed config library; old client-entrypoints heuristic was wrong" },
+
+    "332078f9434ebb8b0768b6152898fb7ed84daea0": { "label": "server", "filename": "EnchantmentDescriptions-Fabric-1.20.1-17.1.20.jar", "note": "fabric env=client, provider optional: loader disables it on dedicated servers, install is harmless; design installs at provider slot" },
+    "9bda22c7e3ca808ba52c93a99f5918b086f4d6db": { "label": "server", "filename": "enchdesc-fabric-1.21.1-21.1.9.jar", "note": "same as EnchantmentDescriptions-Fabric above" },
+    "400a51caa8b4d41a5daf4ca066d9b04d21de1c3d": { "label": "server", "filename": "tipsmod-fabric-1.21.1-21.1.3.jar", "note": "fabric env=client + provider optional: harmless install by design" },
+    "ccafbced7bd26af8f821fef87b3a2ddd7c1030c2": { "label": "server", "filename": "icaruswings_transmog_compat-1.0.0.jar", "note": "fabric env=client + provider optional: harmless install by design" },
+    "1725fdf5f7568ffd4f9a7677432deec617d141cf": { "label": "server", "filename": "smwyg-fix-1.0.0.jar", "note": "fabric env=client + provider optional: harmless install by design" },
+    "fed56d10a00daa650a0b649cd6288ab7e275f668": { "label": "server", "filename": "tbtransmog_compat-1.0.0.jar", "note": "fabric env=client + provider REQUIRED by pack: harmless install by design" },
+
+    "d82e9d326b9d40904edb189077fabe0f5f47557a": { "label": "server", "filename": "EnchantmentDescriptions-1.12.2-1.1.20.jar", "note": "1.12 @Mod(clientSideOnly=true) + provider optional: FML disables client-only mods on dedicated servers, install is harmless" },
+    "51ba50251c2821c8fe22a6918bab8f87cb7a75c0": { "label": "server", "filename": "EnchantmentDescriptions-1.12.2-1.1.15.jar", "note": "same as above" },
+    "9790e6083bbeab78e045c027c964495133507efa": { "label": "server", "filename": "Tips-1.12.2-1.0.9.jar", "note": "1.12 @Mod(clientSideOnly=true) + provider optional: harmless install by design" },
+    "727a6135b172bc8b0f048fe0c2977f54a9d316f0": { "label": "server", "filename": "ThaumicJEI-1.12.2-1.6.0-27.jar", "note": "1.12 @Mod(clientSideOnly=true) + provider REQUIRED: harmless install by design" },
+    "a197d88223f05973c87e11c0eb33f6586609240e": { "label": "server", "filename": "OldJavaWarning-1.12.2-1.1.11.jar", "note": "1.12 @Mod(clientSideOnly=true) + provider REQUIRED: harmless install by design" },
+    "7bf27633a3f56e5518e621bbb2317d9965b0d388": { "label": "server", "filename": "JourneyMapStages-1.12.2-2.0.9.jar", "note": "1.12 @Mod(clientSideOnly=true) + provider REQUIRED: harmless install by design" },
+
+    "2b76d4a98ca05a32a803b72b4b91fb2101350210": { "label": "client", "filename": "BackTools-1.16.5-10.1.0.jar", "note": "BackTools: client-only render mod; curated client list catches it" },
+    "dbc3c497e3ad604c4f02f66b2e919cda632e72fd": { "label": "client", "filename": "BQTweaker-1.3.5.jar", "note": "BQTweaker: client-only BetterQuesting UI tweaks; old Pam-style rescue wrongly installed it" },
+    "553e4d3e6b24d31cbf4e84542b4cc38a0522dbe8": { "label": "client", "filename": "CraftPresence-2.6.2+1.7.10-forge.jar", "note": "CraftPresence: Discord rich presence, client-only" },
+    "8003eb8ce28c565b806343dd255b0e4bb0ea5f10": { "label": "client", "filename": "UniLib-1.1.1+1.7.10-forge.jar", "note": "UniLib: CraftPresence client library" },
+    "8f078c9f4389687103dc5f053403a921e9ac849d": { "label": "client", "filename": "FasterLadderClimbing-1.12-0.1-146.jar", "note": "Modrinth unsupported kept; provider-unsupported skip is correct without the Pam rescue" },
+    "7d9a74cce4109782f092b701b1d8135fab8c8ce8": { "label": "client", "filename": "SuggestionProviderFix-1.20.1-1.0.0.jar", "note": "SuggestionProviderFix: client-side command-suggestion fix; curated client list catches it" },
+    "537c8de453097083f14b85ff9a02d569b8df0019": { "label": "client", "filename": "zmedievalmusic-1.18.2-1.4.jar", "note": "Medieval Music: client-only music mod; curated client list catches it" },
+    "23ea52a8d48288f6211f5f2b34a4fbc90311bba3": { "label": "server", "filename": "impactful-18.5.8.jar", "note": "impactful: client-leaning but DawnCraft manifest marks it required; provider-required install is the designed behavior" },
+
+    "e37a34a53d780b3e79fbe598558710c62bde8b05": { "label": "client", "filename": "xenon-1.0.0.jar", "note": "Xenon: Sodium fork (client-only renderer); Modrinth slug lookup collides with an unrelated project labeled server-ok" }
+  }
+}

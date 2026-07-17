@@ -1,0 +1,9 @@
+[02:05:01] [main/INFO]: Loading Minecraft 1.20.1 with Fabric Loader 0.15.11
+[02:05:02] [main/ERROR]: Incompatible mods found!
+net.fabricmc.loader.impl.FormattedException: Mod resolution encountered an incompatible mod set!
+A potential solution has been determined, this may resolve your problem:
+	 - Install sodium, any version.
+Unmet dependency listing:
+	 - Mod 'Sodium Extra' (sodium-extra) 0.5.4 requires any version of mod 'Sodium' (sodium), which is missing!
+	at net.fabricmc.loader.impl.FabricLoaderImpl.load(FabricLoaderImpl.java:196)
+	at net.fabricmc.loader.impl.launch.knot.KnotServer.main(KnotServer.java:23)
