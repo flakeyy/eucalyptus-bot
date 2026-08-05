@@ -172,8 +172,8 @@ function writeNotes(results, meta) {
 
   lines.push("## Summary");
   lines.push("");
-  lines.push(`| Pack | Install | Boot | Duration |`);
-  lines.push(`|------|---------|------|----------|`);
+  lines.push("| Pack | Install | Boot | Duration |");
+  lines.push("|------|---------|------|----------|");
   for (const r of results) {
     const install = !r.install ? "—" : (r.install.ok ? "ok" : `FAIL (${r.install.stage})`);
     let boot = "—";
@@ -201,7 +201,7 @@ function writeNotes(results, meta) {
     lines.push(`- **Server pack:** ${r.isServerPack ? "yes" : "no"}`);
     lines.push(`- **Duration:** ${r.duration || "—"}`);
     if (!r.install) {
-      lines.push(`- **Install:** pending / not run`);
+      lines.push("- **Install:** pending / not run");
       lines.push("");
       continue;
     }
@@ -211,12 +211,12 @@ function writeNotes(results, meta) {
       lines.push("");
       continue;
     }
-    lines.push(`- **Install:** ok`);
+    lines.push("- **Install:** ok");
     if (r.usedManifest) {
       lines.push(`- **Mods placed (manifest):** ${r.manifestInstalled}/${r.manifestTotal}`);
     } else {
-      lines.push(`- **Install path:** server-pack / archive extract (not a per-mod manifest plan)`);
-      if (r.modsOnDisk != null) lines.push(`- **\`.jar\` files in \`mods/\` after install:** ${r.modsOnDisk}`);
+      lines.push("- **Install path:** server-pack / archive extract (not a per-mod manifest plan)");
+      if (typeof r.modsOnDisk === "number") lines.push(`- **\`.jar\` files in \`mods/\` after install:** ${r.modsOnDisk}`);
     }
     if (r.unavailable?.length) {
       lines.push(`- **Unavailable mods (${r.unavailable.length}):**`);
@@ -227,7 +227,7 @@ function writeNotes(results, meta) {
       for (const w of r.crashRiskWarnings.slice(0, 10)) lines.push(`  - \`${w}\``);
     }
     if (r.boot === "skipped") {
-      lines.push(`- **Boot-verify:** skipped`);
+      lines.push("- **Boot-verify:** skipped");
     } else if (r.boot) {
       lines.push(
         `- **Boot-verify:** ${r.boot.success ? "success" : `failed (${r.boot.reason})`} ` +
@@ -244,7 +244,7 @@ function writeNotes(results, meta) {
         lines.push("```");
       }
     } else {
-      lines.push(`- **Boot-verify:** not run / no result`);
+      lines.push("- **Boot-verify:** not run / no result");
     }
     lines.push("");
   }
