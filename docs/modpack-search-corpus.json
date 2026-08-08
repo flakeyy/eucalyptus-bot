@@ -1,0 +1,64 @@
+{
+  "description": "hit@N corpus for modpack autocomplete ranking (scripts/eval_modpack_search.js)",
+  "cases": [
+    {
+      "query": "atm9",
+      "expect": { "source": "cf", "idOrSlug": "715572" },
+      "topN": 3,
+      "note": "All the Mods 9"
+    },
+    {
+      "query": "atm",
+      "expect": { "source": "cf", "idOrSlug": "925200" },
+      "topN": 5,
+      "note": "ATM10 should surface for short atm (most popular ATM line)"
+    },
+    {
+      "query": "rlcraft",
+      "expect": { "source": "cf", "idOrSlug": "285109" },
+      "topN": 3
+    },
+    {
+      "query": "cobblemon",
+      "expect": { "source": "mr", "idOrSlug": "cobblemon-fabric" },
+      "topN": 3
+    },
+    {
+      "query": "better mc",
+      "expect": { "source": "mr", "idOrSlug": "better-mc-fabric-bmc2" },
+      "topN": 8,
+      "note": "BMC2 fabric — allow room for other BMC editions"
+    },
+    {
+      "query": "pixelmon",
+      "expect": { "source": "cf", "idOrSlug": "389615" },
+      "topN": 3
+    },
+    {
+      "query": "create above and beyond",
+      "expect": { "source": "cf", "idOrSlug": "542763" },
+      "topN": 3
+    },
+    {
+      "query": "create above",
+      "expect": { "source": "cf", "idOrSlug": "542763" },
+      "topN": 5
+    },
+    {
+      "query": "ftb academy",
+      "expect": { "source": "cf", "idOrSlug": "336409" },
+      "topN": 3
+    },
+    {
+      "query": "simply optimized",
+      "expect": { "source": "mr", "idOrSlug": "sop" },
+      "topN": 5,
+      "note": "MR text search misses sop — alias + slug resolve"
+    },
+    {
+      "query": "sop",
+      "expect": { "source": "mr", "idOrSlug": "sop" },
+      "topN": 3
+    }
+  ]
+}
