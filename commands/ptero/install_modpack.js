@@ -372,11 +372,11 @@ async function runInstallation(i, state, interaction) {
   }
 
   // h. Place files: manifest plan install or direct upload+extract
-  let unavailableMods = [];
-  let crashRiskWarnings = [];
-  let manifestInstalled = 0;
-  let manifestTotal = 0;
-  let modIndex = null;
+  let unavailableMods;
+  let crashRiskWarnings;
+  let manifestInstalled;
+  let manifestTotal;
+  let modIndex;
 
   const effectiveMcVersion = mcVersion ?? installPlan?.mcVersion ?? null;
   const installCtx = {
