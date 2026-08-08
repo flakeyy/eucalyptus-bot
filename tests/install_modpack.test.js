@@ -318,11 +318,43 @@ describe("CurseForge API helpers", () => {
       ];
       global.fetch = jest.fn().mockResolvedValue({
         ok: true,
-        json: jest.fn().mockResolvedValue({ data: mockFiles })
+        json: jest.fn().mockResolvedValue({
+          data: mockFiles,
+          pagination: { index: 0, pageSize: 50, resultCount: 1, totalCount: 1 }
+        })
       });
 
       const result = await curseforge.getModpackFiles(123);
       expect(result).toEqual(mockFiles);
+      expect(global.fetch).toHaveBeenCalledWith(
+        expect.stringContaining("/mods/123/files?index=0&pageSize=50"),
+        expect.any(Object)
+      );
+    });
+
+    test("walks pages until all files are collected", async () => {
+      const page1 = Array.from({ length: 50 }, (_, i) => ({ id: i + 1 }));
+      const page2 = Array.from({ length: 10 }, (_, i) => ({ id: 51 + i }));
+      global.fetch = jest.fn()
+        .mockResolvedValueOnce({
+          ok: true,
+          json: jest.fn().mockResolvedValue({
+            data: page1,
+            pagination: { index: 0, pageSize: 50, resultCount: 50, totalCount: 60 }
+          })
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: jest.fn().mockResolvedValue({
+            data: page2,
+            pagination: { index: 50, pageSize: 50, resultCount: 10, totalCount: 60 }
+          })
+        });
+
+      const result = await curseforge.getModpackFiles(123);
+      expect(result).toHaveLength(60);
+      expect(global.fetch).toHaveBeenCalledTimes(2);
+      expect(global.fetch.mock.calls[1][0]).toContain("index=50");
     });
 
     test("throws on HTTP error", async () => {

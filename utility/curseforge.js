@@ -64,15 +64,31 @@ async function getModpackBySlug(slug) {
   return match || null;
 }
 
+// CurseForge caps each files page at 50. Walk pages until exhausted or we hit
+// MAX_MODPACK_FILES so older releases remain selectable in the installer.
+const CF_FILES_PAGE_SIZE = 50;
+const MAX_MODPACK_FILES = 200;
+
 async function getModpackFiles(modId) {
-  const response = await fetch(
-    `${CURSEFORGE_BASE_URL}/mods/${modId}/files`,
-    { headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json" } }
-  );
-  msgLog.debugExtended(`API: GET /curse/mods/${modId}/files | Status Code: ${response.status}`);
-  if (!response.ok) throw new Error(`CurseForge API error: HTTP ${response.status}`);
-  const data = await response.json();
-  return data.data || [];
+  const all = [];
+  let index = 0;
+  while (index < MAX_MODPACK_FILES) {
+    const pageSize = Math.min(CF_FILES_PAGE_SIZE, MAX_MODPACK_FILES - index);
+    const url = `${CURSEFORGE_BASE_URL}/mods/${modId}/files?index=${index}&pageSize=${pageSize}`;
+    const response = await fetch(url, {
+      headers: { "x-api-key": process.env.CURSEFORGE_API_KEY, "Accept": "application/json" }
+    });
+    msgLog.debugExtended(`API: GET /curse/mods/${modId}/files?index=${index} | Status Code: ${response.status}`);
+    if (!response.ok) throw new Error(`CurseForge API error: HTTP ${response.status}`);
+    const data = await response.json();
+    const page = data.data || [];
+    all.push(...page);
+    const total = data.pagination?.totalCount;
+    index += pageSize;
+    if (page.length < pageSize) break;
+    if (typeof total === "number" && all.length >= total) break;
+  }
+  return all;
 }
 
 function detectLoaderType(latestFilesIndexes) {
