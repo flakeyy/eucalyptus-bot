@@ -23,7 +23,9 @@ jest.mock("../utility/server_functions.js", () => ({
   getFileUploadUrl: jest.fn(),
   decompressFile: jest.fn(),
   writeServerFile: jest.fn().mockResolvedValue(204),
-  renameServerFiles: jest.fn().mockResolvedValue(204)
+  renameServerFiles: jest.fn().mockResolvedValue(204),
+  createServerDirectory: jest.fn().mockResolvedValue(204),
+  chmodServerFiles: jest.fn().mockResolvedValue(204)
 }));
 
 jest.mock("../utility/helper_functions.js", () => ({
@@ -50,8 +52,17 @@ jest.mock("../config.json", () => ({
   minecraft_nest_id: 1,
   modpack_eggs: { forge: 3, fabric: 4, neoforge: 5, quilt: 6 },
   mc_version_variable: "MC_VERSION",
-  java_images: { "8": "img:java_8", "17": "img:java_17", "21": "img:java_21" },
-  minecraft_java_map: { "1.21": 21, "1.20": 21, "1.19": 17, "1.17": 17, "1.12": 8 }
+  forge_build_type_variable: "BUILD_TYPE",
+  loader_version_variables: {
+    forge: "FORGE_VERSION",
+    neoforge: "NEOFORGE_VERSION",
+    fabric: "LOADER_VERSION",
+    quilt: "LOADER_VERSION"
+  },
+  java_images: { "8": "img:java_8", "17": "img:java_17", "21": "img:java_21", "25": "img:java_25" },
+  minecraft_java_map: {
+    "26.1": 25, "1.20.5": 21, "1.20": 17, "1.19": 17, "1.17": 17, "1.12": 8, "1.8": 8
+  }
 }), { virtual: true });
 
 // curseforge.js is NOT mocked globally — pure functions tested directly
@@ -145,6 +156,31 @@ describe("detectLoaderType", () => {
 
   test("returns null for null input", () => {
     expect(detectLoaderType(null)).toBeNull();
+  });
+});
+
+describe("resolveLoaderType", () => {
+  const {
+    inferLoaderFromGameVersions,
+    defaultLoaderForLegacyMc,
+    resolveLoaderType
+  } = require("../utility/curseforge.js");
+
+  test("infers Forge from gameVersion labels", () => {
+    expect(inferLoaderFromGameVersions([ "1.12.2", "Forge" ])).toBe("forge");
+  });
+
+  test("defaults pre-1.14 Minecraft to forge", () => {
+    expect(defaultLoaderForLegacyMc("1.12.2")).toBe("forge");
+    expect(defaultLoaderForLegacyMc("1.7.10")).toBe("forge");
+    expect(defaultLoaderForLegacyMc("1.20.1")).toBeNull();
+  });
+
+  test("falls back to legacy MC when indexes omit modLoader", () => {
+    expect(resolveLoaderType({
+      indexes: [ { modLoader: 0, gameVersion: "1.12.2" } ],
+      mcVersion: "1.12.2"
+    })).toBe("forge");
   });
 });
 
@@ -441,15 +477,53 @@ describe("runInstallation behavior", () => {
 
   // config mock has modpack_eggs.forge = 3, modpack_eggs.fabric = 4, minecraft_nest_id = 1
   test.each([
-    [ "forge", 3 ],
-    [ "fabric", 4 ]
-  ])("egg change: %s loader → changeServerEgg with eggId %i", async (loaderType, eggId) => {
+    [ "forge", 3, { BUILD_TYPE: "latest", FORGE_VERSION: "" } ],
+    [ "fabric", 4, {} ]
+  ])("egg change: %s loader → changeServerEgg with eggId %i", async (loaderType, eggId, loaderEnv) => {
     mockHappyPath(serverFunctions);
     await runAndSettle(makeState({ loaderType }));
-    expect(serverFunctions.changeServerEgg).toHaveBeenCalledWith(42, eggId, 1, {}, null);
+    expect(serverFunctions.changeServerEgg).toHaveBeenCalledWith(42, eggId, 1, loaderEnv, null);
   });
 
-  test("skips decompress when CurseForge download fails", async () => {
+  test("egg change pins FORGE_VERSION from a curseforge manifest zip", async () => {
+    const AdmZip = require("adm-zip");
+    const zip = new AdmZip();
+    zip.addFile("manifest.json", Buffer.from(JSON.stringify({
+      minecraft: {
+        version: "1.20.1",
+        modLoaders: [ { id: "forge-47.4.20", primary: true } ]
+      },
+      files: []
+    })));
+    // Manifest with no files → resolveCurseforgeInstall still returns a plan;
+    // stub the provider so we don't hit the network during egg-change focus.
+    jest.spyOn(require("../utility/modpack_providers.js"), "resolveModpackInstall")
+      .mockResolvedValue({
+        kind: "plan",
+        plan: { modFiles: [], extraFiles: [], overrideEntries: [], unavailable: [], mcVersion: "1.20.1" }
+      });
+
+    mockHappyPath(serverFunctions);
+    const packBytes = zip.toBuffer();
+    const { makeStreamResponse } = require("./fixtures/modpack.js");
+    global.fetch = jest.fn()
+      .mockResolvedValueOnce(makeStreamResponse(new Uint8Array(packBytes)))
+      .mockResolvedValue({ ok: true });
+
+    await runAndSettle(makeState({
+      loaderType: "forge",
+      usingClientPack: true,
+      mcVersion: "1.20.1"
+    }));
+
+    expect(serverFunctions.changeServerEgg).toHaveBeenCalledWith(
+      42, 3, 1,
+      { MC_VERSION: "1.20.1", FORGE_VERSION: "1.20.1-47.4.20" },
+      "img:java_17"
+    );
+  });
+
+  test("skips archive upload when CurseForge download fails", async () => {
     mockUpToTransfer(serverFunctions);
     serverFunctions.getFileUploadUrl.mockResolvedValue("https://wings.example.com/upload?token=x");
     global.fetch = jest.fn().mockResolvedValue({ ok: false, status: 403 });
@@ -459,13 +533,16 @@ describe("runInstallation behavior", () => {
     expect(serverFunctions.decompressFile).not.toHaveBeenCalled();
   });
 
-  test("skips decompress when getFileUploadUrl returns null", async () => {
+  test("fails archive install when getFileUploadUrl returns null", async () => {
     mockUpToTransfer(serverFunctions);
     serverFunctions.getFileUploadUrl.mockResolvedValue(null);
+    const { makeArchivePackBytes, makeStreamResponse } = require("./fixtures/modpack.js");
+    global.fetch = jest.fn().mockResolvedValue(makeStreamResponse(makeArchivePackBytes()));
 
     await runAndSettle(makeState());
 
-    expect(serverFunctions.decompressFile).not.toHaveBeenCalled();
+    // Download succeeds; chunked upload cannot get a Wings URL.
+    expect(serverFunctions.getFileUploadUrl).toHaveBeenCalled();
   });
 
   test("aborts before upload when reinstall reports install_failed", async () => {
@@ -492,7 +569,7 @@ describe("runInstallation behavior", () => {
     expect(JSON.stringify(lastCall.components[0])).toContain("MODPACK_REINSTALL_TIMEOUT");
   });
 
-  test("uploads only after the install status clears", async () => {
+  test("uploads chunked archive batches after the install status clears", async () => {
     mockHappyPath(serverFunctions);
     // Two polls still installing, then idle — upload must wait for the clear.
     serverFunctions.getServerInstallStatus

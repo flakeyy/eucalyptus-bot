@@ -6,6 +6,26 @@ const { validateExternalUrl } = require("./url_validation.js");
 const THROTTLE_MS = 2500;
 const MAX_REDIRECTS = 5;
 
+// CurseForge CDN (edge/mediafilez.forgecdn.net) requires x-api-key as of 2026-07-16.
+// See https://blog.curseforge.com/introducing-api-key-authentication-for-curseforge-file-downloads/
+function isCurseForgeCdnHost(hostname) {
+  const h = String(hostname || "").toLowerCase();
+  return h === "edge.forgecdn.net"
+    || h === "mediafilez.forgecdn.net"
+    || h === "media.forgecdn.net"
+    || h.endsWith(".forgecdn.net");
+}
+
+function headersForDownloadUrl(url) {
+  const headers = {};
+  try {
+    if (isCurseForgeCdnHost(new URL(url).hostname) && process.env.CURSEFORGE_API_KEY) {
+      headers["x-api-key"] = process.env.CURSEFORGE_API_KEY;
+    }
+  } catch { /* invalid URL — safeFetch will reject via validateExternalUrl */ }
+  return headers;
+}
+
 // SSRF-safe fetch. Node's global fetch follows 3xx redirects automatically, so
 // validating only the initial URL is bypassable: an attacker-controlled public
 // host can answer with a 302 to an internal address (cloud metadata, the
@@ -19,7 +39,10 @@ async function safeFetch(downloadUrl, errorMeta = {}) {
     if (!urlCheck.ok) {
       throw Object.assign(new Error(`URL rejected: ${urlCheck.reason}`), errorMeta);
     }
-    const res = await fetch(currentUrl, { redirect: "manual" });
+    const res = await fetch(currentUrl, {
+      redirect: "manual",
+      headers: headersForDownloadUrl(currentUrl)
+    });
     if (res.status >= 300 && res.status < 400) {
       const location = res.headers.get("location");
       if (location) {

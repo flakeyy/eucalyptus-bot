@@ -5,7 +5,7 @@
 const msgLog = require("./logger.js");
 const {
   getModpackById, getModpackBySlug, getModpackFiles, getFileById,
-  detectLoaderType, detectMCVersion, parseProjectId, parseModpackSlug,
+  detectMCVersion, resolveLoaderType, parseProjectId, parseModpackSlug,
   resolveCurseforgeInstall
 } = require("./curseforge.js");
 const {
@@ -46,7 +46,20 @@ async function lookupModpack(source, rawInput) {
     if (!projectId && !slug) return null;
     const modpack = projectId ? await getModpackById(projectId) : await getModpackBySlug(slug);
     if (!modpack) return null;
-    return { source, id: modpack.id, name: modpack.name, loaderType: detectLoaderType(modpack.latestFilesIndexes), raw: modpack };
+    const indexedMc = modpack.latestFilesIndexes?.[0]?.gameVersion || null;
+    const indexedVersions = (modpack.latestFiles || [])
+      .flatMap(f => f.gameVersions || []);
+    return {
+      source,
+      id: modpack.id,
+      name: modpack.name,
+      loaderType: resolveLoaderType({
+        indexes: modpack.latestFilesIndexes,
+        gameVersions: indexedVersions,
+        mcVersion: indexedMc
+      }),
+      raw: modpack
+    };
   }
   if (source === "modrinth") {
     const id = parseModrinthUrl(rawInput);
@@ -92,15 +105,17 @@ async function listCurseforgeFiles(modpack) {
     )
   );
 
-  // Interleave: server pack (if available) then client file, per version
+  // Prefer client packs (manifest + strip client-only jars). Offer the linked
+  // server pack afterward as a fallback when the user explicitly wants it.
   const rawOptions = [];
   for (let idx = 0; idx < sortedClientFiles.length; idx++) {
+    rawOptions.push(sortedClientFiles[idx]);
     const sp = serverPacks[idx];
     if (sp?.downloadUrl) rawOptions.push(sp);
-    rawOptions.push(sortedClientFiles[idx]);
   }
 
   return rawOptions.map(file => {
+    const mcVersion = detectMCVersion(cf, file);
     const mcVer = file.gameVersions?.find(v => /^\d+\.\d+/.test(v) && !LOADER_KEYWORDS.test(v));
     const date = file.fileDate?.slice(0, 10) ?? "";
     const packType = file.isServerPack ? "Server pack" : "Client pack";
@@ -112,8 +127,11 @@ async function listCurseforgeFiles(modpack) {
       description,
       downloadUrl: file.downloadUrl,
       isServerPack: !!file.isServerPack,
-      mcVersion: detectMCVersion(cf, file),
-      loaderType
+      mcVersion,
+      loaderType: resolveLoaderType({
+        gameVersions: file.gameVersions,
+        mcVersion
+      }) || loaderType
     };
   });
 }

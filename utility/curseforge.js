@@ -84,6 +84,37 @@ function detectLoaderType(latestFilesIndexes) {
   return null;
 }
 
+// CurseForge sometimes tags loaders as gameVersion strings ("Forge", "Fabric")
+// instead of (or in addition to) the numeric modLoader enum — especially on
+// older files where modLoader is missing/0.
+function inferLoaderFromGameVersions(gameVersions) {
+  if (!Array.isArray(gameVersions) || gameVersions.length === 0) return null;
+  const labels = gameVersions.map(v => String(v));
+  if (labels.some(v => /neoforge/i.test(v))) return "neoforge";
+  if (labels.some(v => /fabric/i.test(v))) return "fabric";
+  if (labels.some(v => /quilt/i.test(v))) return "quilt";
+  if (labels.some(v => /^forge$/i.test(v))) return "forge";
+  return null;
+}
+
+// Fabric/Quilt arrived with 1.14; NeoForge with 1.20.1. Untagged packs on older
+// Minecraft versions are effectively always Forge.
+function defaultLoaderForLegacyMc(mcVersion) {
+  if (!mcVersion || typeof mcVersion !== "string") return null;
+  const match = mcVersion.trim().match(/^(\d+)\.(\d+)/);
+  if (!match) return null;
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  if (major === 1 && minor < 14) return "forge";
+  return null;
+}
+
+function resolveLoaderType({ indexes = null, gameVersions = null, mcVersion = null } = {}) {
+  return detectLoaderType(indexes)
+    || inferLoaderFromGameVersions(gameVersions)
+    || defaultLoaderForLegacyMc(mcVersion);
+}
+
 // Best-effort Minecraft version for a modpack file, used to pick the Java image
 // and set the MC_VERSION egg variable. Prefers per-file version metadata, then
 // falls back to the modpack's latest indexed version.
@@ -128,6 +159,17 @@ function findLinkedServerPackId(files) {
     }
   }
   return null;
+}
+
+// Reverse of findLinkedServerPackId: given a server-pack file id, find the
+// client file that points at it (so we can read that client's manifest.json
+// for the pinned Forge/NeoForge build).
+async function findClientFileForServerPack(modId, serverPackFileId) {
+  if (!modId || !serverPackFileId) return null;
+  const files = await getModpackFiles(modId).catch(() => null);
+  if (!files) return null;
+  const target = Number(serverPackFileId);
+  return files.find(f => Number(f.serverPackFileId) === target && f.downloadUrl) || null;
 }
 
 async function getModsByIds(modIds) {
@@ -180,6 +222,17 @@ function isManifestZip(buffer) {
   } catch {
     return false;
   }
+}
+
+// CurseForge often nulls downloadUrl for "distribution disabled" files while the
+// edge CDN still serves them when authenticated with x-api-key (see modpack_http).
+// File id 4699254 → https://edge.forgecdn.net/files/4699/254/name.jar
+function synthesizeCurseForgeCdnUrl(fileId, fileName) {
+  const id = Number(fileId);
+  if (!Number.isFinite(id) || id <= 0 || !fileName) return null;
+  const top = Math.floor(id / 1000);
+  const mid = String(id % 1000).padStart(3, "0");
+  return `https://edge.forgecdn.net/files/${top}/${mid}/${fileName}`;
 }
 
 function parseManifestFromZip(buffer) {
@@ -292,22 +345,38 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
   ) ];
   const serverSideBySlug = await getServerSideBySlugs(unresolvedSlugs);
 
-  // Recover mods with no CurseForge download URL using Modrinth fallback URLs
+  // Recover mods with no CurseForge download URL using Modrinth fallback URLs,
+  // then synthesized edge.forgecdn.net paths (API often nulls downloadUrl).
   const unavailable = [];
   const modrinthFallbacks = [];
+  const cdnFallbacks = [];
   for (const f of noUrl) {
     const sha1 = (f.hashes || []).find(h => h.algo === 1)?.value;
     const fallback = sha1 ? fallbackUrls.get(sha1) : null;
     if (fallback) {
       modrinthFallbacks.push({ downloadUrl: fallback.url, displayName: nameByModId.get(f.modId), sha1 });
       msgLog.debugExtended(`[install-modpack] Modrinth fallback: ${nameByModId.get(f.modId)}`);
-    } else {
-      unavailable.push(f);
-      msgLog.debugExtended(`[install-modpack] no download URL: ${nameByModId.get(f.modId)} (modId: ${f.modId})`);
+      continue;
     }
+    const cdnUrl = synthesizeCurseForgeCdnUrl(f.id, f.fileName);
+    if (cdnUrl) {
+      cdnFallbacks.push({
+        downloadUrl: cdnUrl,
+        displayName: nameByModId.get(f.modId) ?? f.fileName,
+        sha1: sha1 ?? null,
+        modId: f.modId
+      });
+      msgLog.debugExtended(`[install-modpack] CurseForge CDN fallback: ${f.fileName}`);
+      continue;
+    }
+    unavailable.push(f);
+    msgLog.debugExtended(`[install-modpack] no download URL: ${nameByModId.get(f.modId)} (modId: ${f.modId})`);
   }
   if (modrinthFallbacks.length > 0) {
     msgLog.log(`[install-modpack] recovered ${modrinthFallbacks.length} mod(s) via Modrinth fallback`);
+  }
+  if (cdnFallbacks.length > 0) {
+    msgLog.log(`[install-modpack] recovered ${cdnFallbacks.length} mod(s) via CurseForge CDN URL synthesis`);
   }
   if (unavailable.length > 0) {
     msgLog.log(`[install-modpack] ${unavailable.length} mod(s) have no download URL on CurseForge or Modrinth`);
@@ -315,7 +384,8 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
 
   const rawMods = [
     ...downloadable.map(f => ({ ...f, sha1: (f.hashes || []).find(h => h.algo === 1)?.value ?? null })),
-    ...modrinthFallbacks
+    ...modrinthFallbacks,
+    ...cdnFallbacks
   ];
 
   const planModFiles = rawMods.map(mod => {
@@ -348,8 +418,10 @@ async function resolveCurseforgeInstall(buffer, loaderType, onProgress = () => {
 
 module.exports = {
   getModpackById, getModpackBySlug, getModpackFiles, detectLoaderType, detectMCVersion, findServerPack,
-  findLinkedServerPackId, getFileById, getFilesByIds, getModsByIds,
+  inferLoaderFromGameVersions, defaultLoaderForLegacyMc, resolveLoaderType,
+  findLinkedServerPackId, findClientFileForServerPack, getFileById, getFilesByIds, getModsByIds,
   parseProjectId, parseModpackSlug, LOADER_MAP,
   isManifestZip, parseManifestFromZip, parseManifestLoaderType,
+  synthesizeCurseForgeCdnUrl,
   resolveCurseforgeInstall
 };

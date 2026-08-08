@@ -17,7 +17,8 @@ jest.mock("../utility/server_functions.js", () => ({
   getFileUploadUrl: jest.fn(),
   decompressFile: jest.fn(),
   chmodServerFiles: jest.fn(),
-  deleteServerFiles: jest.fn()
+  deleteServerFiles: jest.fn(),
+  createServerDirectory: jest.fn()
 }));
 
 jest.mock("../utility/verdict_store.js", () => ({
@@ -28,7 +29,8 @@ jest.mock("../utility/verdict_store.js", () => ({
   getLearnedVerdict: jest.fn(() => null),
   recordLearnedVerdict: jest.fn(),
   flushVerdictStore: jest.fn(),
-  isMixinInfrastructureJar: jest.requireActual("../utility/verdict_store.js").isMixinInfrastructureJar
+  isMixinInfrastructureJar: jest.requireActual("../utility/verdict_store.js").isMixinInfrastructureJar,
+  isProtectedLearnedMod: jest.requireActual("../utility/verdict_store.js").isProtectedLearnedMod
 }));
 
 jest.mock("../utility/mod_inspector.js", () => ({
@@ -37,7 +39,8 @@ jest.mock("../utility/mod_inspector.js", () => ({
   // provider metadata, and curated lists combine, not a stub of it.
   decideModInstall: jest.requireActual("../utility/mod_inspector.js").decideModInstall,
   extractModDeps: jest.fn(),
-  flushModInspectorCache: jest.fn()
+  flushModInspectorCache: jest.fn(),
+  jarHasServerAppliedClientMixins: jest.fn(() => false)
 }));
 
 jest.mock("../utility/crash_risk.js", () => ({
@@ -46,7 +49,7 @@ jest.mock("../utility/crash_risk.js", () => ({
 }));
 
 const AdmZip = require("adm-zip");
-const { installFilePlan, buildProgressBar } = require("../utility/modpack_install.js");
+const { installFilePlan, buildProgressBar, installArchiveBuffer, detectNestedArchiveRoot } = require("../utility/modpack_install.js");
 const http = require("../utility/modpack_http.js");
 const sf = require("../utility/server_functions.js");
 const inspector = require("../utility/mod_inspector.js");
@@ -77,7 +80,18 @@ const unknownVerdict = { verdict: "unknown", confidence: null, loader: null, sou
 
 // Returns the entry names inside the most recent uploaded mod-batch zip.
 function lastBatchEntries() {
-  const call = [ ...http.uploadBufferToServer.mock.calls ].reverse().find(c => c[1].startsWith("_mods_batch_"));
+  const call = [ ...http.uploadBufferToServer.mock.calls ].reverse().find(c =>
+    String(c[1]).startsWith("_mods_batch_") && !String(c[1]).includes("park")
+  );
+  if (!call) return null;
+  return new AdmZip(call[2]).getEntries().map(e => e.entryName);
+}
+
+// Entries from the most recent park batch (mods-disabled/...).
+function lastParkBatchEntries() {
+  const call = [ ...http.uploadBufferToServer.mock.calls ]
+    .reverse()
+    .find(c => String(c[1]).startsWith("_mods_batch_park_"));
   if (!call) return null;
   return new AdmZip(call[2]).getEntries().map(e => e.entryName);
 }
@@ -90,6 +104,7 @@ beforeEach(() => {
   sf.decompressFile.mockResolvedValue(204);
   sf.chmodServerFiles.mockResolvedValue(204);
   sf.deleteServerFiles.mockResolvedValue(204);
+  sf.createServerDirectory.mockResolvedValue(204);
   inspector.extractModDeps.mockReturnValue({ modId: null, requiredDeps: [] });
   inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
   crashRisk.getOracle.mockResolvedValue(null);
@@ -197,15 +212,22 @@ describe("installFilePlan", () => {
     });
 
     expect(res.installed).toBe(0);
+    expect(lastParkBatchEntries()).toBeNull();
+    expect(res.modIndex.parkedJars.size).toBe(0);
   });
 
-  test("provider 'unsupported' skips a mod when the JAR has no signal", async () => {
+  test("provider 'unsupported' parks a rescuable skip under mods-disabled/", async () => {
     inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
+    inspector.extractModDeps.mockReturnValue({ modId: "fusion", requiredDeps: [] });
     const res = await installFilePlan(ctx(), {
-      modFiles: [ modFile("x.jar", "x", "unsupported") ],
+      modFiles: [ modFile("fusion.jar", "x", "unsupported") ],
       extraFiles: [], overrideEntries: [], unavailable: []
     });
     expect(res.installed).toBe(0);
+    expect(lastParkBatchEntries()).toEqual([ "mods-disabled/fusion.jar" ]);
+    expect(res.modIndex.parkedByModId.get("fusion")).toBe("fusion.jar");
+    expect(res.modIndex.byModId.has("fusion")).toBe(false);
+    expect(sf.createServerDirectory).toHaveBeenCalledWith("abc", "u1", "/", "mods-disabled");
   });
 
   test("provider 'optional'/'required' overrides explicit client metadata (slot 4 beats slot 5)", async () => {
@@ -224,7 +246,36 @@ describe("installFilePlan", () => {
       extraFiles: [], overrideEntries: [], unavailable: []
     });
     expect(res.installed).toBe(1);
-    expect(lastBatchEntries()).toEqual([ "mods/ok.jar" ]);
+    // Learned skips are parked (not dep-rescued); boot-verify can restore them.
+    const installCall = http.uploadBufferToServer.mock.calls.find(c =>
+      String(c[1]).startsWith("_mods_batch_") && !String(c[1]).includes("park")
+    );
+    expect(new AdmZip(installCall[2]).getEntries().map(e => e.entryName)).toEqual([ "mods/ok.jar" ]);
+    expect(lastParkBatchEntries()).toEqual([ "mods-disabled/crasher.jar" ]);
+  });
+
+  test("does not dep-rescue sodium even when an installed mod requires it", async () => {
+    inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
+    inspector.extractModDeps.mockImplementation(buf => {
+      const s = buf.toString();
+      if (s.includes("sodium-neoforge")) return { modId: "sodium", requiredDeps: [] };
+      if (s.includes("addon.jar")) return { modId: "sodiumaddon", requiredDeps: [ "sodium" ] };
+      return { modId: null, requiredDeps: [] };
+    });
+
+    const res = await installFilePlan(ctx(), {
+      modFiles: [
+        modFile("sodium-neoforge-0.8.jar", "1", "unsupported"),
+        modFile("addon.jar", "2", "required")
+      ],
+      extraFiles: [], overrideEntries: [], unavailable: []
+    });
+
+    // Provider-vouched addon stays; sodium must not be force-installed.
+    expect(res.installed).toBe(1);
+    const installedNames = lastBatchEntries();
+    expect(installedNames.some(n => /sodium/i.test(n))).toBe(false);
+    expect(installedNames).toContain("mods/addon.jar");
   });
 
   test("curated client list skips with no provider metadata (Blur pattern)", async () => {
@@ -289,10 +340,30 @@ describe("installFilePlan", () => {
       unavailable: []
     });
     const overridesCall = http.uploadBufferToServer.mock.calls.find(c => c[1] === "overrides.zip");
-    const entries = new AdmZip(overridesCall[2]).getEntries().map(e => e.entryName);
-    expect(entries).toContain("mods/servermod.jar");
-    expect(entries).toContain("config/foo.toml");
-    expect(entries).not.toContain("mods/clientmod.jar");
+    const entries = new AdmZip(overridesCall[2]).getEntries().map(e => e.entryName).sort();
+    expect(entries).toEqual([ "config/foo.toml", "mods/servermod.jar" ]);
+  });
+
+  test("skips curated override jars with backslash or nested mods paths", async () => {
+    inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
+    inspector.extractModDeps.mockImplementation(buf => {
+      if (buf.toString() === "cmm") return { modId: "custommainmenu", requiredDeps: [] };
+      return { modId: null, requiredDeps: [] };
+    });
+    await installFilePlan(ctx(), {
+      modFiles: [],
+      extraFiles: [],
+      overrideEntries: [
+        { path: "mods\\custommainmenu-1.12.2.jar", data: Buffer.from("cmm") },
+        { path: "mods/1.7.10/Blur-1.0.4.jar", data: Buffer.from("blur") },
+        { path: "mods/okmod.jar", data: Buffer.from("ok") },
+        { path: "config/foo.toml", data: Buffer.from("x=1") }
+      ],
+      unavailable: []
+    });
+    const overridesCall = http.uploadBufferToServer.mock.calls.find(c => c[1] === "overrides.zip");
+    const entries = new AdmZip(overridesCall[2]).getEntries().map(e => e.entryName).sort();
+    expect(entries).toEqual([ "config/foo.toml", "mods/okmod.jar" ]);
   });
 
   test("flushes the inspection cache at least once per download batch", async () => {
@@ -405,5 +476,49 @@ describe("buildProgressBar", () => {
     expect(bar).toContain("10 mods");
     expect(bar).toContain("↓ 50%");
     expect(bar).toContain("↑ 0%");
+  });
+});
+
+describe("detectNestedArchiveRoot", () => {
+  test("detects a single nested folder that owns mods/", () => {
+    const zip = new AdmZip();
+    zip.addFile("Server-Files/mods/a.jar", Buffer.from("a"));
+    zip.addFile("Server-Files/config/x.cfg", Buffer.from("x"));
+    expect(detectNestedArchiveRoot(zip.toBuffer())).toBe("Server-Files");
+  });
+
+  test("returns null when mods/ is already at the zip root", () => {
+    const zip = new AdmZip();
+    zip.addFile("mods/a.jar", Buffer.from("a"));
+    expect(detectNestedArchiveRoot(zip.toBuffer())).toBeNull();
+  });
+});
+
+describe("installArchiveBuffer", () => {
+  test("flattens nested roots, skips client-only mods, and chunk-uploads survivors", async () => {
+    inspector.inspectModJarCached.mockImplementation((_sha, buf) => {
+      const text = buf.toString();
+      if (text === "client") return clientVerdict("high");
+      return unknownVerdict;
+    });
+    inspector.extractModDeps.mockReturnValue({ modId: null, requiredDeps: [] });
+
+    const zip = new AdmZip();
+    zip.addFile("PackRoot/mods/server.jar", Buffer.from("server"));
+    zip.addFile("PackRoot/mods/client.jar", Buffer.from("client"));
+    zip.addFile("PackRoot/config/foo.toml", Buffer.from("x=1"));
+
+    const res = await installArchiveBuffer(ctx(), zip.toBuffer());
+    expect(res.error).toBeUndefined();
+    expect(res.skippedClient).toBe(1);
+    expect(res.installed).toBe(1);
+    expect(res.total).toBe(2);
+    expect(sf.getFileUploadUrl).toHaveBeenCalled();
+    expect(sf.decompressFile).toHaveBeenCalled();
+
+    const entries = lastBatchEntries();
+    expect(entries).toEqual(expect.arrayContaining([ "mods/server.jar", "config/foo.toml" ]));
+    expect(entries).not.toContain("mods/client.jar");
+    expect(entries.some(e => e.startsWith("PackRoot/"))).toBe(false);
   });
 });

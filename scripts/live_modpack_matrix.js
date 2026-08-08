@@ -9,6 +9,7 @@
 //   node scripts/live_modpack_matrix.js --server=f20fed63
 //   node scripts/live_modpack_matrix.js --server=f20fed63 --only=simply-optimized,cobblemon
 //   node scripts/live_modpack_matrix.js --server=f20fed63 --skip-boot
+//   node scripts/live_modpack_matrix.js --server=f20fed63 --continue
 //
 "use strict";
 
@@ -30,20 +31,70 @@ const NOTES_PATH = path.join(__dirname, "../docs/live-modpack-matrix-NOTES.md");
 const RESULTS_PATH = path.join(__dirname, "../docs/live-modpack-matrix-results.json");
 const SETTLE_MS = 10_000;
 
-// Smaller / faster packs first; heavy packs last.
+// 50-pack live matrix:
+//   1–25  = offline eval_pack_corpus set
+//   26    = Arcadia [RPG] (recent quarantine regression)
+//   27–50 = additional popular Forge/Fabric/NeoForge packs
+// Prefer smaller / faster packs earlier when practical; heavies still mixed in.
 const PACKS = [
+  // ── Corpus (25) ──────────────────────────────────────────────────────────
   { key: "simply-optimized", name: "Simply Optimized", input: "https://modrinth.com/modpack/sop" },
   { key: "cobblemon", name: "Cobblemon Official", input: "https://modrinth.com/modpack/cobblemon-fabric" },
   { key: "better-mc-fabric", name: "Better Minecraft [Fabric]", input: "https://modrinth.com/modpack/better-mc-fabric-bmc2" },
+  { key: "ftb-academy", name: "FTB Academy", input: "336409" },
   { key: "create-aab", name: "Create: Above and Beyond", input: "542763" },
   { key: "prominence-ii", name: "Prominence II RPG", input: "466901" },
   { key: "medieval-mc", name: "Medieval Minecraft", input: "876851" },
+  { key: "create-astral", name: "Create: Astral", input: "681792" },
+  { key: "valhelsia-6", name: "Valhelsia 6", input: "878495" },
+  { key: "ftb-skies", name: "FTB Skies", input: "1091252" },
+  { key: "enigmatica-9", name: "Enigmatica 9", input: "632239" },
+  { key: "stoneblock-3", name: "Stoneblock 3", input: "1091305" },
+  { key: "craft-to-exile-2", name: "Craft to Exile 2", input: "936875" },
+  { key: "integrated-mc", name: "Integrated Minecraft", input: "663737" },
+  { key: "nomi-ceu", name: "Nomifactory CEu", input: "594351" },
+  { key: "mc-eternal", name: "MC Eternal", input: "349129" },
+  { key: "vault-hunters-3", name: "Vault Hunters 3rd Edition", input: "711537" },
+  { key: "divine-journey-2", name: "Divine Journey 2", input: "370666" },
+  { key: "sevtech", name: "SevTech: Ages", input: "268208" },
+  { key: "pixelmon", name: "Pixelmon Reforged", input: "389615" },
+  { key: "dawncraft", name: "DawnCraft", input: "829758" },
+  { key: "ftb-infinity", name: "Feed The Beast Infinity Evolved", input: "227724" },
   { key: "atm9", name: "All the Mods 9 (ATM9)", input: "715572" },
-  { key: "rlcraft", name: "RLCraft", input: "285109" }
+  { key: "rlcraft", name: "RLCraft", input: "285109" },
+  { key: "atm6", name: "All the Mods 6 (ATM6)", input: "381671" },
+  // GTNH (252507) removed: CF mirror is incomplete; matrix uses client packs + strip.
+
+  // ── Arcadia + extras (25) ────────────────────────────────────────────────
+  { key: "arcadia-rpg", name: "Arcadia [RPG]", input: "https://www.curseforge.com/minecraft/modpacks/arcadia-rpg" },
+  { key: "fabulously-optimized", name: "Fabulously Optimized", input: "https://www.curseforge.com/minecraft/modpacks/fabulously-optimized" },
+  { key: "all-of-fabric-7", name: "All of Fabric 7", input: "899572" },
+  { key: "cottage-witch", name: "Cottage Witch", input: "689550" },
+  { key: "better-mc-forge", name: "Better MC [FORGE] BMC4", input: "876781" },
+  { key: "better-mc-neoforge", name: "Better MC [NEOFORGE] BMC5", input: "462042" },
+  { key: "create-perfect-world", name: "Create: Perfect World", input: "919384" },
+  { key: "avalon-reborn", name: "Avalon Reborn", input: "1186808" },
+  { key: "ftb-oceanblock", name: "FTB OceanBlock", input: "1091200" },
+  { key: "ftb-oceanblock-2", name: "FTB OceanBlock 2", input: "1198207" },
+  { key: "minecolonies-dim", name: "MineColonies: Dimensional Adventure", input: "852146" },
+  { key: "winter-rescue", name: "The Winter Rescue", input: "535790" },
+  { key: "forever-stranded", name: "Forever Stranded", input: "253026" },
+  { key: "hexxit-updated", name: "Hexxit Updated", input: "274563" },
+  { key: "skyfactory-4", name: "SkyFactory 4", input: "296062" },
+  { key: "skyfactory-5", name: "SkyFactory 5", input: "392141" },
+  { key: "atm7", name: "All the Mods 7 (ATM7)", input: "426926" },
+  { key: "atm8", name: "All the Mods 8 (ATM8)", input: "520914" },
+  { key: "atm10", name: "All the Mods 10 (ATM10)", input: "925200" },
+  { key: "enigmatica2e", name: "Enigmatica 2: Expert", input: "282744" },
+  { key: "rad", name: "Roguelike Adventures and Dungeons", input: "289267" },
+  { key: "rad2", name: "Roguelike Adventures and Dungeons 2", input: "572778" },
+  { key: "meatballcraft", name: "MeatballCraft", input: "411966" },
+  { key: "po3", name: "Project Ozone 3", input: "256289" },
+  { key: "decursio", name: "The Decursio Project", input: "457186" }
 ];
 
 function parseArgs(argv) {
-  const out = { server: null, only: null, skipBoot: false };
+  const out = { server: null, only: null, skipBoot: false, continueRun: false };
   for (let i = 2; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith("--server=")) out.server = a.slice("--server=".length);
@@ -51,8 +102,22 @@ function parseArgs(argv) {
     else if (a.startsWith("--only=")) out.only = new Set(a.slice("--only=".length).split(",").map(s => s.trim()).filter(Boolean));
     else if (a === "--only") out.only = new Set(argv[++i].split(",").map(s => s.trim()).filter(Boolean));
     else if (a === "--skip-boot") out.skipBoot = true;
+    else if (a === "--continue") out.continueRun = true;
   }
   return out;
+}
+
+function loadPriorResults() {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(RESULTS_PATH, "utf8"));
+    return Array.isArray(parsed.results) ? parsed.results : [];
+  } catch {
+    return [];
+  }
+}
+
+function isPackDone(row) {
+  return !!(row?.install?.ok && (row.boot?.success || row.boot === "skipped" || row.boot === null));
 }
 
 function sleep(ms) {
@@ -129,8 +194,8 @@ async function resolveServer(discordId, serverId) {
 }
 
 function pickFile(fileOptions) {
-  // Provider list already prefers server pack ahead of matching client file.
-  return fileOptions[0] || null;
+  // Providers list client packs ahead of linked server packs; take the first.
+  return fileOptions?.[0] || null;
 }
 
 function formatDuration(ms) {
@@ -300,6 +365,7 @@ async function runPack(pack, ctx) {
       serverInternalId: ctx.serverInternalId,
       serverName: ctx.serverName,
       modpackName: row.name,
+      modpackId: modpack.id,
       targetFile: {
         id: chosen.id,
         displayName: chosen.label,
@@ -372,15 +438,11 @@ async function runPack(pack, ctx) {
 
 async function main() {
   const opts = parseArgs(process.argv);
-  const clientApiKey = process.env.LIVE_CLIENT_API_KEY;
+  let clientApiKey = process.env.LIVE_CLIENT_API_KEY;
   const discordId = process.env.ADMIN_DISCORD_ID;
 
   if (!opts.server) {
-    console.error("Usage: node scripts/live_modpack_matrix.js --server=<id> [--only=a,b] [--skip-boot]");
-    process.exit(1);
-  }
-  if (!clientApiKey) {
-    console.error("Set LIVE_CLIENT_API_KEY in the environment.");
+    console.error("Usage: node scripts/live_modpack_matrix.js --server=<id> [--only=a,b] [--skip-boot] [--continue]");
     process.exit(1);
   }
   if (!discordId) {
@@ -390,6 +452,17 @@ async function main() {
   if (!process.env.ENCRYPTION_KEY) {
     console.error("ENCRYPTION_KEY missing from .env");
     process.exit(1);
+  }
+  if (!clientApiKey) {
+    initDatabase();
+    const existing = getUserByDiscordId(discordId);
+    if (existing?.panelAPIKey) {
+      clientApiKey = existing.panelAPIKey;
+      msgLog.log("[live-matrix] using client API key from local DB (LIVE_CLIENT_API_KEY unset)");
+    } else {
+      console.error("Set LIVE_CLIENT_API_KEY in the environment (or store a client key via /set-client-key).");
+      process.exit(1);
+    }
   }
 
   if (opts.skipBoot) {
@@ -410,15 +483,43 @@ async function main() {
     process.exit(1);
   }
 
+  const priorByKey = new Map(loadPriorResults().map(r => [ r.key, r ]));
   const meta = {
     startedAt: new Date().toISOString(),
     finishedAt: null,
     serverId: server.serverId,
     serverName: server.serverName,
-    bootVerify: !!config.boot_verify?.enabled
+    bootVerify: !!config.boot_verify?.enabled,
+    packCount: selected.length,
+    continueRun: !!opts.continueRun,
+    onlyKeys: opts.only ? [ ...opts.only ] : null
   };
 
-  const results = selected.map(p => ({ key: p.key, name: p.name, input: p.input }));
+  // --only rechecks should refresh those keys but keep the rest of a prior
+  // full-matrix results file intact.
+  const selectedKeys = new Set(selected.map(p => p.key));
+  const results = [];
+  if (opts.only) {
+    for (const p of PACKS) {
+      if (selectedKeys.has(p.key)) {
+        results.push(
+          opts.continueRun && isPackDone(priorByKey.get(p.key))
+            ? priorByKey.get(p.key)
+            : { key: p.key, name: p.name, input: p.input }
+        );
+      } else if (priorByKey.has(p.key)) {
+        results.push(priorByKey.get(p.key));
+      }
+    }
+  } else {
+    for (const p of selected) {
+      results.push(
+        opts.continueRun && isPackDone(priorByKey.get(p.key))
+          ? priorByKey.get(p.key)
+          : { key: p.key, name: p.name, input: p.input }
+      );
+    }
+  }
   writeNotes(results, meta);
 
   const ctx = {
@@ -429,13 +530,19 @@ async function main() {
     skipBoot: opts.skipBoot
   };
 
+  const runIndexes = results
+    .map((r, idx) => ({ r, idx, pack: PACKS.find(p => p.key === r.key) }))
+    .filter(({ r, pack }) => pack && selectedKeys.has(pack.key) && !isPackDone(r));
+
   console.log(`Live matrix: ${selected.length} pack(s) → ${server.serverName} (${server.serverId})`);
+  if (opts.only) console.log(`--only recheck: ${selected.length} keyed, ${results.length} total rows kept`);
+  if (opts.continueRun) console.log(`Resume: ${selected.length - runIndexes.length} already done, ${runIndexes.length} remaining`);
   console.log(`Notes: ${NOTES_PATH}`);
 
-  for (let i = 0; i < selected.length; i++) {
-    const pack = selected[i];
+  for (let n = 0; n < runIndexes.length; n++) {
+    const { idx, pack } = runIndexes[n];
     const row = await runPack(pack, ctx);
-    results[i] = row;
+    results[idx] = row;
     writeNotes(results, meta);
 
     // Stop leftover process between packs so the next wipe starts clean.
@@ -446,13 +553,14 @@ async function main() {
     } catch {
       // ignore
     }
-    if (i < selected.length - 1) {
+    if (n < runIndexes.length - 1) {
       console.log(`Settling ${SETTLE_MS / 1000}s before next pack...`);
       await sleep(SETTLE_MS);
     }
   }
 
   meta.finishedAt = new Date().toISOString();
+  meta.packCount = results.length;
   writeNotes(results, meta);
   console.log(`\nDone. Notes written to ${NOTES_PATH}`);
   console.log("Remember to rotate the client API key used for this run.");

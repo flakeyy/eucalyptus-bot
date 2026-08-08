@@ -50,6 +50,17 @@ describe("extractCrashSignals", () => {
     const s = extractCrashSignals(fabricDependencyLog);
     expect([ ...s.missingDeps ]).toContain("sodium");
     expect([ ...s.modIds ]).not.toContain("sodium-extra");
+    expect([ ...s.dependentModIds ]).toContain("sodium-extra");
+  });
+
+  test("Fabric requires version X of modid captures missing dep + dependent", () => {
+    const s = extractCrashSignals([
+      "Mod 'AstralVinery' (astralvinery) 1.2.0 requires version 1.1.4 of vinery, which is missing!",
+      "HARD_DEP_NO_CANDIDATE astralvinery 1.2.0 {depends vinery @ [1.1.4]}"
+    ].join("\n"));
+    expect([ ...s.missingDeps ]).toContain("vinery");
+    expect([ ...s.dependentModIds ]).toContain("astralvinery");
+    expect([ ...s.modIds ]).not.toContain("astralvinery");
   });
 
   test("mixin config names are captured from failure lines", () => {
@@ -73,6 +84,92 @@ describe("extractCrashSignals", () => {
   test("Forge 1.7 Caught exception from captures the mod id", () => {
     const s = extractCrashSignals("[Server thread/ERROR] [FML]: Caught exception from custommainmenu");
     expect([ ...s.modIds ]).toContain("custommainmenu");
+  });
+
+  test("FML 1.7 requires mods [X] captures missing deps", () => {
+    const s = extractCrashSignals(
+      "The mod blockrenderer6343 (BlockRenderer6343) requires mods [NotEnoughItems] to be available"
+    );
+    expect([ ...s.missingDeps ]).toEqual([ "notenoughitems" ]);
+  });
+
+  test("FML 1.12 MissingModsException captures dependent and missing deps", () => {
+    const s = extractCrashSignals(
+      "net.minecraftforge.fml.common.MissingModsException: Mod gasconduits (GasConduits) requires [enderio@[5.3.70,), enderioconduits@[5.3.70,)]"
+    );
+    expect([ ...s.dependentModIds ]).toContain("gasconduits");
+    expect([ ...s.missingDeps ]).toEqual(expect.arrayContaining([ "enderio", "enderioconduits" ]));
+    expect([ ...s.missingDeps ]).not.toContain(")");
+  });
+
+  test("ClassMetadataNotFound for kubejs class records missingDep without treating junk", () => {
+    const s = extractCrashSignals(
+      "Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException: dev.latvian.mods.kubejs.event.EventHandler"
+    );
+    expect([ ...s.missingDeps ]).toContain("kubejs");
+    expect(s.stackClasses.some(c => c.includes("kubejs"))).toBe(true);
+  });
+
+  test("Unbound registry biome namespaces become missingDeps", () => {
+    const s = extractCrashSignals(
+      "Caused by: java.lang.IllegalStateException: Unbound values in registry ResourceKey[minecraft:root / minecraft:worldgen/biome]: [hexerei:willow_swamp]"
+    );
+    expect([ ...s.missingDeps ]).toContain("hexerei");
+    expect([ ...s.unboundNamespaces ]).toContain("hexerei");
+  });
+
+  test("Missing effect namespace becomes missingDeps (KubeJS drinkbeer)", () => {
+    const s = extractCrashSignals(
+      "Caused by: java.lang.RuntimeException: Missing effect 'drinkbeer:drunk'. Check spelling"
+    );
+    expect([ ...s.missingDeps ]).toContain("drinkbeer");
+  });
+
+  test("wrapped ClassMetadataNotFoundException sets clientClassMissing", () => {
+    const s = extractCrashSignals(
+      "Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException:\n" +
+      "net.minecraft.client.particle.ParticleManager"
+    );
+    expect(s.clientClassMissing).toBe(true);
+  });
+
+  test("org.lwjgl ClassNotFoundException sets clientClassMissing", () => {
+    const s = extractCrashSignals("Caused by: java.lang.ClassNotFoundException: org.lwjgl.Version");
+    expect(s.clientClassMissing).toBe(true);
+  });
+
+  test("NeoForge LAYER SERVICE sodium_service yields sodium modId", () => {
+    const s = extractCrashSignals(
+      "at LAYER SERVICE/sodium_service@0.8.12-beta.2+mc1.21.1/net.caffeinemc.mods.sodium.client.compatibility.checks.PreLaunchChecks.checkEnvironment(PreLaunchChecks.java:25)"
+    );
+    expect([ ...s.modIds ]).toContain("sodium");
+  });
+
+  test("mixin-injected handler from mod foolproof is captured", () => {
+    const s = extractCrashSignals(
+      "at TRANSFORMER/minecraft@1.21.1/net.minecraft.CrashReport.handler$dak000$foolproof$injectCustomHeader(CrashReport.java:520) " +
+      "~[server.jar%23382!/:?] {pl:mixin:APP:mixins.foolproof.json:CrashReportMixin from mod foolproof}"
+    );
+    expect([ ...s.modIds ]).toContain("foolproof");
+    expect([ ...s.mixinConfigs ]).toContain("mixins.foolproof.json");
+  });
+
+  test("Caught exception from during serverStopped is ignored", () => {
+    const s = extractCrashSignals([
+      "net.minecraftforge.fml.common.LoaderExceptionModCrash: Caught exception from Applied Energistics 2 (appliedenergistics2)",
+      "Caused by: java.lang.NullPointerException",
+      "\tat appeng.core.AppEng.serverStopped(AppEng.java:271)"
+    ].join("\n"));
+    expect([ ...s.modIds ]).not.toContain("appliedenergistics2");
+  });
+
+  test("BYG AWT stack pairs jar basename from locator", () => {
+    const s = extractCrashSignals(
+      "\tat potionstudios.byg.common.item.BYGItems.lambda$static$2(BYGItems.java:38) " +
+      "~[Oh_The_Biomes_You'll_Go-forge-1.19.2-2.0.1.6.jar%23652!/:2.0.1.6] {re:mixin}"
+    );
+    expect(s.stackClasses).toContain("potionstudios/byg/common/item/BYGItems");
+    expect([ ...s.jarFiles ]).toContain("Oh_The_Biomes_You'll_Go-forge-1.19.2-2.0.1.6.jar");
   });
 });
 
@@ -132,18 +229,50 @@ describe("attributeCrash", () => {
     expect(result.jars).toEqual([ "somemod.jar" ]);
   });
 
-  test("mixin config maps back to the shipping jar", () => {
-    const index = indexWith({
-      "fancy.jar": {
-        entries: { "fancymenu.mixins.json": JSON.stringify({ package: "de.keksuccino" }) },
-        meta: { modId: "fancymenu" }
-      }
-    });
+  test("registry id overflow attributes to registering mod", () => {
+    const index = createModIndex();
+    index.byFileName.set("BloodArsenal-1.12.2-2.2.2-31.jar", "BloodArsenal-1.12.2-2.2.2-31.jar");
+    const report = [
+      "Description: Exception in server tick loop",
+      "java.lang.RuntimeException: Invalid id 4096 - maximum id range exceeded.",
+      "\tat net.minecraftforge.registries.ForgeRegistry.add(ForgeRegistry.java:295)",
+      "\tat arcaratus.bloodarsenal.core.RegistrarBloodArsenalBlocks.registerBlock(RegistrarBloodArsenalBlocks.java:125)"
+    ].join("\n");
+    const result = attributeCrash({ crashReportText: report, index });
+    expect(result.jars).toContain("BloodArsenal-1.12.2-2.2.2-31.jar");
+    expect(result.reasons[0].reason).toMatch(/registry id overflow/);
+  });
+
+  test("CustomMainMenu GuiScreen crash matches filename when packages were never indexed", () => {
+    const index = createModIndex();
+    index.byFileName.set("custommainmenu-1.12.2.jar", "custommainmenu-1.12.2.jar");
+    const report = [
+      "cpw.mods.fml.common.LoaderException: java.lang.NoClassDefFoundError: net/minecraft/client/gui/GuiScreen",
+      "Caused by: java.lang.NoClassDefFoundError: net/minecraft/client/gui/GuiScreen",
+      "\tat lumien.custommainmenu.CustomMainMenu.preInit(CustomMainMenu.java:47)",
+      "\tat makamys.coretweaks.optimization.transformerproxy.TransformerProxy.invoke(TransformerProxy.java:53)"
+    ].join("\n");
+    const result = attributeCrash({ crashReportText: report, index });
+    expect(result.jars).toEqual([ "custommainmenu-1.12.2.jar" ]);
+    expect(result.reasons[0].reason).toMatch(/stack frame in lumien\.custommainmenu/);
+  });
+
+  test("mixin config ownership prefers the jar whose modId matches the config stem", () => {
+    const index = createModIndex();
+    addJarToModIndex(index, "BiomesOPlenty-1.12.2.jar", makeJar({
+      "bop.mixins.json": "{}",
+      "biomesoplenty/core/BiomesOPlenty.class": "x"
+    }), { modId: "biomesoplenty" });
+    addJarToModIndex(index, "SpellBundle-1.12.2.jar", makeJar({
+      "bop.mixins.json": "{}",
+      "spellbundle/SpellBundle.class": "x"
+    }), { modId: "spellbundle" });
+    expect(index.byMixinConfig.get("bop.mixins.json")).toBe("BiomesOPlenty-1.12.2.jar");
     const result = attributeCrash({
-      consoleTail: "Mixin apply failed fancymenu.mixins.json:MixinTitleScreen",
+      consoleTail: "Mixin apply failed bop.mixins.json:Something",
       index
     });
-    expect(result.jars).toEqual([ "fancy.jar" ]);
+    expect(result.jars).toEqual([ "BiomesOPlenty-1.12.2.jar" ]);
   });
 
   test("System Details mixin inventory does not quarantine innocent providers", () => {
@@ -184,9 +313,157 @@ describe("attributeCrash", () => {
     expect(result.jars).toEqual([]);
   });
 
+  test("MissingModsException quarantines the dependent, not protected libraries", () => {
+    const index = indexWith({
+      "GasConduits-1.12.2.jar": {
+        meta: { modId: "gasconduits", requiredDeps: [ "enderio", "enderioconduits" ] }
+      },
+      "EnderTweaker.jar": { meta: { modId: "endertweaker", requiredDeps: [ "enderio" ] } }
+    });
+    const result = attributeCrash({
+      consoleTail:
+        "MissingModsException: Mod gasconduits (GasConduits) requires [enderio@[5.3.70,), enderioconduits@[5.3.70,)]",
+      index
+    });
+    expect(result.jars).toEqual(expect.arrayContaining([ "GasConduits-1.12.2.jar", "EnderTweaker.jar" ]));
+  });
+
+  test("MissingModsException attributes short dependent modId art via byModId", () => {
+    const index = indexWith({
+      "AdvancedRocketryTweaker-1.12.2.jar": {
+        meta: { modId: "art", requiredDeps: [ "crafttweaker" ] }
+      },
+      "CraftTweaker2-1.12-4.1.20.700.jar": { meta: { modId: "crafttweaker" } }
+    });
+    const result = attributeCrash({
+      consoleTail:
+        "MissingModsException: Mod art (Advanced Rocketry Tweaker) requires [crafttweaker]",
+      index,
+      quarantinedModIds: [ "crafttweaker" ]
+    });
+    expect(result.jars).toContain("AdvancedRocketryTweaker-1.12.2.jar");
+    expect(result.jars).not.toContain("CraftTweaker2-1.12-4.1.20.700.jar");
+  });
+
+  test("does not quarantine CraftTweaker via stack-frame cascade", () => {
+    const index = indexWith({
+      "CraftTweaker2-1.12-4.1.20.700.jar": {
+        entries: { "crafttweaker/mc1120/item/MCItemStack.class": "x" },
+        meta: { modId: "crafttweaker" }
+      },
+      "badaddon.jar": { meta: { modId: "badaddon", requiredDeps: [ "crafttweaker" ] } }
+    });
+    const result = attributeCrash({
+      consoleTail: [
+        "java.lang.NullPointerException",
+        "at crafttweaker.mc1120.item.MCItemStack.matches(MCItemStack.java:10)"
+      ].join("\n"),
+      index
+    });
+    expect(result.jars).not.toContain("CraftTweaker2-1.12-4.1.20.700.jar");
+  });
+
+  test("does not quarantine protected core mods named in loader errors", () => {
+    const index = indexWith({
+      "gregtech-5.09.51.482.jar": { meta: { modId: "gregtech" } },
+      "custommainmenu-1.12.2.jar": { meta: { modId: "custommainmenu" } }
+    });
+    const result = attributeCrash({
+      consoleTail: "[FML]: Caught exception from gregtech",
+      index
+    });
+    expect(result.jars).toEqual([]);
+  });
+
+  test("does not quarantine EnderIO via stack-frame cascade", () => {
+    const index = indexWith({
+      "EnderIO-1.12.2-5.3.70.jar": {
+        entries: { "crazypants/enderio/base/init/CommonProxy.class": "x" },
+        meta: { modId: "enderio" }
+      },
+      "gasconduits.jar": { meta: { modId: "gasconduits", requiredDeps: [ "enderio" ] } }
+    });
+    const result = attributeCrash({
+      consoleTail: [
+        "java.lang.NoClassDefFoundError: something",
+        "at crazypants.enderio.base.init.CommonProxy.init(CommonProxy.java:10)"
+      ].join("\n"),
+      index
+    });
+    expect(result.jars).not.toContain("EnderIO-1.12.2-5.3.70.jar");
+  });
+
+  test("kubejs ClassMetadataNotFound quarantines dependents, not kubejs itself", () => {
+    const index = indexWith({
+      "kubejs-forge-1902.jar": { meta: { modId: "kubejs" } },
+      "kubejs-thermal.jar": { meta: { modId: "kubejs_thermal", requiredDeps: [ "kubejs" ] } }
+    });
+    const result = attributeCrash({
+      consoleTail:
+        "Caused by: org.spongepowered.asm.mixin.throwables.ClassMetadataNotFoundException: dev.latvian.mods.kubejs.event.EventHandler",
+      index
+    });
+    expect(result.jars).toContain("kubejs-thermal.jar");
+    expect(result.jars).not.toContain("kubejs-forge-1902.jar");
+  });
+
   test("falls back to the literal jar name when the index is empty (direct server-pack uploads)", () => {
     const result = attributeCrash({ crashReportText: forgeCrashReport, index: createModIndex() });
     expect(result.jars).toEqual([ "backpacked-1.16.5-1.4.2.jar" ]);
+  });
+
+  test("ignores console-tail Mod File noise when a crash report already names the offender", () => {
+    const report = [
+      "-- MOD subtle_effects --",
+      "Details:",
+      "\tMod File: /home/container/mods/SubtleEffects-forge-1.20.1-1.14.3.jar",
+      "\tFailure message: Mod subtle_effects requires forge 47.4.14 or above"
+    ].join("\n");
+    const consoleNoise = [
+      "Mod File: /home/container/mods/curios-forge-5.14.1+1.20.1.jar",
+      "Mod File: /home/container/mods/fabric-api-0.92.6+1.11.14+1.20.1.jar",
+      "Mod File: /home/container/mods/resourcefullib-forge-1.20.1-2.1.29.jar"
+    ].join("\n");
+    const result = attributeCrash({
+      crashReportText: report,
+      consoleTail: consoleNoise,
+      index: createModIndex()
+    });
+    expect(result.jars).toEqual([ "SubtleEffects-forge-1.20.1-1.14.3.jar" ]);
+  });
+
+  test("Forge 'requires other-mod' gates attribute the missing dep, not every dependent jar", () => {
+    const index = indexWith({
+      "curios-forge-5.14.1+1.20.1.jar": { meta: { modId: "curios" } },
+      "artifacts-forge-9.5.19.jar": { meta: { modId: "artifacts", requiredDeps: [ "curios" ] } },
+      "Icarus-Forge-2.13.1.jar": { meta: { modId: "icarus", requiredDeps: [ "curios" ] } }
+    });
+    const report = [
+      "-- MOD icarus --",
+      "\tMod File: /home/container/mods/Icarus-Forge-2.13.1.jar",
+      "\tFailure message: Mod icarus requires curios 5.8.0 or above",
+      "-- MOD artifacts --",
+      "\tMod File: /home/container/mods/artifacts-forge-9.5.19.jar",
+      "\tFailure message: Mod artifacts requires curios 5.8.1+1.20.1 or above"
+    ].join("\n");
+    const result = attributeCrash({ crashReportText: report, index });
+    expect(result.jars).toEqual([ "curios-forge-5.14.1+1.20.1.jar" ]);
+    expect([ ...result.signals.missingDeps ]).toContain("curios");
+  });
+
+  test("Ender IO cannot continue does not quarantine protected EnderIO", () => {
+    const index = indexWith({
+      "EnderIO-1.12.2-5.3.70.jar": { meta: { modId: "enderio" } },
+      "ae2.jar": { meta: { modId: "appliedenergistics2" } }
+    });
+    const report = [
+      "Description: Exception in server tick loop",
+      "java.lang.RuntimeException: Ender IO cannot continue, see error messages above",
+      "\tat crazypants.enderio.base.EnderIO.preInit(EnderIO.java:100)"
+    ].join("\n");
+    const result = attributeCrash({ crashReportText: report, index });
+    expect(result.jars).not.toContain("EnderIO-1.12.2-5.3.70.jar");
+    expect(result.reasons.some(r => /hard failure.*enderio/i.test(r.reason))).toBe(false);
   });
 });
 
@@ -200,5 +477,33 @@ describe("expandWithDependents", () => {
     });
     const result = expandWithDependents(index, [ "lib.jar" ]).sort();
     expect(result).toEqual([ "addon.jar", "addon2.jar", "lib.jar" ]);
+  });
+
+  test("EnderIO quarantine pulls dependents of enderioconduits aliases", () => {
+    const index = indexWith({
+      "EnderIO-1.12.2-5.3.70.jar": { meta: { modId: "enderio" } },
+      "EnderTweaker-1.12.2-1.2.3.jar": {
+        meta: { modId: "endertweaker", requiredDeps: [ "enderioconduits" ] }
+      },
+      "other.jar": { meta: { modId: "other" } }
+    });
+    const result = expandWithDependents(index, [ "EnderIO-1.12.2-5.3.70.jar" ]).sort();
+    expect(result).toEqual([
+      "EnderIO-1.12.2-5.3.70.jar",
+      "EnderTweaker-1.12.2-1.2.3.jar"
+    ]);
+  });
+
+  test("EnderIO quarantine pulls all EnderIO-* jars including conduits-mekanism", () => {
+    const index = indexWith({
+      "EnderIO-1.12.2-5.3.70.jar": { meta: { modId: "enderio" } },
+      "EnderIO-conduits-mekanism-1.12.2-5.3.70.jar": { meta: { modId: "gasconduits" } },
+      "EnderTweaker-1.12.2-1.2.3.jar": { meta: { modId: "endertweaker" } },
+      "other.jar": { meta: { modId: "other" } }
+    });
+    const result = expandWithDependents(index, [ "EnderIO-1.12.2-5.3.70.jar" ]).sort();
+    expect(result).toContain("EnderIO-conduits-mekanism-1.12.2-5.3.70.jar");
+    expect(result).toContain("EnderTweaker-1.12.2-1.2.3.jar");
+    expect(result).not.toContain("other.jar");
   });
 });

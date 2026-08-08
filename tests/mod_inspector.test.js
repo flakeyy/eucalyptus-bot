@@ -8,7 +8,8 @@ jest.mock("../utility/verdict_store.js", () => ({
   putInspection: jest.fn(),
   getLearnedVerdict: jest.fn(() => null),
   flushVerdictStore: jest.fn(),
-  isMixinInfrastructureJar: jest.requireActual("../utility/verdict_store.js").isMixinInfrastructureJar
+  isMixinInfrastructureJar: jest.requireActual("../utility/verdict_store.js").isMixinInfrastructureJar,
+  isProtectedLearnedMod: jest.requireActual("../utility/verdict_store.js").isProtectedLearnedMod
 }));
 
 const AdmZip = require("adm-zip");
@@ -270,12 +271,32 @@ describe("decideModInstall — precedence table", () => {
     expect(d).toMatchObject({ install: true, slot: 2, source: "server-side-override" });
   });
 
+  test("slot 2: chameleon installs despite Modrinth unsupported (Storage Drawers lib)", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection,
+      providerServerSide: "unsupported",
+      modId: "chameleon",
+      filename: "Chameleon-1.12-4.1.3.jar"
+    });
+    expect(d).toMatchObject({ install: true, slot: 2, source: "server-side-override" });
+  });
+
+  test("slot 2: NotEnoughItems installs despite Modrinth unsupported (GTNH lib)", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection,
+      providerServerSide: "unsupported",
+      modId: "NotEnoughItems",
+      filename: "NotEnoughItems-2.8.44-GTNH.jar"
+    });
+    expect(d).toMatchObject({ install: true, slot: 2, source: "server-side-override" });
+  });
+
   test("slot 3: learned crash verdict skips even when the provider says required", () => {
     const d = decideModInstall({
       inspection: unknownInspection, providerServerSide: "required",
       sha1: "abc", learnedVerdict: "crashes-server"
     });
-    expect(d).toMatchObject({ install: false, slot: 3, source: "learned-crashes-server", rescuable: false });
+    expect(d).toMatchObject({ install: false, slot: 3, source: "learned-crashes-server", rescuable: true });
   });
 
   test("slot 3: UniMixins is never skipped via learned verdict (MixinTweaker provider)", () => {
@@ -287,6 +308,19 @@ describe("decideModInstall — precedence table", () => {
       learnedVerdict: "crashes-server"
     });
     expect(d).toMatchObject({ install: true, slot: 9, source: "default" });
+  });
+
+  test("slot 3: protected core mods ignore learned crashes-server (EnderIO)", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection,
+      sha1: "eio",
+      filename: "EnderIO-1.12.2-5.3.70.jar",
+      modId: "enderio",
+      learnedVerdict: "crashes-server",
+      providerServerSide: null
+    });
+    expect(d.install).toBe(true);
+    expect(d.slot).not.toBe(3);
   });
 
   test("slot 3: learned verdict is consulted from the verdict store by sha1", () => {
@@ -315,6 +349,15 @@ describe("decideModInstall — precedence table", () => {
     expect(d).toMatchObject({ install: false, slot: 6, source: "curated-client-list", rescuable: true });
   });
 
+  test("slot 6: CustomMainMenu skipped by modId and GTNH_ filename prefix", () => {
+    expect(decideModInstall({
+      inspection: unknownInspection, modId: "custommainmenu", filename: "something-else.jar"
+    })).toMatchObject({ install: false, slot: 6, source: "curated-client-list", rescuable: true });
+    expect(decideModInstall({
+      inspection: unknownInspection, filename: "GTNH_custommainmenu-1.14.1.jar"
+    })).toMatchObject({ install: false, slot: 6, source: "curated-client-list", rescuable: true });
+  });
+
   test("slot 6: provider required/optional beats the curated list", () => {
     const d = decideModInstall({
       inspection: unknownInspection, providerServerSide: "optional", filename: "Blur-1.0.4-14.jar"
@@ -333,6 +376,16 @@ describe("decideModInstall — precedence table", () => {
       crashRisk: { risk: true, detail: "a --init--> net/minecraft/client/Minecraft" }
     });
     expect(d).toMatchObject({ install: false, slot: 8, source: "crash-risk", rescuable: true });
+  });
+
+  test("slot 8: protected core mods ignore crash-risk skips (AE2)", () => {
+    const d = decideModInstall({
+      inspection: unknownInspection,
+      modId: "appliedenergistics2",
+      filename: "appliedenergistics2-8.4.4.jar",
+      crashRisk: { risk: true, detail: "ae2 --init--> net/minecraft/client/Minecraft" }
+    });
+    expect(d).toMatchObject({ install: true, slot: 9 });
   });
 
   test("slot 9: default installs", () => {
@@ -401,6 +454,30 @@ describe("extractModDeps — modId and required dependencies", () => {
     const result = extractModDeps(makeJar({ "META-INF/mods.toml": toml }));
     expect(result.modId).toBe("mymod");
     expect(result.requiredDeps).toEqual([ "required_lib" ]);
+  });
+
+  test("forge 1.12 mcmod.info: reads modid and requiredMods (Storage Drawers → chameleon)", () => {
+    const mcmod = JSON.stringify([ {
+      modid: "storagedrawers",
+      requiredMods: [ "forge", "chameleon" ],
+      dependencies: [ "chameleon" ],
+      useDependencyInformation: true
+    } ]);
+    const result = extractModDeps(makeJar({ "mcmod.info": mcmod }), "forge");
+    expect(result.modId).toBe("storagedrawers");
+    expect(result.requiredDeps).toEqual([ "chameleon" ]);
+  });
+
+  test("forge 1.12 mcmod.info: still finds modId when only requiredMods is forge", () => {
+    const mcmod = JSON.stringify([ {
+      modid: "chameleon",
+      requiredMods: [ "forge" ],
+      useDependencyInformation: true
+    } ]);
+    expect(extractModDeps(makeJar({ "mcmod.info": mcmod }), "forge")).toEqual({
+      modId: "chameleon",
+      requiredDeps: []
+    });
   });
 
   test("returns null modId and empty deps for an invalid zip", () => {

@@ -47,7 +47,26 @@ describe("downloadFile", () => {
   test("uses manual redirect handling so each hop is re-validated", async () => {
     global.fetch = jest.fn().mockResolvedValue(streamResponse(new Uint8Array([ 9 ])));
     await http.downloadFile("https://cdn.example.com/a.jar");
-    expect(global.fetch).toHaveBeenCalledWith("https://cdn.example.com/a.jar", { redirect: "manual" });
+    expect(global.fetch).toHaveBeenCalledWith("https://cdn.example.com/a.jar", {
+      redirect: "manual",
+      headers: {}
+    });
+  });
+
+  test("attaches CurseForge API key for forgecdn CDN downloads", async () => {
+    const prev = process.env.CURSEFORGE_API_KEY;
+    process.env.CURSEFORGE_API_KEY = "test-cf-key";
+    try {
+      global.fetch = jest.fn().mockResolvedValue(streamResponse(new Uint8Array([ 1 ])));
+      await http.downloadFile("https://edge.forgecdn.net/files/1/2/mod.jar");
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://edge.forgecdn.net/files/1/2/mod.jar",
+        { redirect: "manual", headers: { "x-api-key": "test-cf-key" } }
+      );
+    } finally {
+      if (prev === undefined) delete process.env.CURSEFORGE_API_KEY;
+      else process.env.CURSEFORGE_API_KEY = prev;
+    }
   });
 
   test("re-validates redirect targets and rejects an internal Location (SSRF guard)", async () => {
@@ -82,7 +101,10 @@ describe("downloadFile", () => {
       .mockResolvedValueOnce(streamResponse(new Uint8Array([ 7, 7 ])));
     const buf = await http.downloadFile("https://cdn.example.com/a.jar");
     expect([ ...buf ]).toEqual([ 7, 7 ]);
-    expect(global.fetch).toHaveBeenNthCalledWith(2, "https://cdn2.example.com/a.jar", { redirect: "manual" });
+    expect(global.fetch).toHaveBeenNthCalledWith(2, "https://cdn2.example.com/a.jar", {
+      redirect: "manual",
+      headers: {}
+    });
   });
 });
 

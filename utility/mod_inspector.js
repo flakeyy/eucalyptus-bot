@@ -6,7 +6,7 @@ const config = require("../config.json");
 const { FORGE_MOD_ANNOTATIONS } = require("./crash_risk.js");
 const {
   getInspection, putInspection, getLearnedVerdict, flushVerdictStore,
-  isMixinInfrastructureJar
+  isMixinInfrastructureJar, isProtectedLearnedMod
 } = require("./verdict_store.js");
 
 // Bump when detection logic changes so cached verdicts are recomputed.
@@ -37,6 +37,30 @@ function matchesCuratedList(list, { modId = null, filename = null, sha1 = null }
     const base = filename.split("/").pop().toLowerCase();
     if (list.filenamePrefixes.some(p => base.startsWith(p))) return true;
   }
+  return false;
+}
+
+// True when a mixin JSON in the jar targets client-only Minecraft classes from
+// a config that is not clearly client-sided (common/default configs applied on
+// dedicated servers → ClassMetadataNotFoundException: ParticleManager etc.).
+function jarHasServerAppliedClientMixins(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    for (const entry of zip.getEntries()) {
+      if (entry.isDirectory) continue;
+      const name = entry.entryName.replace(/\\/g, "/");
+      const base = name.split("/").pop() || "";
+      if (!/mixins?[^/]*\.json$/i.test(base)) continue;
+      // Explicit client mixin configs are not loaded on dedicated servers.
+      if (/(^|[._-])client([._-]|$)/i.test(base)) continue;
+      let text;
+      try { text = entry.getData().toString("utf8"); } catch { continue; }
+      if (/net\.minecraft\.client\.(particle\.ParticleManager|gui\.|renderer\.|Minecraft)\b/i.test(text) ||
+          /net\/minecraft\/client\/(particle\/ParticleManager|gui\/|renderer\/|Minecraft)/i.test(text)) {
+        return true;
+      }
+    }
+  } catch { /* ignore */ }
   return false;
 }
 
@@ -340,15 +364,19 @@ function decideModInstall({
     return install(2, "server-side-override");
   }
 
-  // 3. Learned verdict from the boot-verify loop. Mixin bootstrap jars are
-  // exempt — a false positive here makes MixinTweaker unloadable and bricks
-  // the entire pack (see UniMixins over-quarantine).
+  // 3. Learned verdict from the boot-verify loop. Mixin bootstrap jars and
+  // pack-defining mods are exempt — a false positive bricks the pack
+  // (EnderIO → MissingModsException cascade on MC Eternal).
+  // Rescuable for parking under mods-disabled/ (boot-verify can restore on
+  // MissingModsException). Dep-rescue explicitly excludes this source so a
+  // hard-require cannot reinstall a known crasher.
   const learned = learnedVerdict ?? getLearnedVerdict(sha1);
   if (
     learned === "crashes-server" &&
-    !isMixinInfrastructureJar({ modId, filename })
+    !isMixinInfrastructureJar({ modId, filename }) &&
+    !isProtectedLearnedMod({ modId, filename })
   ) {
-    return skip(3, "learned-crashes-server", false);
+    return skip(3, "learned-crashes-server", true);
   }
 
   // 4. Provider says the mod belongs on the server — never drop it.
@@ -372,8 +400,10 @@ function decideModInstall({
   }
 
   // 8. Layer 2 crash-proof scan (computed lazily by the caller — only reaches
-  // here when the provider is silent and no static signal fired).
-  if (crashRisk?.risk) {
+  // here when the provider is silent and no static signal fired). Pack-defining
+  // mods are exempt: false positives (e.g. AE2 client-class refs in shared
+  // init) brick the pack while the server still "boots fine" without them.
+  if (crashRisk?.risk && !isProtectedLearnedMod({ modId, filename })) {
     return skip(8, "crash-risk", true);
   }
 
@@ -472,18 +502,50 @@ function extractModDeps(buffer, loaderType = null) {
     return { modId, requiredDeps };
   };
 
+  // Legacy Forge (≤1.12) declares id + hard deps in mcmod.info — without this,
+  // dep-rescue cannot see Storage Drawers → chameleon and drops the library.
+  const fromMcmodInfo = () => {
+    const entry = zip.getEntry("mcmod.info");
+    if (!entry) return null;
+    const raw = lenientJsonParse(entry.getData().toString("utf8"));
+    if (!raw) return null;
+    const mods = Array.isArray(raw)
+      ? raw
+      : Array.isArray(raw.modList)
+        ? raw.modList
+        : raw.modid || raw.modId
+          ? [ raw ]
+          : [];
+    const primary = mods.find(m => m && (m.modid || m.modId)) || null;
+    if (!primary) return null;
+    const modId = primary.modid || primary.modId || null;
+    const depLists = [
+      ...(Array.isArray(primary.requiredMods) ? primary.requiredMods : []),
+      ...(Array.isArray(primary.dependencies) ? primary.dependencies : [])
+    ];
+    const requiredDeps = [ ...new Set(
+      depLists
+        .map(d => typeof d === "string" ? d : d?.modid || d?.modId)
+        // mcmod.info often stores "enderio@[5.3.70,)" — keep the bare mod id.
+        .map(id => (typeof id === "string" ? id.split("@")[0].replace(/[[\]]/g, "").trim() : id))
+        .filter(id => id && !SYSTEM_MOD_IDS.has(id))
+    ) ];
+    return { modId, requiredDeps };
+  };
+
   if (loaderType) {
     let result = null;
     if (loaderType === "fabric")   result = fromFabric();
     if (loaderType === "quilt")    result = fromQuilt() ?? fromFabric();
     if (loaderType === "neoforge") result = fromForgeToml("META-INF/neoforge.mods.toml") ?? fromForgeToml("META-INF/mods.toml");
-    if (loaderType === "forge")    result = fromForgeToml("META-INF/mods.toml");
+    if (loaderType === "forge")    result = fromForgeToml("META-INF/mods.toml") ?? fromMcmodInfo();
     if (result) return result;
   }
 
   return fromFabric() ?? fromQuilt()
     ?? fromForgeToml("META-INF/neoforge.mods.toml")
     ?? fromForgeToml("META-INF/mods.toml")
+    ?? fromMcmodInfo()
     ?? { modId: null, requiredDeps: [] };
 }
 
@@ -497,5 +559,6 @@ module.exports = {
   scanForgeModClientSignals,
   matchesCuratedList,
   isKnownServerSideMod,
+  jarHasServerAppliedClientMixins,
   CACHE_VERSION
 };
