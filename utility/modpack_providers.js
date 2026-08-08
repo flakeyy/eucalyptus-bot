@@ -4,7 +4,7 @@
 // command and install engine stay source-agnostic.
 const msgLog = require("./logger.js");
 const {
-  getModpackById, getModpackBySlug, getModpackFiles, getFileById,
+  getModpackById, getModpackBySlug, getModpackFiles, getFilesByIds,
   detectMCVersion, resolveLoaderType, parseProjectId, parseModpackSlug,
   resolveCurseforgeInstall
 } = require("./curseforge.js");
@@ -14,7 +14,10 @@ const {
 } = require("./modrinth.js");
 
 const LOADER_KEYWORDS = /java|forge|fabric|neoforge|quilt/i;
-const MAX_FILE_OPTIONS = 10;
+// Soft cap on listed versions (Discord select menus paginate these in the UI).
+const MAX_FILE_OPTIONS = 100;
+// Options shown per select-menu page (Discord max is 25).
+const FILE_SELECT_PAGE_SIZE = 10;
 
 // Determines the modpack source from user input. Returns "curseforge",
 // "modrinth", or null when the host isn't recognized. Bare numeric input is
@@ -97,20 +100,28 @@ async function listCurseforgeFiles(modpack) {
     .slice(0, MAX_FILE_OPTIONS);
   if (sortedClientFiles.length === 0) return [];
 
-  // Fetch linked server packs in parallel
-  const serverPacks = await Promise.all(
-    sortedClientFiles.map(f => f.serverPackFileId
-      ? getFileById(f.modId, f.serverPackFileId).catch(() => null)
-      : null
-    )
-  );
+  // Batch-resolve linked server packs (one POST instead of N GETs)
+  const serverPackIds = sortedClientFiles
+    .map(f => f.serverPackFileId)
+    .filter(Boolean);
+  let serverPackById = new Map();
+  if (serverPackIds.length > 0) {
+    try {
+      const packs = await getFilesByIds(serverPackIds);
+      serverPackById = new Map(packs.map(p => [ p.id, p ]));
+    } catch (e) {
+      msgLog.warn(`[install-modpack] getFilesByIds (server packs) failed: ${e.message}`);
+    }
+  }
 
   // Prefer client packs (manifest + strip client-only jars). Offer the linked
   // server pack afterward as a fallback when the user explicitly wants it.
   const rawOptions = [];
-  for (let idx = 0; idx < sortedClientFiles.length; idx++) {
-    rawOptions.push(sortedClientFiles[idx]);
-    const sp = serverPacks[idx];
+  for (const clientFile of sortedClientFiles) {
+    rawOptions.push(clientFile);
+    const sp = clientFile.serverPackFileId
+      ? serverPackById.get(clientFile.serverPackFileId)
+      : null;
     if (sp?.downloadUrl) rawOptions.push(sp);
   }
 
@@ -174,4 +185,7 @@ async function resolveModpackInstall(source, buffer, loaderType, onProgress = ()
   return null;
 }
 
-module.exports = { detectProvider, lookupModpack, listModpackFiles, resolveModpackInstall };
+module.exports = {
+  detectProvider, lookupModpack, listModpackFiles, resolveModpackInstall,
+  FILE_SELECT_PAGE_SIZE, MAX_FILE_OPTIONS
+};

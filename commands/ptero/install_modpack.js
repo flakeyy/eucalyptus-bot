@@ -16,7 +16,7 @@ const { isManifestZip, findClientFileForServerPack, defaultLoaderForLegacyMc } =
 const { downloadToBuffer } = require("../../utility/modpack_http.js");
 const { installFilePlan, installArchiveBuffer } = require("../../utility/modpack_install.js");
 const { verifyServerBoot } = require("../../utility/boot_verify.js");
-const { detectProvider, lookupModpack, listModpackFiles, resolveModpackInstall } = require("../../utility/modpack_providers.js");
+const { detectProvider, lookupModpack, listModpackFiles, resolveModpackInstall, FILE_SELECT_PAGE_SIZE } = require("../../utility/modpack_providers.js");
 const { detectLoaderVersionFromBuffer, buildLoaderEggEnv } = require("../../utility/loader_version.js");
 const { getJavaImageForMCVersion } = require("../../utility/minecraft_java.js");
 const AdmZip = require("adm-zip");
@@ -119,12 +119,19 @@ function buildServerSelectContainer(servers, nestMap, statusNote = null, disable
     .addActionRowComponents(row => row.setComponents(selectMenu));
 }
 
-function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId) {
+function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId, page = 0) {
+  const totalPages = Math.max(1, Math.ceil(fileOptions.length / FILE_SELECT_PAGE_SIZE));
+  const safePage = Math.min(Math.max(0, page), totalPages - 1);
+  const pageOptions = fileOptions.slice(
+    safePage * FILE_SELECT_PAGE_SIZE,
+    (safePage + 1) * FILE_SELECT_PAGE_SIZE
+  );
+
   const menu = new StringSelectMenuBuilder()
     .setCustomId("file-select")
     .setPlaceholder("Select a version");
 
-  for (const file of fileOptions) {
+  for (const file of pageOptions) {
     menu.addOptions(
       new StringSelectMenuOptionBuilder()
         .setLabel(file.label)
@@ -134,19 +141,41 @@ function buildFileSelectContainer(modpackName, fileOptions, autoSelectedId) {
     );
   }
 
-  return new ContainerBuilder()
+  let content =
+    `**Install Modpack — Select Version**\n\n**Modpack:** ${modpackName}\n\n` +
+    "The recommended version is pre-selected. Change it if needed.\n" +
+    "_Versions are sorted latest first. Prefer a client pack — client-only mods are stripped automatically._";
+  if (totalPages > 1) {
+    content += `\n\nShowing ${safePage * FILE_SELECT_PAGE_SIZE + 1}–` +
+      `${Math.min((safePage + 1) * FILE_SELECT_PAGE_SIZE, fileOptions.length)} of ${fileOptions.length}` +
+      ` · Page ${safePage + 1}/${totalPages}`;
+  }
+
+  const container = new ContainerBuilder()
     .setAccentColor(COLORS.PRIMARY)
-    .addTextDisplayComponents(text => text.setContent(
-      `**Install Modpack — Select Version**\n\n**Modpack:** ${modpackName}\n\n` +
-      "The recommended version is pre-selected. Change it if needed.\n" +
-      "_Versions are sorted latest first. Prefer a client pack — client-only mods are stripped automatically._"
-    ))
+    .addTextDisplayComponents(text => text.setContent(content))
     .addSeparatorComponents(sep => sep)
-    .addActionRowComponents(row => row.setComponents(menu))
-    .addActionRowComponents(row => row.setComponents(
-      new ButtonBuilder().setCustomId("file-select-confirm").setLabel("Continue").setStyle(ButtonStyle.Primary),
-      new ButtonBuilder().setCustomId("cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
+    .addActionRowComponents(row => row.setComponents(menu));
+
+  if (totalPages > 1) {
+    container.addActionRowComponents(row => row.setComponents(
+      new ButtonBuilder()
+        .setCustomId("file-select-newer")
+        .setLabel("Newer versions")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage === 0),
+      new ButtonBuilder()
+        .setCustomId("file-select-older")
+        .setLabel("Older versions")
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(safePage >= totalPages - 1)
     ));
+  }
+
+  return container.addActionRowComponents(row => row.setComponents(
+    new ButtonBuilder().setCustomId("file-select-confirm").setLabel("Continue").setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId("cancel").setLabel("Cancel").setStyle(ButtonStyle.Secondary)
+  ));
 }
 
 function buildConfirmView1(serverName, modpackName, fileName, loaderType) {
@@ -597,6 +626,7 @@ module.exports = {
       let mcVersion = null;
       let fileOptions = null;
       let selectedFileId = null;
+      let fileSelectPage = 0;
 
       collector.on("collect", async i => {
         try {
@@ -731,9 +761,10 @@ module.exports = {
 
               const autoFile = fileOptions[0];
               selectedFileId = autoFile.id;
+              fileSelectPage = 0;
 
               await modalSubmit.editReply({
-                components: [ buildFileSelectContainer(modpackName, fileOptions, autoFile.id) ],
+                components: [ buildFileSelectContainer(modpackName, fileOptions, autoFile.id, fileSelectPage) ],
                 flags: MessageFlags.IsComponentsV2
               });
 
@@ -745,7 +776,19 @@ module.exports = {
             // Just update the displayed selection; Continue button drives the actual proceed
             selectedFileId = i.values[0];
             await i.update({
-              components: [ buildFileSelectContainer(modpackName, fileOptions, selectedFileId) ],
+              components: [ buildFileSelectContainer(modpackName, fileOptions, selectedFileId, fileSelectPage) ],
+              flags: MessageFlags.IsComponentsV2
+            });
+
+          } else if (i.customId === "file-select-older" || i.customId === "file-select-newer") {
+            const totalPages = Math.max(1, Math.ceil((fileOptions?.length || 0) / FILE_SELECT_PAGE_SIZE));
+            if (i.customId === "file-select-older") {
+              fileSelectPage = Math.min(fileSelectPage + 1, totalPages - 1);
+            } else {
+              fileSelectPage = Math.max(fileSelectPage - 1, 0);
+            }
+            await i.update({
+              components: [ buildFileSelectContainer(modpackName, fileOptions, selectedFileId, fileSelectPage) ],
               flags: MessageFlags.IsComponentsV2
             });
 
