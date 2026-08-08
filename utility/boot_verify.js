@@ -47,6 +47,9 @@ const DEFINITE_CRASH_MARKERS = [
   /LoadingFailedException/,
   /MissingModsException/,
   /ModResolutionException/,
+  /ModLoadingCrashException/,
+  /Mod loading (?:failures have|error has|has) (?:occurred|failed)/i,
+  /Mod loading issue for:/i,
   /A problem occurred running the Server launcher/i,
   /Failed to load datapacks/i,
   /FMLSecurityManager\$ExitTrappedException/,
@@ -90,6 +93,9 @@ function watchBootAttempt(
     let settled = false;
     let crashSuspected = false;
     let definiteCrash = false;
+    // True once the JVM/loader process has died (offline/stopping after javaBootSeen).
+    // Pterodactyl may auto-restart; we must not clear suspicion and watch that restart.
+    let processDied = false;
     let javaBootSeen = false;
     let pullFinishedAt = 0;
     let crashFlushTimer = null;
@@ -119,6 +125,7 @@ function watchBootAttempt(
       pullFinishedAt > 0 && (Date.now() - pullFinishedAt) < POST_PULL_CRASH_GRACE_MS;
 
     const clearCrashSuspicion = reason => {
+      if (processDied) return; // auto-restart must not wipe a confirmed process death
       if (!crashSuspected) return;
       crashSuspected = false;
       definiteCrash = false;
@@ -130,7 +137,7 @@ function watchBootAttempt(
     };
 
     let timer = setTimeout(() => {
-      finish(lastState === "running" && !crashSuspected ? "success" : "timeout");
+      finish(lastState === "running" && !crashSuspected && !processDied ? "success" : "timeout");
     }, timeoutMs);
     let pullExtended = false;
 
@@ -147,6 +154,12 @@ function watchBootAttempt(
       if (crashFlushTimer) return;
       crashFlushTimer = setTimeout(() => {
         crashFlushTimer = null;
+        // Process already died — finish even if the panel auto-restarted into
+        // starting/running (otherwise we hang until success_timeout).
+        if (processDied) {
+          finish("crash");
+          return;
+        }
         const recent = tail.slice(-120).join("\n");
         const savedNames = [ ...recent.matchAll(/crash reports?\/(\S+\.txt)/gi) ].map(m => m[1]);
         const freshSaved = savedNames.some(n => n && !ignoreCrashes.has(n));
@@ -179,6 +192,15 @@ function watchBootAttempt(
         if (tail.length > CONSOLE_TAIL_LINES) tail.shift();
       }
       if (!pullExtended && /Finished pulling Docker container image/i.test(line)) {
+        // Auto-restart after a crash often re-pulls the image — end this attempt
+        // instead of clearing suspicion and watching another doomed boot.
+        if (processDied) {
+          msgLog.warn(
+            `[boot-verify] ${serverId}: docker pull during post-crash auto-restart — ending attempt as crash`
+          );
+          finish("crash");
+          return;
+        }
         pullExtended = true;
         pullFinishedAt = Date.now();
         clearCrashSuspicion(null);
@@ -186,7 +208,7 @@ function watchBootAttempt(
         clearTimeout(timer);
         const extendMs = Math.max(timeoutMs, 600_000);
         timer = setTimeout(() => {
-          finish(lastState === "running" && !crashSuspected ? "success" : "timeout");
+          finish(lastState === "running" && !crashSuspected && !processDied ? "success" : "timeout");
         }, extendMs);
         msgLog.warn(
           `[boot-verify] ${serverId}: docker pull finished during boot watch — extended timeout by ${extendMs}ms`
@@ -194,7 +216,7 @@ function watchBootAttempt(
       }
       if (JAVA_BOOT_RE.test(line) && !inPostPullGrace()) javaBootSeen = true;
       if (SUCCESS_RE.test(line)) finish("success");
-      else if (LOADING_PROGRESS_RE.test(line) && crashSuspected && !definiteCrash) {
+      else if (LOADING_PROGRESS_RE.test(line) && crashSuspected && !definiteCrash && !processDied) {
         clearCrashSuspicion("canceling crash suspicion — still loading");
       }
       else if (
@@ -232,10 +254,32 @@ function watchBootAttempt(
 
     ws.on("powerStateChange", state => {
       lastState = state;
+      if (settled || inPostPullGrace()) return;
+
+      // JVM/loader was up, then the process stopped. Panel may auto-restart;
+      // mark death and end the attempt — do not wait for Done on the restart.
+      if ((state === "offline" || state === "stopping") && javaBootSeen) {
+        processDied = true;
+        crashSuspected = true;
+        if (definiteCrash) {
+          if (crashFlushTimer) {
+            clearTimeout(crashFlushTimer);
+            crashFlushTimer = null;
+          }
+          finish("crash");
+          return;
+        }
+        scheduleCrashFinish();
+        return;
+      }
+
       if (
-        crashSuspected && definiteCrash && javaBootSeen && !inPostPullGrace() &&
-        (state === "offline" || state === "stopping") && !settled
+        processDied &&
+        (state === "starting" || state === "running")
       ) {
+        msgLog.warn(
+          `[boot-verify] ${serverId}: panel auto-restarted after process death — ending attempt as crash`
+        );
         if (crashFlushTimer) {
           clearTimeout(crashFlushTimer);
           crashFlushTimer = null;

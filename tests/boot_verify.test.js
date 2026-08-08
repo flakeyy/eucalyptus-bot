@@ -357,6 +357,45 @@ describe("verifyServerBoot", () => {
     expect(res.quarantined.map(q => q.jar)).toContain("missingmodschecker.jar");
   });
 
+  test("ends attempt as crash when panel auto-restarts after process death (no Done wait)", async () => {
+    const index = createModIndex();
+    addJarToModIndex(index, "addon.jar", makeJar(), {
+      modId: "addon", requiredDeps: [ "missinglib" ], sha1: "sha-addon"
+    });
+    index.parkedJars.add("missinglib.jar");
+    index.parkedByModId.set("missinglib", "missinglib.jar");
+    index.modIdOf.set("missinglib.jar", "missinglib");
+
+    scriptBoots([
+      ws => {
+        ws.emit("powerStateChange", "starting");
+        ws.emit("consoleLine", "[main/INFO] [FML]: Forge Mod Loader has started");
+        ws.emit("consoleLine", "Mod loading failures have occurred; consult the issue messages for more details");
+        ws.emit("consoleLine", "ModLoadingCrashException: Mod loading has failed");
+        ws.emit("consoleLine", "-- Mod loading issue for: addon --");
+        ws.emit("consoleLine", "Failure message: Mod addon requires missinglib 1.0 or above");
+        ws.emit("consoleLine", "Currently, missinglib is not installed");
+        // Process dies; panel brings it back before Done — must not hang.
+        ws.emit("powerStateChange", "offline");
+        ws.emit("powerStateChange", "starting");
+        ws.emit("consoleLine", "[Server thread/INFO]: Preparing spawn area");
+      },
+      bootSuccess
+    ]);
+
+    const res = await verifyServerBoot(ctx({
+      modIndex: index,
+      settings: {
+        max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000,
+        crash_flush_ms: 0, history_flush_ms: 0
+      }
+    }));
+
+    expect(res.success).toBe(true);
+    expect(res.attempts).toBe(2);
+    expect(sf.renameServerFiles).toHaveBeenCalled();
+  });
+
   test("treats a steadily running server that never prints Done as success", async () => {
     scriptBoots([ ws => {
       ws.emit("powerStateChange", "starting");

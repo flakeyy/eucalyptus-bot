@@ -3,11 +3,14 @@
 /**
  * Mapping-free client-only signals for Layer 1 slot 8.
  *
- * Replaces the old crash_risk.js reachability scanner + Mojang/Yarn oracles.
- * Two checks only:
- *   1. Mixin configs applied on dedicated servers that target client-only MC classes
- *   2. Constant-pool references to net/minecraft/client/** (or blaze3d) from
- *      @Mod / fabric|quilt main|server entrypoint classes (SRG keeps those names)
+ * Skip signal (risk:true) — only high-confidence:
+ *   Mixin configs applied on dedicated servers that target client-only MC classes
+ *
+ * Advisory (risk:false, advisory:true) — not a skip:
+ *   Constant-pool refs to net/minecraft/client/** from @Mod / fabric main|server
+ *   entrypoints. NeoForge mods routinely embed Screen/KeyMapping in the main
+ *   @Mod class for config GUIs; treating that as skip quarantined Create,
+ *   Mekanism, Ars Nouveau, etc. on ATM10. Boot-verify handles real crashes.
  */
 
 const AdmZip = require("adm-zip");
@@ -22,6 +25,12 @@ const FORGE_MOD_ANNOTATIONS = [
 const CLIENT_CP_PREFIXES = [
   "net/minecraft/client/",
   "com/mojang/blaze3d/"
+];
+
+const DIST_CLIENT_MARKERS = [
+  "Lnet/neoforged/api/distmarker/OnlyIn;",
+  "Lnet/minecraftforge/api/distmarker/OnlyIn;",
+  "Lnet/fabricmc/api/Environment;"
 ];
 
 function lenientJsonParse(text) {
@@ -122,6 +131,23 @@ function findClientCpHit(buf) {
   return null;
 }
 
+function isDistClientOnlyClass(buf) {
+  if (!buf || !Buffer.isBuffer(buf)) return false;
+  // OnlyIn(Dist.CLIENT) / @Environment(EnvType.CLIENT) leave these descriptors
+  // in the classfile; Dist.CLIENT / EnvType.CLIENT appear as Utf8 too.
+  if (!DIST_CLIENT_MARKERS.some(m => buf.indexOf(m) !== -1)) return false;
+  return buf.indexOf("CLIENT") !== -1;
+}
+
+/** Client proxy / Dist.CLIENT roots — ignore for advisory CP scan. */
+function isLikelyClientOnlyRoot(className) {
+  const n = String(className || "").replace(/\\/g, "/");
+  const base = (n.split("/").pop() || "").toLowerCase();
+  if (/client$/.test(base)) return true;
+  if (/(?:^|\/)client(?:\/|$)/i.test(n)) return true;
+  return false;
+}
+
 function collectFabricEntrypoints(zip) {
   const names = new Set();
   const addFrom = (meta, keys) => {
@@ -154,7 +180,10 @@ function collectForgeModRoots(zip) {
     if (e.entryName.includes("META-INF/jars/") || e.entryName.includes("META-INF/jarjar/")) continue;
     const buf = e.getData();
     if (!FORGE_MOD_ANNOTATIONS.some(m => buf.indexOf(m) !== -1)) continue;
-    names.add(e.entryName.replace(/\.class$/, "").replace(/\\/g, "/"));
+    if (isDistClientOnlyClass(buf)) continue;
+    const className = e.entryName.replace(/\.class$/, "").replace(/\\/g, "/");
+    if (isLikelyClientOnlyRoot(className)) continue;
+    names.add(className);
   }
   return names;
 }
@@ -180,8 +209,10 @@ function scanEntrypointClientCpRefs(buffer) {
   if (roots.size === 0) return { hit: null, root: null };
 
   for (const root of roots) {
+    if (isLikelyClientOnlyRoot(root)) continue;
     const buf = readClass(zip, root);
     if (!buf) continue;
+    if (isDistClientOnlyClass(buf)) continue;
     const hit = findClientCpHit(buf);
     if (hit) return { hit, root };
   }
@@ -191,14 +222,18 @@ function scanEntrypointClientCpRefs(buffer) {
 /**
  * Slot-8 signal. Shape matches the old assessCrashRisk return so callers and
  * decideModInstall({ crashRisk }) keep working.
+ *
+ * risk:true  → decideModInstall slot 8 skip (mixin only)
+ * advisory   → install + optional warning (entrypoint CP — too noisy to skip)
  */
 function assessClientSignals(buffer) {
   if (!buffer || !Buffer.isBuffer(buffer)) {
-    return { risk: false, detail: null, reason: "no-buffer" };
+    return { risk: false, advisory: false, detail: null, reason: "no-buffer" };
   }
   if (jarHasServerAppliedClientMixins(buffer)) {
     return {
       risk: true,
+      advisory: false,
       detail: "server-applied client mixin config",
       reason: "client-mixin-on-server"
     };
@@ -206,17 +241,20 @@ function assessClientSignals(buffer) {
   const { hit, root } = scanEntrypointClientCpRefs(buffer);
   if (hit) {
     return {
-      risk: true,
+      risk: false,
+      advisory: true,
       detail: `${root} → ${hit}`,
       reason: "entrypoint-client-cp"
     };
   }
-  return { risk: false, detail: null, reason: "clean" };
+  return { risk: false, advisory: false, detail: null, reason: "clean" };
 }
 
 module.exports = {
   FORGE_MOD_ANNOTATIONS,
   jarHasServerAppliedClientMixins,
   scanEntrypointClientCpRefs,
-  assessClientSignals
+  assessClientSignals,
+  isLikelyClientOnlyRoot,
+  isDistClientOnlyClass
 };

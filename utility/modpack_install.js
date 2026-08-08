@@ -280,7 +280,8 @@ async function installFilePlan(ctx, plan) {
       modId: info.modId, requiredDeps: info.requiredDeps, sha1: info.sha1 ?? null
     });
     const risk = assessClientSignals(info.buffer);
-    if (!risk.risk) continue;
+    // risk → would have skipped (mixin); advisory → entrypoint CP noise, warn only
+    if (!risk.risk && !risk.advisory) continue;
     crashRiskWarnings.push({
       filename: info.filename,
       path: info.path,
@@ -528,7 +529,7 @@ async function installArchiveBuffer(ctx, buffer) {
       }
       addJarToModIndex(modIndex, filename, data, { modId, requiredDeps });
       const risk = assessClientSignals(data);
-      if (risk.risk) {
+      if (risk.risk || risk.advisory) {
         crashRiskWarnings.push({ filename, path, detail: risk.detail, modId });
         msgLog.warn(`[install-modpack] client-signal (archive): ${filename}: ${risk.detail}`);
       }

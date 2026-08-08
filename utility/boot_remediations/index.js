@@ -95,7 +95,7 @@ const missingDependencyRestore = {
   description: "Restore a jar parked in mods-disabled/ that MissingModsException still requires",
   matches(consoleTail, ctx) {
     const missing = [ ...(ctx?.attribution?.signals?.missingDeps ?? []) ];
-    if (!/MissingModsException|requires mods |requires \[|ModResolutionException/i.test(consoleTail) &&
+    if (!/MissingModsException|requires mods |requires \[|ModResolutionException|is not installed|Mod loading (?:failures|issue)/i.test(consoleTail) &&
         missing.length === 0) {
       return false;
     }

@@ -171,6 +171,28 @@ describe("extractCrashSignals", () => {
     expect(s.stackClasses).toContain("potionstudios/byg/common/item/BYGItems");
     expect([ ...s.jarFiles ]).toContain("Oh_The_Biomes_You'll_Go-forge-1.19.2-2.0.1.6.jar");
   });
+
+  test("NeoForge Mod loading issue + Currently not installed → missingDeps", () => {
+    const s = extractCrashSignals([
+      "Description: Mod loading failures have occurred; consult the issue messages for more details",
+      "net.neoforged.neoforge.logging.CrashReportExtender$ModLoadingCrashException: Mod loading has failed",
+      "-- Mod loading issue for: sophisticatedstorageinmotion --",
+      "Details:",
+      "  Mod file: /home/container/mods/sophisticatedstorageinmotion-1.21.1-0.10.33.324.jar",
+      "  Failure message: Mod sophisticatedstorageinmotion requires sophisticatedstorage 1.5.74 or above",
+      "    Currently, sophisticatedstorage is not installed",
+      "-- Mod loading issue for: ars_elemental --",
+      "  Mod file: /home/container/mods/ars_elemental-1.21.1-0.7.10.1.jar",
+      "  Failure message: Mod ars_elemental requires ars_nouveau 1.21.1-5.12 or above",
+      "    Currently, ars_nouveau is not installed"
+    ].join("\n"));
+    expect([ ...s.missingDeps ]).toEqual(
+      expect.arrayContaining([ "sophisticatedstorage", "ars_nouveau" ])
+    );
+    expect([ ...s.dependentModIds ]).toEqual(
+      expect.arrayContaining([ "sophisticatedstorageinmotion", "ars_elemental" ])
+    );
+  });
 });
 
 describe("attributeCrash", () => {

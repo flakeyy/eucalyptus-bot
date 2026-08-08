@@ -207,7 +207,9 @@ function extractCrashSignals(text) {
     const isShutdownFrame = /(?:serverStopped|onServerStopping|serverStopping|handleServerStopped)\b/i.test(line);
 
     // Forge FML section header: "-- MOD backpacked --"
-    let m = line.match(/^-- MOD ([\w.-]+) --$/i);
+    // NeoForge 1.21+: "-- Mod loading issue for: sophisticatedstorageinmotion --"
+    let m = line.match(/^-- MOD ([\w.-]+) --$/i) ||
+      line.match(/^-- Mod loading issue for:\s*([\w.-]+) --$/i);
     if (m) {
       commitPendingOffender();
       pendingModId = m[1].toLowerCase();
@@ -216,10 +218,22 @@ function extractCrashSignals(text) {
     }
 
     // Forge crash report: "Mod File: /data/mods/foo.jar" or "Mod File: foo.jar"
+    // NeoForge prints "Mod file:" — /i covers both.
     m = line.match(/Mod File:\s*(?:.*[\\/])?([^\\/]+\.jar)/i);
     if (m) {
       if (pendingModId) pendingJar = m[1];
       else out.jarFiles.add(m[1]);
+      continue;
+    }
+
+    // NeoForge: "Currently, sophisticatedstorage is not installed"
+    m = line.match(/Currently,\s*([\w.-]+)\s+is not installed/i);
+    if (m) {
+      const dep = m[1].toLowerCase();
+      if (!/^(forge|minecraft|neoforge|java|fabricloader)$/i.test(dep)) {
+        out.missingDeps.add(dep);
+        dropPending();
+      }
       continue;
     }
 
@@ -263,6 +277,7 @@ function extractCrashSignals(text) {
         // Bare "requires mods" without brackets — noise (bracket form handled above).
       } else {
         out.missingDeps.add(dep);
+        out.dependentModIds.add(mod);
         if (pendingModId === mod || pendingModId === null) dropPending();
         else out.modIds.delete(mod);
       }

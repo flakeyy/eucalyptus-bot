@@ -399,11 +399,12 @@ describe("installFilePlan", () => {
     expect(res.modIndex.sha1Of.get("a.jar")).toBe("a");
   });
 
-  test("client_signals skips a provider-null mod with a client-only signal", async () => {
+  test("client_signals skips a provider-null mod with a mixin (risk) signal", async () => {
     clientSignals.assessClientSignals.mockReturnValue({
       risk: true,
-      detail: "com/example/ModMain → net/minecraft/client/Minecraft",
-      reason: "entrypoint-client-cp"
+      advisory: false,
+      detail: "server-applied client mixin config",
+      reason: "client-mixin-on-server"
     });
 
     const res = await installFilePlan(
@@ -415,11 +416,34 @@ describe("installFilePlan", () => {
     expect(clientSignals.assessClientSignals).toHaveBeenCalled();
   });
 
+  test("client_signals entrypoint advisory does not skip; warns when installed", async () => {
+    clientSignals.assessClientSignals.mockReturnValue({
+      risk: false,
+      advisory: true,
+      detail: "com/example/ModMain → net/minecraft/client/gui/screens/Screen",
+      reason: "entrypoint-client-cp"
+    });
+
+    const res = await installFilePlan(
+      ctx({ loaderType: "fabric", mcVersion: "1.21.1" }),
+      { modFiles: [ modFile("gui.jar", "g") ], extraFiles: [], overrideEntries: [], unavailable: [] }
+    );
+
+    expect(res.installed).toBe(1);
+    expect(res.crashRiskWarnings).toEqual([ {
+      filename: "gui.jar",
+      path: "mods/gui.jar",
+      detail: "com/example/ModMain → net/minecraft/client/gui/screens/Screen",
+      modId: null
+    } ]);
+  });
+
   test("client_signals only warns when the provider vouches for the mod (required/optional)", async () => {
     clientSignals.assessClientSignals.mockReturnValue({
       risk: true,
+      advisory: false,
       detail: "com/example/ModMain → net/minecraft/client/Minecraft",
-      reason: "entrypoint-client-cp"
+      reason: "client-mixin-on-server"
     });
 
     const res = await installFilePlan(

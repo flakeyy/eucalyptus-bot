@@ -375,10 +375,10 @@ function decideModInstall({
     return skip(7, "provider-unsupported", true);
   }
 
-  // 8. Mapping-free client signals (mixin configs / entrypoint CP refs —
-  // computed by the caller). Pack-defining mods are exempt: false positives
-  // (e.g. AE2 client-class refs in shared init) brick the pack while the
-  // server still "boots fine" without them.
+  // 8. Mapping-free client signals (server-applied client mixin configs only —
+  // computed by the caller). Entrypoint CP refs are advisory, not skips: NeoForge
+  // mods embed Screen/KeyMapping on the main @Mod for config GUIs. Pack-defining
+  // mods remain exempt if a true risk signal fires.
   if (crashRisk?.risk && !isProtectedLearnedMod({ modId, filename })) {
     return skip(8, "client-signals", true);
   }

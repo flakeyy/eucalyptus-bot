@@ -78,7 +78,7 @@ describe("assessClientSignals", () => {
     });
   });
 
-  test("entrypoint CP hit", () => {
+  test("entrypoint CP hit is advisory only (not a skip — NeoForge config screens)", () => {
     const cls = makeClassFile({
       className: "com/example/ModMain",
       modMarker: true,
@@ -86,7 +86,8 @@ describe("assessClientSignals", () => {
     });
     const buf = makeJar({ "com/example/ModMain.class": cls });
     expect(assessClientSignals(buf)).toMatchObject({
-      risk: true,
+      risk: false,
+      advisory: true,
       reason: "entrypoint-client-cp"
     });
   });
@@ -96,5 +97,15 @@ describe("assessClientSignals", () => {
       "fabric.mod.json": JSON.stringify({ id: "x", entrypoints: { main: [ "a.Main" ] } })
     });
     expect(assessClientSignals(buf)).toMatchObject({ risk: false, reason: "clean" });
+  });
+
+  test("skips *Client @Mod roots for advisory scan", () => {
+    const cls = makeClassFile({
+      className: "com/example/CreateClient",
+      modMarker: true,
+      initNewClass: "net/minecraft/client/Minecraft"
+    });
+    const buf = makeJar({ "com/example/CreateClient.class": cls });
+    expect(assessClientSignals(buf)).toMatchObject({ risk: false, advisory: false, reason: "clean" });
   });
 });
