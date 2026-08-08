@@ -397,10 +397,10 @@ async function getFileUploadUrl(serverId, discordId) {
   return jsonData.attributes?.url || null;
 }
 
-async function pullServerFile(serverId, discordId, url, directory, filename) {
+async function pullServerFile(serverId, discordId, url, directory, filename, { foreground = false } = {}) {
   const validatedId = validateString(serverId);
   if (!validatedId) return -1;
-  const body = JSON.stringify({ url, directory, filename, use_header: false, foreground: false });
+  const body = JSON.stringify({ url, directory, filename, use_header: false, foreground });
   const path = await daemonServerPath(validatedId, discordId, "files/pull");
   const apiResult = await clientApiCall(path, "POST", body, discordId);
   if (apiResult.statusCode !== 204) {

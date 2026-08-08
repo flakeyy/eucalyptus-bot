@@ -62,6 +62,7 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `UPTIME_API_KEY` | *(custom provider only)* Bearer token for the custom status API |
 | `CURSEFORGE_API_KEY` | *(required for /install-modpack command)* API key for the [Curseforge API](https://console.curseforge.com/?#/api-keys)
 | `MODRINTH_API_KEY` | *(optional)* Token for the [Modrinth API](https://modrinth.com/settings/pats). Anonymous access works; a token only raises rate limits. |
+| `ANTHROPIC_API_KEY` | *(optional)* Enables last-resort crash triage via Claude when deterministic boot attribution fails. Absent or errored → triage is a no-op. |
 
 ### config.json fields
 
@@ -77,7 +78,8 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `loader_version_variables` | Map of loader → egg env var used to pin an exact build from the pack (`FORGE_VERSION`, `NEOFORGE_VERSION`, `LOADER_VERSION`) |
 | `java_images` | Docker image map keyed by Java version (8, 11, 17, 21, 25) |
 | `minecraft_java_map` | Minecraft version thresholds → required Java major. Highest key ≤ the pack's MC version wins; anything older than the lowest key (e.g. 1.7.10) falls back to Java 8. Use patch-aware keys like `1.20.5` / `26.1` when Mojang bumps the requirement mid-series. |
-| `mod_id_blocklist` | Array of mod IDs as declared inside the mod's own metadata (e.g. `"drippyloadingscreen"`), not CurseForge project IDs. Mods matching an entry are always skipped during manifest installs. |
+| `boot_verify` | Boot-verification loop settings (`enabled`, `max_attempts`, timeouts) |
+| `triage` | Optional Claude triage settings (`provider`, `model`, `effort`, `max_calls_per_install`, `min_confidence`). Requires `ANTHROPIC_API_KEY`. |
 
 ## First-run setup
 
@@ -123,7 +125,7 @@ The user created via `/init` is granted a hidden Immunity flag (value `131072`) 
 
 - `/servers` — Interactive server management menu (view, edit, suspend/unsuspend/delete).
 - `/gen-server` — Interactive menu to create a new server.
-- `/install-modpack` — Install a CurseForge or Modrinth modpack onto one of your Minecraft servers.
+- `/install-modpack pack:<search> [server:<name>]` — Search CurseForge/Modrinth by name, pick a version (server packs preferred), confirm once, and install onto a Minecraft server. Progress stays ephemeral; past ~11 minutes it continues in the channel.
 - `/service` — View service information including nodes, nests, and eggs.
 - `/info` — Retrieves current service information.
 - `/help` — Displays available commands.

@@ -46,7 +46,7 @@ const {
   extractModDeps,
   isKnownServerSideMod
 } = require("../utility/mod_inspector.js");
-const { getOracle, assessCrashRisk } = require("../utility/crash_risk.js");
+const { assessClientSignals } = require("../utility/client_signals.js");
 
 // Frozen ground-truth overrides (hand-triaged FP/FN rows — see Phase 0 of the
 // mod-detection overhaul plan). sha1 → { label: "client"|"server", note }.
@@ -277,20 +277,17 @@ async function evaluatePack(pack, meta) {
 
   console.log(`  mods in plan: ${mods.length}, override jars: ${overrideMods.length}`);
 
-  // Layer 2 oracle for this pack's MC version (prefix-only fallback on legacy).
-  const crashOracle = await getOracle(mcVersion);
-
   let done = 0;
   let dlFailed = 0;
   const rows = [];
 
-  // Full Layer 1 decision (+ lazy Layer 2 scan for slot-9 rows), matching the
+  // Full Layer 1 decision (+ lazy client_signals for slot-9 rows), matching the
   // production install engine. Learned verdicts are not injected — the eval
   // measures the static pipeline.
   const decideRow = ({ inspection, provider, modId, filename, sha1, buffer }) => {
     let decision = decideModInstall({ inspection, providerServerSide: provider, modId, filename, sha1 });
-    if (decision.install && decision.slot === 9 && crashOracle) {
-      const risk = assessCrashRisk(buffer, crashOracle);
+    if (decision.install && decision.slot === 9 && buffer) {
+      const risk = assessClientSignals(buffer);
       if (risk.risk) {
         decision = decideModInstall({ inspection, providerServerSide: provider, modId, filename, sha1, crashRisk: risk });
       }
@@ -550,7 +547,7 @@ function writeMarkdownReport(all) {
   lines.push("");
   lines.push("## Method");
   lines.push("");
-  lines.push("- **Decision under test:** production Layer 1 precedence table (`decideModInstall`: blocklist → allowlist/server-overrides → learned verdicts → provider → explicit metadata → curated client list → provider-unsupported → Layer 2 crash scan → install) plus the dependency-rescue/propagation fixpoints — same pipeline as `/install-modpack`.");
+  lines.push("- **Decision under test:** production Layer 1 precedence table (`decideModInstall`: blocklist → allowlist/server-overrides → learned verdicts → provider → explicit metadata → curated client list → provider-unsupported → client_signals → install) plus the dependency-rescue/propagation fixpoints — same pipeline as `/install-modpack`.");
   lines.push("- **Ground truth:** Modrinth **project** `server_side` looked up by JAR hash (slug fallback), with hand-triaged golden overrides from `scripts/eval_overrides.json` applied on top.");
   lines.push("- **Provider input** (what the installer sees): mrpack `env.server` or CurseForge→Modrinth project side — may disagree with project labels on lazy packs.");
   lines.push("- **Unlabeled mods** (no Modrinth project side and no override) are excluded from accuracy math but listed for coverage.");

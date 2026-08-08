@@ -43,9 +43,10 @@ jest.mock("../utility/mod_inspector.js", () => ({
   jarHasServerAppliedClientMixins: jest.fn(() => false)
 }));
 
-jest.mock("../utility/crash_risk.js", () => ({
-  getOracle: jest.fn().mockResolvedValue(null),
-  assessCrashRiskCached: jest.fn().mockReturnValue({ risk: false, detail: null, reason: null })
+jest.mock("../utility/client_signals.js", () => ({
+  assessClientSignals: jest.fn().mockReturnValue({ risk: false, detail: null, reason: "clean" }),
+  jarHasServerAppliedClientMixins: jest.fn(() => false),
+  FORGE_MOD_ANNOTATIONS: jest.requireActual("../utility/client_signals.js").FORGE_MOD_ANNOTATIONS
 }));
 
 const AdmZip = require("adm-zip");
@@ -53,7 +54,7 @@ const { installFilePlan, buildProgressBar, installArchiveBuffer, detectNestedArc
 const http = require("../utility/modpack_http.js");
 const sf = require("../utility/server_functions.js");
 const inspector = require("../utility/mod_inspector.js");
-const crashRisk = require("../utility/crash_risk.js");
+const clientSignals = require("../utility/client_signals.js");
 const verdictStore = require("../utility/verdict_store.js");
 
 // Each downloaded "JAR" is just Buffer.from(its download URL) so mocks can branch on content.
@@ -107,8 +108,7 @@ beforeEach(() => {
   sf.createServerDirectory.mockResolvedValue(204);
   inspector.extractModDeps.mockReturnValue({ modId: null, requiredDeps: [] });
   inspector.inspectModJarCached.mockReturnValue(unknownVerdict);
-  crashRisk.getOracle.mockResolvedValue(null);
-  crashRisk.assessCrashRiskCached.mockReturnValue({ risk: false, detail: null, reason: null });
+  clientSignals.assessClientSignals.mockReturnValue({ risk: false, detail: null, reason: "clean" });
   verdictStore.getLearnedVerdict.mockReturnValue(null);
 });
 
@@ -399,13 +399,11 @@ describe("installFilePlan", () => {
     expect(res.modIndex.sha1Of.get("a.jar")).toBe("a");
   });
 
-  test("crash scan (Layer 2) skips a provider-null mod whose init reaches client-only classes", async () => {
-    const fakeOracle = { has: () => false, isClientApiPackage: () => false };
-    crashRisk.getOracle.mockResolvedValue(fakeOracle);
-    crashRisk.assessCrashRiskCached.mockReturnValue({
+  test("client_signals skips a provider-null mod with a client-only signal", async () => {
+    clientSignals.assessClientSignals.mockReturnValue({
       risk: true,
-      detail: "com/example/Mod --init--> net/minecraft/class_310",
-      reason: "init-reaches-client-only"
+      detail: "com/example/ModMain → net/minecraft/client/Minecraft",
+      reason: "entrypoint-client-cp"
     });
 
     const res = await installFilePlan(
@@ -414,16 +412,14 @@ describe("installFilePlan", () => {
     );
 
     expect(res.installed).toBe(0);
-    expect(crashRisk.getOracle).toHaveBeenCalledWith("1.21.1");
+    expect(clientSignals.assessClientSignals).toHaveBeenCalled();
   });
 
-  test("crash scan only warns when the provider vouches for the mod (required/optional)", async () => {
-    const fakeOracle = { has: () => false, isClientApiPackage: () => false };
-    crashRisk.getOracle.mockResolvedValue(fakeOracle);
-    crashRisk.assessCrashRiskCached.mockReturnValue({
+  test("client_signals only warns when the provider vouches for the mod (required/optional)", async () => {
+    clientSignals.assessClientSignals.mockReturnValue({
       risk: true,
-      detail: "com/example/Mod --init--> net/minecraft/class_310",
-      reason: "init-reaches-client-only"
+      detail: "com/example/ModMain → net/minecraft/client/Minecraft",
+      reason: "entrypoint-client-cp"
     });
 
     const res = await installFilePlan(
@@ -441,22 +437,12 @@ describe("installFilePlan", () => {
     expect(res.crashRiskWarnings).toEqual([ {
       filename: "risky.jar",
       path: "mods/risky.jar",
-      detail: "com/example/Mod --init--> net/minecraft/class_310",
+      detail: "com/example/ModMain → net/minecraft/client/Minecraft",
       modId: null
     } ]);
   });
 
-  test("requests a crash-risk oracle for Forge installs too (@Mod construction roots)", async () => {
-    await installFilePlan(
-      ctx({ loaderType: "forge", mcVersion: "1.20.1" }),
-      { modFiles: [ modFile("a.jar", "a") ], extraFiles: [], overrideEntries: [], unavailable: [] }
-    );
-    expect(crashRisk.getOracle).toHaveBeenCalledWith("1.20.1");
-  });
-
-  test("skips crash-risk assessment for mods that were already filtered as client-only", async () => {
-    const fakeOracle = { has: () => false, isClientApiPackage: () => false };
-    crashRisk.getOracle.mockResolvedValue(fakeOracle);
+  test("skips client_signals assessment for mods that were already filtered as client-only", async () => {
     inspector.inspectModJarCached.mockReturnValue(clientVerdict("explicit"));
 
     const res = await installFilePlan(
@@ -466,7 +452,9 @@ describe("installFilePlan", () => {
 
     expect(res.installed).toBe(0);
     expect(res.crashRiskWarnings).toEqual([]);
-    expect(crashRisk.assessCrashRiskCached).not.toHaveBeenCalled();
+    // decideWithClientSignals short-circuits before assess when slot ≠ 9;
+    // the warning loop also skips client-only mods.
+    expect(clientSignals.assessClientSignals).not.toHaveBeenCalled();
   });
 });
 

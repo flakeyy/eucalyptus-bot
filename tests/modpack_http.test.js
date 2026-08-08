@@ -134,6 +134,7 @@ describe("uploadBufferToServer", () => {
     expect(url).toBe("https://wings.example.com/upload");
     expect(opts.method).toBe("POST");
     expect(opts.headers["Content-Type"]).toMatch(/^multipart\/form-data; boundary=WingsBoundary/);
+    expect(opts.headers["Content-Length"]).toBeUndefined();
     const body = opts.body.toString("utf8");
     expect(body).toContain("Content-Disposition: form-data; name=\"files\"; filename=\"pack.zip\"");
     expect(body).toContain("DATA");

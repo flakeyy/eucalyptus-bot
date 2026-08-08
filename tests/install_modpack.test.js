@@ -22,6 +22,7 @@ jest.mock("../utility/server_functions.js", () => ({
   deleteServerFiles: jest.fn(),
   getFileUploadUrl: jest.fn(),
   decompressFile: jest.fn(),
+  pullServerFile: jest.fn().mockResolvedValue(500),
   writeServerFile: jest.fn().mockResolvedValue(204),
   renameServerFiles: jest.fn().mockResolvedValue(204),
   createServerDirectory: jest.fn().mockResolvedValue(204),
@@ -378,11 +379,15 @@ describe("install-modpack command", () => {
 
     interaction = {
       reply: jest.fn().mockResolvedValue(undefined),
+      editReply: jest.fn().mockResolvedValue(undefined),
       followUp: jest.fn().mockResolvedValue(undefined),
       fetchReply: jest.fn(),
       user: { id: "discord123", username: "testuser" },
       replied: false,
-      deferred: false
+      deferred: false,
+      options: {
+        getString: jest.fn(name => (name === "pack" ? "cf:520914" : null))
+      }
     };
   });
 
@@ -434,7 +439,7 @@ describe("install-modpack command", () => {
     );
   });
 
-  test("replies with server select UI on successful load", async () => {
+  test("replies with looking-up UI when pack + servers load", async () => {
     perms.authenticateUserForPermission.mockReturnValue(true);
     serverFunctions.getClientServers.mockResolvedValue({
       data: [
@@ -456,9 +461,9 @@ describe("install-modpack command", () => {
       }
     });
 
-    const mockCollector = { on: jest.fn() };
-    const mockResponse = { createMessageComponentCollector: jest.fn(() => mockCollector) };
-    interaction.fetchReply = jest.fn().mockResolvedValue(mockResponse);
+    // Avoid network: stub provider lookup to fail closed with a clean UI.
+    jest.spyOn(require("../utility/modpack_providers.js"), "lookupModpack")
+      .mockResolvedValue(null);
 
     await execute(interaction);
 

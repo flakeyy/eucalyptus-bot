@@ -114,6 +114,19 @@ dClient.commands = new Collection();
 });
 
 dClient.on(Events.InteractionCreate, async interaction => {
+  if (interaction.isAutocomplete()) {
+    const command = interaction.client.commands.get(interaction.commandName);
+    if (!command?.autocomplete) return;
+    try {
+      await command.autocomplete(interaction);
+    } catch (error) {
+      msgLog.error(`Error in autocomplete for ${interaction.commandName}`);
+      msgLog.debugExtended(error);
+      await interaction.respond([]).catch(() => {});
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = interaction.client.commands.get(interaction.commandName);

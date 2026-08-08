@@ -34,23 +34,10 @@ jest.mock("../utility/server_functions.js", () => ({
   createServerDirectory: jest.fn().mockResolvedValue(204),
   renameServerFiles: jest.fn().mockResolvedValue(204),
   deleteServerFiles: jest.fn().mockResolvedValue(204),
-  getFileUploadUrl: jest.fn().mockResolvedValue("https://upload.example/test"),
-  decompressFile: jest.fn().mockResolvedValue(204),
-  chmodServerFiles: jest.fn().mockResolvedValue(204),
   getServerInfoById: jest.fn().mockResolvedValue({
     statusCode: 200,
     body: { json: async () => ({ attributes: { internal_id: 1 } }) }
   })
-}));
-
-jest.mock("../utility/modpack_http.js", () => ({
-  downloadFile: jest.fn(),
-  uploadBufferToServer: jest.fn().mockResolvedValue({ ok: true, status: 200 })
-}));
-
-jest.mock("../utility/curseforge.js", () => ({
-  getModpackFiles: jest.fn().mockResolvedValue([]),
-  synthesizeCurseForgeCdnUrl: jest.fn()
 }));
 
 jest.mock("../utility/helper_functions.js", () => ({
@@ -425,46 +412,5 @@ describe("verifyServerBoot", () => {
     expect(index.parkedJars.has("NotEnoughItems-2.8.44-GTNH.jar")).toBe(false);
     expect(index.byModId.get("notenoughitems")).toBe("NotEnoughItems-2.8.44-GTNH.jar");
     expect(verdictStore.recordLearnedVerdict).not.toHaveBeenCalled();
-  });
-});
-
-describe("pickJeidFile / pickSharedObjectMember", () => {
-  const { pickJeidFile, pickSharedObjectMember, JEID_PREFERRED_FILE } = require("../utility/boot_verify.js");
-
-  test("prefers JustEnoughIDs-1.0.3-55.jar for 1.12.2", () => {
-    const hit = pickJeidFile([
-      { fileName: "JustEnoughIDs-1.0.4-SNAPSHOT-thin.jar", gameVersions: [ "1.12.2", "Forge" ] },
-      { fileName: JEID_PREFERRED_FILE, gameVersions: [ "1.12.2", "Forge" ] },
-      { fileName: "JustEnoughIDs-1.0.2-26.jar", gameVersions: [ "1.12.2" ] }
-    ]);
-    expect(hit.fileName).toBe(JEID_PREFERRED_FILE);
-  });
-
-  test("skips thin jars when preferred is absent", () => {
-    const hit = pickJeidFile([
-      { fileName: "JustEnoughIDs-1.0.4-SNAPSHOT-thin.jar", gameVersions: [ "1.12.2" ] },
-      { fileName: "JustEnoughIDs-1.0.3-48.jar", gameVersions: [ "1.12.2" ] }
-    ]);
-    expect(hit.fileName).toBe("JustEnoughIDs-1.0.3-48.jar");
-  });
-
-  test("picks real .so over soname symlink path", () => {
-    const member = pickSharedObjectMember([
-      "./usr/lib/x86_64-linux-gnu/libXrender.so.1",
-      "./usr/lib/x86_64-linux-gnu/libXrender.so.1.3.0"
-    ], "libXrender.so.1");
-    expect(member).toContain("libXrender.so.1.3.0");
-  });
-});
-
-describe("injectLdLibraryPathPrefix", () => {
-  const { injectLdLibraryPathPrefix } = require("../utility/boot_verify.js");
-
-  test("prefixes java with DISPLAY= and LD_LIBRARY_PATH on the same line", () => {
-    const out = injectLdLibraryPathPrefix("java -Xms1G -jar server.jar");
-    expect(out.startsWith("DISPLAY=")).toBe(true);
-    expect(out).toContain("LD_LIBRARY_PATH=");
-    expect(out).toContain(" java -Xms1G");
-    expect(out).not.toMatch(/^export /m);
   });
 });

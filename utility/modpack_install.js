@@ -10,8 +10,8 @@ const { downloadFile, uploadBufferToServer } = require("./modpack_http.js");
 const {
   getFileUploadUrl, decompressFile, chmodServerFiles, deleteServerFiles, createServerDirectory
 } = require("./server_functions.js");
-const { inspectModJarCached, decideModInstall, extractModDeps, flushModInspectorCache, jarHasServerAppliedClientMixins } = require("./mod_inspector.js");
-const { getOracle, assessCrashRiskCached } = require("./crash_risk.js");
+const { inspectModJarCached, decideModInstall, extractModDeps, flushModInspectorCache } = require("./mod_inspector.js");
+const { assessClientSignals } = require("./client_signals.js");
 const {
   createModIndex, addJarToModIndex, addParkedJarToModIndex
 } = require("./crash_attribution.js");
@@ -34,19 +34,14 @@ function buildProgressBar({ downloaded, installed, total, unit, width = 20 }) {
   return `\`[${dlBar}↓${ulBar}↑]\` ↓ ${Math.round(dlPct * 100)}% · ↑ ${Math.round(ulPct * 100)}% · ${unit}`;
 }
 
-// Layer 1 decision for one JAR, running the Layer 2 crash-proof scan lazily —
+// Layer 1 decision for one JAR, running mapping-free client signals lazily —
 // only when no earlier slot decided (provider silent, no static signal), since
 // that is the only case where the scan result matters (slot 8).
-function decideWithLayer2({ inspection, providerServerSide, modId, filename, sha1, buffer, crashOracle, mcVersion }) {
+function decideWithClientSignals({ inspection, providerServerSide, modId, filename, sha1, buffer }) {
   let decision = decideModInstall({ inspection, providerServerSide, modId, filename, sha1 });
-  if (decision.install && decision.slot === 9 && buffer && jarHasServerAppliedClientMixins(buffer)) {
-    if (!isProtectedLearnedMod({ modId, filename })) {
-      return { install: false, slot: 8, source: "client-mixin-on-server", rescuable: true };
-    }
-  }
-  if (decision.install && decision.slot === 9 && crashOracle) {
-    const risk = assessCrashRiskCached(sha1 ?? null, buffer, crashOracle, mcVersion);
-    if (risk.risk) {
+  if (decision.install && decision.slot === 9 && buffer) {
+    const risk = assessClientSignals(buffer);
+    if (risk.risk && !isProtectedLearnedMod({ modId, filename })) {
       decision = decideModInstall({ inspection, providerServerSide, modId, filename, sha1, crashRisk: risk });
       decision.crashDetail = risk.detail;
     }
@@ -70,7 +65,7 @@ function isOverrideModsJar(path) {
 }
 
 async function uploadOverrides(serverId, userId, overrideEntries, loaderType, {
-  crashOracle = null, mcVersion = null, crashRiskWarnings = null, modIndex = null
+  crashRiskWarnings = null, modIndex = null
 } = {}) {
   if (!overrideEntries || overrideEntries.length === 0) return;
   const overridesZip = new AdmZip();
@@ -87,20 +82,20 @@ async function uploadOverrides(serverId, userId, overrideEntries, loaderType, {
       const inspection = inspectModJarCached(null, entry.data, loaderType);
       const { modId, requiredDeps } = extractModDeps(entry.data, loaderType);
       const filename = path.split("/").pop();
-      const decision = decideWithLayer2({
+      const decision = decideWithClientSignals({
         inspection, providerServerSide: null, modId, filename,
-        sha1: null, buffer: entry.data, crashOracle, mcVersion
+        sha1: null, buffer: entry.data
       });
       if (!decision.install) {
         msgLog.debugExtended(`[install-modpack] skip override mod (client-only, ${decision.source}): ${path}`);
         continue;
       }
       if (modIndex) addJarToModIndex(modIndex, filename, entry.data, { modId, requiredDeps });
-      if (crashOracle && crashRiskWarnings) {
-        const risk = assessCrashRiskCached(null, entry.data, crashOracle, mcVersion);
+      if (crashRiskWarnings) {
+        const risk = assessClientSignals(entry.data);
         if (risk.risk) {
           crashRiskWarnings.push({ filename, path, detail: risk.detail, modId });
-          msgLog.warn(`[install-modpack] crash-risk (override): ${filename}: ${risk.detail}`);
+          msgLog.warn(`[install-modpack] client-signal (override): ${filename}: ${risk.detail}`);
         }
       }
     }
@@ -149,20 +144,17 @@ async function uploadFileBatch(serverId, userId, items, batchIdx) {
 //   plan = { modFiles, extraFiles, overrideEntries, unavailable }
 // Returns { unavailable, installed, total, crashRiskWarnings, modIndex }.
 async function installFilePlan(ctx, plan) {
-  const { i, serverId, userId, loaderType, mcVersion = null, updateProgress } = ctx;
+  const { i, serverId, userId, loaderType, updateProgress } = ctx;
   const { modFiles = [], extraFiles = [], overrideEntries = [], unavailable = [] } = plan;
   const update = msg => updateProgress(i, msg);
 
-  // Crash-proof oracle (Layer 2). All loaders: Fabric/Quilt roots come from
-  // entrypoints, Forge/NeoForge from @Mod containers; legacy versions without
-  // official mappings get a prefix-only oracle. Failure to load is non-fatal.
-  const crashOracle = mcVersion ? await getOracle(mcVersion) : null;
+  // Mapping-free client signals (slot 8). No oracle / mapping download.
   const crashRiskWarnings = [];
   const modIndex = createModIndex();
 
   // Upload overrides first so server-side config is in place before mods.
   await uploadOverrides(serverId, userId, overrideEntries, loaderType, {
-    crashOracle, mcVersion, crashRiskWarnings, modIndex
+    crashRiskWarnings, modIndex
   });
 
   const grandTotal = modFiles.length + extraFiles.length;
@@ -191,17 +183,15 @@ async function installFilePlan(ctx, plan) {
       if (!r) continue;
       const inspection = inspectModJarCached(r.sha1, r.buffer, loaderType);
       const { modId, requiredDeps } = extractModDeps(r.buffer, loaderType);
-      // Layer 1 precedence table (see mod_inspector.decideModInstall), with the
-      // Layer 2 crash-proof scan filling slot 8 when nothing else decided.
-      const decision = decideWithLayer2({
+      // Layer 1 precedence table (see mod_inspector.decideModInstall), with
+      // mapping-free client signals filling slot 8 when nothing else decided.
+      const decision = decideWithClientSignals({
         inspection,
         providerServerSide: r.providerServerSide ?? null,
         modId,
         filename: r.filename,
         sha1: r.sha1 ?? null,
-        buffer: r.buffer,
-        crashOracle,
-        mcVersion
+        buffer: r.buffer
       });
       if (!decision.install) {
         msgLog.debugExtended(`[install-modpack] skip (client-only, slot ${decision.slot}/${decision.source}): ${r.filename}`);
@@ -282,15 +272,14 @@ async function installFilePlan(ctx, plan) {
     }
   }
 
-  // Index installed mods for crash attribution, and surface crash-risk warnings
-  // for mods that install anyway (provider vouched for them — never a skip).
+  // Index installed mods for crash attribution, and surface client-signal
+  // warnings for mods that install anyway (provider vouched — never a skip).
   for (const info of modInfos) {
     if (info.isClientOnly) continue;
     addJarToModIndex(modIndex, info.filename, info.buffer, {
       modId: info.modId, requiredDeps: info.requiredDeps, sha1: info.sha1 ?? null
     });
-    if (!crashOracle) continue;
-    const risk = assessCrashRiskCached(info.sha1 ?? null, info.buffer, crashOracle, mcVersion);
+    const risk = assessClientSignals(info.buffer);
     if (!risk.risk) continue;
     crashRiskWarnings.push({
       filename: info.filename,
@@ -298,7 +287,7 @@ async function installFilePlan(ctx, plan) {
       detail: risk.detail,
       modId: info.modId
     });
-    msgLog.warn(`[install-modpack] crash-risk: ${info.filename}: ${risk.detail}`);
+    msgLog.warn(`[install-modpack] client-signal: ${info.filename}: ${risk.detail}`);
   }
   flushModInspectorCache();
 
@@ -471,7 +460,7 @@ async function uploadItemsChunked(serverId, userId, items, update, label) {
 // locally, stripping client-only mods/, and uploading survivors in chunks —
 // same Wings path as manifest installs, avoiding one giant files/decompress.
 async function installArchiveBuffer(ctx, buffer) {
-  const { i, serverId, userId, loaderType, mcVersion = null, updateProgress } = ctx;
+  const { i, serverId, userId, loaderType, updateProgress } = ctx;
   const update = msg => updateProgress(i, msg);
 
   let zip;
@@ -487,7 +476,6 @@ async function installArchiveBuffer(ctx, buffer) {
     msgLog.log(`[install-modpack] archive nested root "${nestedRoot}/" — flattening locally before upload`);
   }
 
-  const crashOracle = mcVersion ? await getOracle(mcVersion) : null;
   const crashRiskWarnings = [];
   const modIndex = createModIndex();
   const toUpload = [];
@@ -515,15 +503,13 @@ async function installArchiveBuffer(ctx, buffer) {
       const filename = path.split("/").pop();
       const inspection = inspectModJarCached(null, data, loaderType);
       const { modId, requiredDeps } = extractModDeps(data, loaderType);
-      const decision = decideWithLayer2({
+      const decision = decideWithClientSignals({
         inspection,
         providerServerSide: null,
         modId,
         filename,
         sha1: null,
-        buffer: data,
-        crashOracle,
-        mcVersion
+        buffer: data
       });
       if (!decision.install) {
         skippedClient += 1;
@@ -541,12 +527,10 @@ async function installArchiveBuffer(ctx, buffer) {
         continue;
       }
       addJarToModIndex(modIndex, filename, data, { modId, requiredDeps });
-      if (crashOracle) {
-        const risk = assessCrashRiskCached(null, data, crashOracle, mcVersion);
-        if (risk.risk) {
-          crashRiskWarnings.push({ filename, path, detail: risk.detail, modId });
-          msgLog.warn(`[install-modpack] crash-risk (archive): ${filename}: ${risk.detail}`);
-        }
+      const risk = assessClientSignals(data);
+      if (risk.risk) {
+        crashRiskWarnings.push({ filename, path, detail: risk.detail, modId });
+        msgLog.warn(`[install-modpack] client-signal (archive): ${filename}: ${risk.detail}`);
       }
     }
 

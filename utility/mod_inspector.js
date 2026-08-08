@@ -3,14 +3,14 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const config = require("../config.json");
-const { FORGE_MOD_ANNOTATIONS } = require("./crash_risk.js");
+const { FORGE_MOD_ANNOTATIONS, jarHasServerAppliedClientMixins } = require("./client_signals.js");
 const {
   getInspection, putInspection, getLearnedVerdict, flushVerdictStore,
   isMixinInfrastructureJar, isProtectedLearnedMod
 } = require("./verdict_store.js");
 
 // Bump when detection logic changes so cached verdicts are recomputed.
-const CACHE_VERSION = "v8";
+const CACHE_VERSION = "v9";
 
 // ── Curated lists (Layer 1 slots 2 and 6) ───────────────────────────────────
 
@@ -37,30 +37,6 @@ function matchesCuratedList(list, { modId = null, filename = null, sha1 = null }
     const base = filename.split("/").pop().toLowerCase();
     if (list.filenamePrefixes.some(p => base.startsWith(p))) return true;
   }
-  return false;
-}
-
-// True when a mixin JSON in the jar targets client-only Minecraft classes from
-// a config that is not clearly client-sided (common/default configs applied on
-// dedicated servers → ClassMetadataNotFoundException: ParticleManager etc.).
-function jarHasServerAppliedClientMixins(buffer) {
-  try {
-    const zip = new AdmZip(buffer);
-    for (const entry of zip.getEntries()) {
-      if (entry.isDirectory) continue;
-      const name = entry.entryName.replace(/\\/g, "/");
-      const base = name.split("/").pop() || "";
-      if (!/mixins?[^/]*\.json$/i.test(base)) continue;
-      // Explicit client mixin configs are not loaded on dedicated servers.
-      if (/(^|[._-])client([._-]|$)/i.test(base)) continue;
-      let text;
-      try { text = entry.getData().toString("utf8"); } catch { continue; }
-      if (/net\.minecraft\.client\.(particle\.ParticleManager|gui\.|renderer\.|Minecraft)\b/i.test(text) ||
-          /net\/minecraft\/client\/(particle\/ParticleManager|gui\/|renderer\/|Minecraft)/i.test(text)) {
-        return true;
-      }
-    }
-  } catch { /* ignore */ }
   return false;
 }
 
@@ -253,8 +229,8 @@ function scanForgeModClientSignals(zip) {
 //
 // The old weak-heuristic tier (mixin-count thresholds, dep sides, GUI supers,
 // client CP mentions) was deleted: it was overfit to specific mods and its job
-// is now done by the curated client list (slot 6), the crash-proof scan
-// (slot 8), and the boot-verify loop (Layer 3).
+// is now done by the curated client list (slot 6), client_signals (slot 8), and
+// the boot-verify loop (Layer 3).
 function inspectModJar(buffer, loaderType = null) {
   let zip;
   try {
@@ -399,12 +375,12 @@ function decideModInstall({
     return skip(7, "provider-unsupported", true);
   }
 
-  // 8. Layer 2 crash-proof scan (computed lazily by the caller — only reaches
-  // here when the provider is silent and no static signal fired). Pack-defining
-  // mods are exempt: false positives (e.g. AE2 client-class refs in shared
-  // init) brick the pack while the server still "boots fine" without them.
+  // 8. Mapping-free client signals (mixin configs / entrypoint CP refs —
+  // computed by the caller). Pack-defining mods are exempt: false positives
+  // (e.g. AE2 client-class refs in shared init) brick the pack while the
+  // server still "boots fine" without them.
   if (crashRisk?.risk && !isProtectedLearnedMod({ modId, filename })) {
-    return skip(8, "crash-risk", true);
+    return skip(8, "client-signals", true);
   }
 
   // 9. Default: install. A kept harmless client mod costs RAM, not correctness;

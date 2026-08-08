@@ -16,6 +16,7 @@
     "unrs-resolver": true
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.116.0",
     "adm-zip": "^0.6.0",
     "better-sqlite3": "^12.11.1",
     "discord.js": "^14.27.0",

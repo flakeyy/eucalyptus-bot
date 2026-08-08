@@ -37,6 +37,13 @@
         "success_timeout_ms": 600000,
         "total_budget_ms": 1800000
     },
+    "triage": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-5",
+        "effort": "medium",
+        "max_calls_per_install": 3,
+        "min_confidence": "medium"
+    },
     "java_images": {
         "8": "ghcr.io/pterodactyl/yolks:java_8",
         "11": "ghcr.io/pterodactyl/yolks:java_11",

@@ -119,11 +119,12 @@ async function downloadFile(downloadUrl) {
 async function uploadBufferToServer(uploadUrl, filename, buffer) {
   const { boundary, partHeader, partFooter } = buildMultipart(filename);
   const bodyBuf = Buffer.concat([ partHeader, buffer, partFooter ]);
+  // Do not set Content-Length: Node's undici throws UND_ERR_INVALID_ARG when a
+  // Buffer body is paired with an explicit Content-Length (Node 22+/undici 7).
   return fetch(uploadUrl, {
     method: "POST",
     headers: {
-      "Content-Type": `multipart/form-data; boundary=${boundary}`,
-      "Content-Length": String(bodyBuf.length)
+      "Content-Type": `multipart/form-data; boundary=${boundary}`
     },
     body: bodyBuf
   });

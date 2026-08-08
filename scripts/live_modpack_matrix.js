@@ -194,7 +194,7 @@ async function resolveServer(discordId, serverId) {
 }
 
 function pickFile(fileOptions) {
-  // Providers list client packs ahead of linked server packs; take the first.
+  // Providers list server packs ahead of linked client packs when available.
   return fileOptions?.[0] || null;
 }
 

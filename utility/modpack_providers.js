@@ -65,7 +65,9 @@ async function lookupModpack(source, rawInput) {
     };
   }
   if (source === "modrinth") {
-    const id = parseModrinthUrl(rawInput);
+    const trimmed = String(rawInput || "").trim();
+    const id = parseModrinthUrl(trimmed)
+      || (/^[\w-]+$/.test(trimmed) ? trimmed : null);
     if (!id) return null;
     const project = await getModrinthModpack(id);
     if (!project) return null;
@@ -114,15 +116,19 @@ async function listCurseforgeFiles(modpack) {
     }
   }
 
-  // Prefer client packs (manifest + strip client-only jars). Offer the linked
-  // server pack afterward as a fallback when the user explicitly wants it.
+  // Prefer server packs when the author published one. Fall back to the client
+  // pack (manifest + strip client-only jars) only when no linked server pack exists.
   const rawOptions = [];
   for (const clientFile of sortedClientFiles) {
-    rawOptions.push(clientFile);
     const sp = clientFile.serverPackFileId
       ? serverPackById.get(clientFile.serverPackFileId)
       : null;
-    if (sp?.downloadUrl) rawOptions.push(sp);
+    if (sp?.downloadUrl) {
+      rawOptions.push(sp);
+      rawOptions.push(clientFile);
+    } else {
+      rawOptions.push(clientFile);
+    }
   }
 
   return rawOptions.map(file => {

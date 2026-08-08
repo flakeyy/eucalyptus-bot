@@ -370,20 +370,20 @@ describe("decideModInstall — precedence table", () => {
     expect(d).toMatchObject({ install: false, slot: 7, source: "provider-unsupported", rescuable: true });
   });
 
-  test("slot 8: crash-proof scan hit skips, rescuable", () => {
+  test("slot 8: client_signals hit skips, rescuable", () => {
     const d = decideModInstall({
       inspection: unknownInspection,
-      crashRisk: { risk: true, detail: "a --init--> net/minecraft/client/Minecraft" }
+      crashRisk: { risk: true, detail: "a → net/minecraft/client/Minecraft" }
     });
-    expect(d).toMatchObject({ install: false, slot: 8, source: "crash-risk", rescuable: true });
+    expect(d).toMatchObject({ install: false, slot: 8, source: "client-signals", rescuable: true });
   });
 
-  test("slot 8: protected core mods ignore crash-risk skips (AE2)", () => {
+  test("slot 8: protected core mods ignore client_signals skips (AE2)", () => {
     const d = decideModInstall({
       inspection: unknownInspection,
       modId: "appliedenergistics2",
       filename: "appliedenergistics2-8.4.4.jar",
-      crashRisk: { risk: true, detail: "ae2 --init--> net/minecraft/client/Minecraft" }
+      crashRisk: { risk: true, detail: "ae2 → net/minecraft/client/Minecraft" }
     });
     expect(d).toMatchObject({ install: true, slot: 9 });
   });
