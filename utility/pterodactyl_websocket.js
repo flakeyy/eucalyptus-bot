@@ -78,6 +78,7 @@ class PterodactylWebSocket extends EventEmitter {
     switch (msg.event) {
     case "auth success":
       msgLog.debugExtended(`[PteroWS:${this._serverId}] auth success`);
+      this.emit("authenticated");
       break;
 
     case "stats": {

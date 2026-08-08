@@ -7,12 +7,21 @@
 const AdmZip = require("adm-zip");
 const msgLog = require("./logger.js");
 const { downloadFile, uploadBufferToServer } = require("./modpack_http.js");
-const { getFileUploadUrl, decompressFile, chmodServerFiles, deleteServerFiles } = require("./server_functions.js");
-const { inspectModJarCached, decideModInstall, extractModDeps, flushModInspectorCache } = require("./mod_inspector.js");
+const {
+  getFileUploadUrl, decompressFile, chmodServerFiles, deleteServerFiles, createServerDirectory
+} = require("./server_functions.js");
+const { inspectModJarCached, decideModInstall, extractModDeps, flushModInspectorCache, jarHasServerAppliedClientMixins } = require("./mod_inspector.js");
 const { getOracle, assessCrashRiskCached } = require("./crash_risk.js");
-const { createModIndex, addJarToModIndex } = require("./crash_attribution.js");
+const {
+  createModIndex, addJarToModIndex, addParkedJarToModIndex
+} = require("./crash_attribution.js");
+const { isProtectedLearnedMod } = require("./verdict_store.js");
 
 const MANIFEST_MOD_BATCH = 20;
+// Archive (server-pack / loose zip) uploads: keep each Wings zip well under
+// typical proxy/body limits by capping both file count and total bytes.
+const ARCHIVE_BATCH_FILES = 20;
+const ARCHIVE_BATCH_BYTES = 40 * 1024 * 1024;
 
 // Renders a dual download/upload progress bar. `unit` is the trailing label
 // (e.g. "42 mods" or "18.3 MB"); downloaded/installed/total share its scale.
@@ -30,6 +39,11 @@ function buildProgressBar({ downloaded, installed, total, unit, width = 20 }) {
 // that is the only case where the scan result matters (slot 8).
 function decideWithLayer2({ inspection, providerServerSide, modId, filename, sha1, buffer, crashOracle, mcVersion }) {
   let decision = decideModInstall({ inspection, providerServerSide, modId, filename, sha1 });
+  if (decision.install && decision.slot === 9 && buffer && jarHasServerAppliedClientMixins(buffer)) {
+    if (!isProtectedLearnedMod({ modId, filename })) {
+      return { install: false, slot: 8, source: "client-mixin-on-server", rescuable: true };
+    }
+  }
   if (decision.install && decision.slot === 9 && crashOracle) {
     const risk = assessCrashRiskCached(sha1 ?? null, buffer, crashOracle, mcVersion);
     if (risk.risk) {
@@ -45,42 +59,62 @@ function decideWithLayer2({ inspection, providerServerSide, modId, filename, sha
 // download path, so they get the same Layer 1 decision here (without provider
 // metadata — overrides carry no source side info). Installed override jars are
 // added to modIndex and get crash-risk warnings like manifest mods.
+function normalizeOverridePath(p) {
+  return String(p || "").replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function isOverrideModsJar(path) {
+  // Any JAR under mods/ (flat or nested). Nested paths used to bypass the
+  // decision filter and land on disk without a modIndex entry.
+  return /^mods\/.+\.jar$/i.test(path);
+}
+
 async function uploadOverrides(serverId, userId, overrideEntries, loaderType, {
   crashOracle = null, mcVersion = null, crashRiskWarnings = null, modIndex = null
 } = {}) {
   if (!overrideEntries || overrideEntries.length === 0) return;
   const overridesZip = new AdmZip();
+  const uploadedPaths = [];
   for (const entry of overrideEntries) {
-    if (/^mods\/[^/]+\.jar$/i.test(entry.path)) {
+    const path = normalizeOverridePath(entry.path);
+    // server-icon.png forces AWT on 1.19.x DedicatedServer (libXrender crash on
+    // headless yolks). Other 1.19.2 packs boot fine without it.
+    if (/(^|\/)server-icon\.(png|jpe?g)$/i.test(path)) {
+      msgLog.debugExtended(`[install-modpack] skip override server-icon: ${path}`);
+      continue;
+    }
+    if (isOverrideModsJar(path)) {
       const inspection = inspectModJarCached(null, entry.data, loaderType);
       const { modId, requiredDeps } = extractModDeps(entry.data, loaderType);
-      const filename = entry.path.split("/").pop();
+      const filename = path.split("/").pop();
       const decision = decideWithLayer2({
         inspection, providerServerSide: null, modId, filename,
         sha1: null, buffer: entry.data, crashOracle, mcVersion
       });
       if (!decision.install) {
-        msgLog.debugExtended(`[install-modpack] skip override mod (client-only, ${decision.source}): ${entry.path}`);
+        msgLog.debugExtended(`[install-modpack] skip override mod (client-only, ${decision.source}): ${path}`);
         continue;
       }
       if (modIndex) addJarToModIndex(modIndex, filename, entry.data, { modId, requiredDeps });
       if (crashOracle && crashRiskWarnings) {
         const risk = assessCrashRiskCached(null, entry.data, crashOracle, mcVersion);
         if (risk.risk) {
-          crashRiskWarnings.push({ filename, path: entry.path, detail: risk.detail, modId });
+          crashRiskWarnings.push({ filename, path, detail: risk.detail, modId });
           msgLog.warn(`[install-modpack] crash-risk (override): ${filename}: ${risk.detail}`);
         }
       }
     }
-    overridesZip.addFile(entry.path, entry.data, "", 0o100644 << 16);
+    overridesZip.addFile(path, entry.data, "", 0o100644 << 16);
+    uploadedPaths.push(path);
   }
   flushModInspectorCache();
+  if (uploadedPaths.length === 0) return;
   const uploadUrl = await getFileUploadUrl(serverId, userId);
   if (!uploadUrl) return;
   const overridesFilename = "overrides.zip";
   await uploadBufferToServer(uploadUrl, overridesFilename, overridesZip.toBuffer());
   await decompressFile(serverId, userId, "/", overridesFilename);
-  await chmodServerFiles(serverId, userId, "/", overrideEntries.map(e => ({ file: e.path, mode: "644" }))).catch(() => {});
+  await chmodServerFiles(serverId, userId, "/", uploadedPaths.map(file => ({ file, mode: "644" }))).catch(() => {});
 }
 
 // Bundles { path, buffer } items into a zip, uploads + extracts it at the root,
@@ -188,12 +222,25 @@ async function installFilePlan(ctx, plan) {
     );
   }
 
+  // Pure client renderers / splash providers — never dep-rescue. ATM10's
+  // sodium-neoforge was skipped as provider-unsupported then force-installed
+  // because another mod listed it as required, which immediately crashes the
+  // dedicated server on org.lwjgl.Version (ImmediateWindowHandler).
+  const NEVER_RESCUE_CLIENT_IDS = new Set([
+    "sodium", "embeddium", "rubidium", "iris", "oculus", "fancymenu", "optifine"
+  ]);
+  const neverRescueClient = info => {
+    const id = String(info.modId ?? "").toLowerCase();
+    if (id && NEVER_RESCUE_CLIENT_IDS.has(id)) return true;
+    const name = String(info.filename ?? "").toLowerCase();
+    return /^(sodium|embeddium|rubidium|iris|oculus|fancymenu|optifine)[-_.]/i.test(name);
+  };
+
   // Rescue pass: a rescuably-skipped mod that an installed mod hard-requires
   // must be present server-side anyway (the loader would fail on the missing
   // dependency), so install it rather than dropping the dependent — this is how
-  // server-needed libraries with client-leaning metadata (e.g. rendering libs
-  // marked unsupported on Modrinth) survive. Runs to a fixpoint so a rescued
-  // mod's own rescuable dependencies get rescued too.
+  // server-needed libraries with client-leaning metadata survive. Runs to a
+  // fixpoint so a rescued mod's own rescuable dependencies get rescued too.
   let rescued = true;
   while (rescued) {
     rescued = false;
@@ -201,7 +248,12 @@ async function installFilePlan(ctx, plan) {
       modInfos.filter(m => !m.isClientOnly).flatMap(m => m.requiredDeps)
     );
     for (const info of modInfos) {
-      if (info.isClientOnly && info.rescuable && info.modId && requiredByInstalled.has(info.modId)) {
+      if (
+        info.isClientOnly && info.rescuable && info.modId &&
+        requiredByInstalled.has(info.modId) &&
+        !neverRescueClient(info) &&
+        info.source !== "learned-crashes-server"
+      ) {
         info.isClientOnly = false;
         info.source = "dep-rescue";
         rescued = true;
@@ -263,7 +315,14 @@ async function installFilePlan(ctx, plan) {
         return null;
       }
     }));
-    for (const r of results) if (r) extraInfos.push(r);
+    for (const r of results) {
+      if (!r) continue;
+      if (/(^|\/)server-icon\.(png|jpe?g)$/i.test(String(r.path).replace(/\\/g, "/"))) {
+        msgLog.debugExtended(`[install-modpack] skip extra server-icon: ${r.path}`);
+        continue;
+      }
+      extraInfos.push(r);
+    }
   }
 
   // Phase 2: Upload non-skipped mods plus extra files in batches.
@@ -291,6 +350,33 @@ async function installFilePlan(ctx, plan) {
     );
   }
 
+  // Park rescuable skips under mods-disabled/ so boot-verify can restore them
+  // if a MissingModsException names them (e.g. Modrinth-mislabeled libs that
+  // nothing in the thin manifest hard-requires in metadata).
+  const toPark = modInfos.filter(m => m.isClientOnly && m.rescuable);
+  if (toPark.length > 0) {
+    await createServerDirectory(serverId, userId, "/", "mods-disabled").catch(() => {});
+    const parkBatch = toPark.map(info => ({
+      path: `mods-disabled/${info.filename}`,
+      buffer: info.buffer
+    }));
+    for (let start = 0; start < parkBatch.length; start += MANIFEST_MOD_BATCH) {
+      const batchIdx = Math.floor(start / MANIFEST_MOD_BATCH) + 1;
+      const batch = parkBatch.slice(start, start + MANIFEST_MOD_BATCH);
+      const ok = await uploadFileBatch(serverId, userId, batch, `park_${batchIdx}`);
+      if (!ok) {
+        msgLog.warn(`[install-modpack] failed to park ${batch.length} rescuable skip(s) under mods-disabled/`);
+        continue;
+      }
+      for (const info of toPark.slice(start, start + MANIFEST_MOD_BATCH)) {
+        addParkedJarToModIndex(modIndex, info.filename, {
+          modId: info.modId, sha1: info.sha1 ?? null
+        });
+        msgLog.debugExtended(`[install-modpack] parked (rescuable skip): mods-disabled/${info.filename}`);
+      }
+    }
+  }
+
   if (downloadFailed > 0) {
     msgLog.warn(`[install-modpack] manifest install: ${installed}/${total} mods installed, ${downloadFailed} unavailable`);
   }
@@ -298,4 +384,236 @@ async function installFilePlan(ctx, plan) {
   return { unavailable, installed, total, crashRiskWarnings, modIndex };
 }
 
-module.exports = { buildProgressBar, installFilePlan };
+// Detect a single top-level folder wrapping mods/ (common CF server-pack layout).
+function detectNestedArchiveRoot(buffer) {
+  try {
+    const zip = new AdmZip(buffer);
+    const entries = zip.getEntries()
+      .map(e => e.entryName.replace(/\\/g, "/"))
+      .filter(n => n && !n.endsWith("/"));
+    if (entries.length === 0) return null;
+    const tops = [ ...new Set(entries.map(n => n.split("/")[0])) ];
+    if (tops.length !== 1) return null;
+    const root = tops[0];
+    if (/\.(zip|jar|tar|gz|bz2|7z)$/i.test(root)) return null;
+    const hasNestedMods = entries.some(n => n.startsWith(`${root}/mods/`) && /\.jar$/i.test(n));
+    const hasRootMods = entries.some(n => n.startsWith("mods/") && /\.jar$/i.test(n));
+    return hasNestedMods && !hasRootMods ? root : null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeArchiveEntryPath(entryName, nestedRoot) {
+  let path = String(entryName || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (nestedRoot && path.startsWith(`${nestedRoot}/`)) {
+    path = path.slice(nestedRoot.length + 1);
+  }
+  return path;
+}
+
+function shouldSkipArchiveEntry(path) {
+  if (!path || path.endsWith("/")) return true;
+  if (path.startsWith("__MACOSX/") || /(^|\/)\.DS_Store$/i.test(path)) return true;
+  // See uploadOverrides — 1.19.x DedicatedServer loads AWT for server-icon.png.
+  if (/(^|\/)server-icon\.(png|jpe?g)$/i.test(path)) return true;
+  return false;
+}
+
+function isArchiveModsJar(path) {
+  return /^mods\/[^/]+\.jar$/i.test(path);
+}
+
+// Upload { path, buffer } items in size-aware batches via the shared zip path.
+async function uploadItemsChunked(serverId, userId, items, update, label) {
+  let installed = 0;
+  let failed = 0;
+  let batchIdx = 0;
+  let batch = [];
+  let batchBytes = 0;
+
+  const flush = async () => {
+    if (batch.length === 0) return;
+    batchIdx += 1;
+    const ok = await uploadFileBatch(serverId, userId, batch, batchIdx);
+    if (!ok) {
+      failed += batch.length;
+    } else {
+      installed += batch.length;
+    }
+    if (update) {
+      await update(
+        `**${label}**\n\n${buildProgressBar({
+          downloaded: items.length,
+          installed: installed + failed,
+          total: items.length,
+          unit: `${items.length} files`
+        })}`
+      );
+    }
+    batch = [];
+    batchBytes = 0;
+  };
+
+  for (const item of items) {
+    const size = item.buffer?.length || 0;
+    if (batch.length > 0 && (batch.length >= ARCHIVE_BATCH_FILES || batchBytes + size > ARCHIVE_BATCH_BYTES)) {
+      await flush();
+    }
+    batch.push(item);
+    batchBytes += size;
+  }
+  await flush();
+  return { installed, failed };
+}
+
+// Install a non-manifest archive (CF server pack or loose zip) by extracting
+// locally, stripping client-only mods/, and uploading survivors in chunks —
+// same Wings path as manifest installs, avoiding one giant files/decompress.
+async function installArchiveBuffer(ctx, buffer) {
+  const { i, serverId, userId, loaderType, mcVersion = null, updateProgress } = ctx;
+  const update = msg => updateProgress(i, msg);
+
+  let zip;
+  try {
+    zip = new AdmZip(buffer);
+  } catch (err) {
+    msgLog.error(`[install-modpack] archive open failed: ${err.message}`);
+    return { unavailable: [], installed: 0, total: 0, crashRiskWarnings: [], modIndex: createModIndex(), error: err.message };
+  }
+
+  const nestedRoot = detectNestedArchiveRoot(buffer);
+  if (nestedRoot) {
+    msgLog.log(`[install-modpack] archive nested root "${nestedRoot}/" — flattening locally before upload`);
+  }
+
+  const crashOracle = mcVersion ? await getOracle(mcVersion) : null;
+  const crashRiskWarnings = [];
+  const modIndex = createModIndex();
+  const toUpload = [];
+  const toPark = [];
+  let skippedClient = 0;
+  let modJarTotal = 0;
+
+  await update("Extracting archive locally and filtering client-only mods...");
+
+  for (const entry of zip.getEntries()) {
+    if (entry.isDirectory) continue;
+    const path = normalizeArchiveEntryPath(entry.entryName, nestedRoot);
+    if (shouldSkipArchiveEntry(path)) continue;
+
+    let data;
+    try {
+      data = entry.getData();
+    } catch (err) {
+      msgLog.warn(`[install-modpack] archive entry read failed (${path}): ${err.message}`);
+      continue;
+    }
+
+    if (isArchiveModsJar(path)) {
+      modJarTotal += 1;
+      const filename = path.split("/").pop();
+      const inspection = inspectModJarCached(null, data, loaderType);
+      const { modId, requiredDeps } = extractModDeps(data, loaderType);
+      const decision = decideWithLayer2({
+        inspection,
+        providerServerSide: null,
+        modId,
+        filename,
+        sha1: null,
+        buffer: data,
+        crashOracle,
+        mcVersion
+      });
+      if (!decision.install) {
+        skippedClient += 1;
+        msgLog.debugExtended(
+          `[install-modpack] skip archive mod (client-only, ${decision.source}): ${filename}`
+        );
+        if (decision.rescuable) {
+          toPark.push({
+            path: `mods-disabled/${filename}`,
+            buffer: data,
+            filename,
+            modId
+          });
+        }
+        continue;
+      }
+      addJarToModIndex(modIndex, filename, data, { modId, requiredDeps });
+      if (crashOracle) {
+        const risk = assessCrashRiskCached(null, data, crashOracle, mcVersion);
+        if (risk.risk) {
+          crashRiskWarnings.push({ filename, path, detail: risk.detail, modId });
+          msgLog.warn(`[install-modpack] crash-risk (archive): ${filename}: ${risk.detail}`);
+        }
+      }
+    }
+
+    toUpload.push({ path, buffer: data });
+  }
+  flushModInspectorCache();
+
+  if (toUpload.length === 0 && toPark.length === 0) {
+    msgLog.error("[install-modpack] archive contained no uploadable files after extract/filter");
+    return {
+      unavailable: [],
+      installed: 0,
+      total: modJarTotal,
+      crashRiskWarnings,
+      modIndex,
+      skippedClient,
+      error: "empty archive after extract"
+    };
+  }
+
+  await update(
+    `Uploading archive contents (${toUpload.length} files` +
+    (skippedClient > 0 ? `, skipped ${skippedClient} client-only mods` : "") +
+    ")..."
+  );
+
+  const { installed, failed } = await uploadItemsChunked(
+    serverId, userId, toUpload, update, "Installing archive (chunked upload)"
+  );
+
+  if (toPark.length > 0) {
+    await createServerDirectory(serverId, userId, "/", "mods-disabled").catch(() => {});
+    const parkItems = toPark.map(({ path, buffer }) => ({ path, buffer }));
+    const parkResult = await uploadItemsChunked(
+      serverId, userId, parkItems, null, "Parking rescuable client mods"
+    );
+    if (parkResult.failed > 0) {
+      msgLog.warn(`[install-modpack] failed to park ${parkResult.failed} rescuable archive skip(s)`);
+    }
+    for (const info of toPark) {
+      addParkedJarToModIndex(modIndex, info.filename, { modId: info.modId, sha1: null });
+    }
+  }
+
+  if (failed > 0) {
+    msgLog.warn(`[install-modpack] archive install: ${installed}/${toUpload.length} files uploaded, ${failed} failed`);
+  }
+  msgLog.log(
+    `[install-modpack] archive install done: ${installed} files, ` +
+    `${modJarTotal - skippedClient}/${modJarTotal} mods kept, ${skippedClient} client-only skipped`
+  );
+
+  return {
+    unavailable: [],
+    installed: Math.max(0, modJarTotal - skippedClient),
+    total: modJarTotal,
+    crashRiskWarnings,
+    modIndex,
+    skippedClient,
+    filesUploaded: installed,
+    uploadFailed: failed
+  };
+}
+
+module.exports = {
+  buildProgressBar,
+  installFilePlan,
+  installArchiveBuffer,
+  detectNestedArchiveRoot
+};

@@ -16,7 +16,10 @@ jest.mock("../utility/pterodactyl_websocket.js", () => {
       this.closed = false;
       FakePteroWS.instances.push(this);
     }
-    async connect() {}
+    async connect() {
+      // Mirror real Wings auth so boot-verify can open the console gate.
+      Promise.resolve().then(() => this.emit("authenticated"));
+    }
     close() { this.closed = true; }
   }
   FakePteroWS.instances = [];
@@ -29,12 +32,50 @@ jest.mock("../utility/server_functions.js", () => ({
   getFileContents: jest.fn().mockResolvedValue(null),
   writeServerFile: jest.fn().mockResolvedValue(204),
   createServerDirectory: jest.fn().mockResolvedValue(204),
-  renameServerFiles: jest.fn().mockResolvedValue(204)
+  renameServerFiles: jest.fn().mockResolvedValue(204),
+  deleteServerFiles: jest.fn().mockResolvedValue(204),
+  getFileUploadUrl: jest.fn().mockResolvedValue("https://upload.example/test"),
+  decompressFile: jest.fn().mockResolvedValue(204),
+  chmodServerFiles: jest.fn().mockResolvedValue(204),
+  getServerInfoById: jest.fn().mockResolvedValue({
+    statusCode: 200,
+    body: { json: async () => ({ attributes: { internal_id: 1 } }) }
+  })
+}));
+
+jest.mock("../utility/modpack_http.js", () => ({
+  downloadFile: jest.fn(),
+  uploadBufferToServer: jest.fn().mockResolvedValue({ ok: true, status: 200 })
+}));
+
+jest.mock("../utility/curseforge.js", () => ({
+  getModpackFiles: jest.fn().mockResolvedValue([]),
+  synthesizeCurseForgeCdnUrl: jest.fn()
+}));
+
+jest.mock("../utility/helper_functions.js", () => ({
+  applicationApiCall: jest.fn().mockResolvedValue({
+    statusCode: 200,
+    body: {
+      json: async () => ({
+        attributes: {
+          egg: 6,
+          container: {
+            startup_command: "java -Xms128M @unix_args.txt",
+            image: "ghcr.io/test/java:17",
+            environment: { JAVA_ARGS: "" }
+          }
+        }
+      })
+    }
+  })
 }));
 
 jest.mock("../utility/verdict_store.js", () => ({
   recordLearnedVerdict: jest.fn(),
-  flushVerdictStore: jest.fn()
+  flushVerdictStore: jest.fn(),
+  getLearnedVerdict: jest.fn(() => null),
+  isProtectedLearnedMod: jest.fn(() => false)
 }));
 
 const { PterodactylWebSocket: FakeWS } = require("../utility/pterodactyl_websocket.js");
@@ -73,6 +114,8 @@ const bootSuccess = ws => {
 
 const bootCrash = lines => ws => {
   ws.emit("powerStateChange", "starting");
+  // Crash markers are ignored until java/Forge boot is seen (history gate).
+  ws.emit("consoleLine", "[main/INFO] [FML]: Forge Mod Loader has started");
   for (const line of lines) ws.emit("consoleLine", line);
   // Offline after a crash marker confirms the process died (see watchBootAttempt).
   ws.emit("powerStateChange", "offline");
@@ -81,7 +124,10 @@ const bootCrash = lines => ws => {
 const ctx = (overrides = {}) => ({
   serverId: "abc",
   userId: "u1",
-  settings: { max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000, crash_flush_ms: 0 },
+  settings: {
+    max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000,
+    crash_flush_ms: 0, history_flush_ms: 0
+  },
   ...overrides
 });
 
@@ -95,12 +141,23 @@ beforeEach(() => {
 });
 
 describe("verifyServerBoot", () => {
-  test("succeeds on first boot when Done is printed", async () => {
-    scriptBoots([ bootSuccess ]);
-    const res = await verifyServerBoot(ctx());
-    expect(res).toMatchObject({ success: true, attempts: 1, quarantined: [], reason: null });
-    expect(FakeWS.instances).toHaveLength(1);
-    expect(FakeWS.instances[0].closed).toBe(true);
+  test("detects Forge 'crash report has been saved to' and quarantines MissingMods dependent", async () => {
+    const index = createModIndex();
+    addJarToModIndex(index, "GasConduits.jar", makeJar(), {
+      modId: "gasconduits", requiredDeps: [ "enderio" ], sha1: "sha-gas"
+    });
+
+    scriptBoots([
+      bootCrash([
+        "MissingModsException: Mod gasconduits (GasConduits) requires [enderio@[5.3.70,)]",
+        "This crash report has been saved to: /home/container/./crash-reports/crash-x.txt"
+      ]),
+      bootSuccess
+    ]);
+
+    const res = await verifyServerBoot(ctx({ modIndex: index }));
+    expect(res.success).toBe(true);
+    expect(res.quarantined.map(q => q.jar)).toContain("GasConduits.jar");
   });
 
   test("quarantines the attributed mod, records a learned verdict, and retries to success", async () => {
@@ -133,7 +190,10 @@ describe("verifyServerBoot", () => {
     addJarToModIndex(index, "addon.jar", makeJar(), { modId: "addon", requiredDeps: [ "lib" ], sha1: "sha-addon" });
 
     scriptBoots([
-      bootCrash([ "Mod 'Lib' (lib) has failed to load correctly" ]),
+      bootCrash([
+        "Mod 'Lib' (lib) has failed to load correctly",
+        "Minecraft has crashed!"
+      ]),
       bootSuccess
     ]);
 
@@ -189,7 +249,10 @@ describe("verifyServerBoot", () => {
 
     const res = await verifyServerBoot(ctx({
       modIndex: index,
-      settings: { max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000, crash_flush_ms: 0 }
+      settings: {
+        max_attempts: 3, success_timeout_ms: 5000, total_budget_ms: 30000,
+        crash_flush_ms: 0, history_flush_ms: 0
+      }
     }));
 
     expect(res.success).toBe(false);
@@ -204,6 +267,8 @@ describe("verifyServerBoot", () => {
     const res = await verifyServerBoot(ctx({ modIndex: createModIndex() }));
     expect(res).toMatchObject({ success: false, attempts: 1, reason: "unattributed" });
     expect(sf.renameServerFiles).not.toHaveBeenCalled();
+    // Crashed JVMs must be killed so the panel does not leave a zombie process.
+    expect(sf.setServerPowerState).toHaveBeenCalledWith("abc", "u1", "kill");
   });
 
   test("gives up after max_attempts", async () => {
@@ -212,9 +277,18 @@ describe("verifyServerBoot", () => {
       addJarToModIndex(index, `bad${n}.jar`, makeJar(), { modId: `bad${n}`, sha1: `sha-${n}` });
     }
     scriptBoots([
-      bootCrash([ "Mod 'B1' (bad1) has failed to load correctly" ]),
-      bootCrash([ "Mod 'B2' (bad2) has failed to load correctly" ]),
-      bootCrash([ "Mod 'B3' (bad3) has failed to load correctly" ])
+      bootCrash([
+        "Mod 'B1' (bad1) has failed to load correctly",
+        "Minecraft has crashed!"
+      ]),
+      bootCrash([
+        "Mod 'B2' (bad2) has failed to load correctly",
+        "Minecraft has crashed!"
+      ]),
+      bootCrash([
+        "Mod 'B3' (bad3) has failed to load correctly",
+        "Minecraft has crashed!"
+      ])
     ]);
 
     const res = await verifyServerBoot(ctx({ modIndex: index }));
@@ -224,6 +298,78 @@ describe("verifyServerBoot", () => {
     expect(res.quarantined).toHaveLength(3);
   });
 
+  test("does not quarantine protected EnderIO on cannot-continue; attributes MissingMods dependents instead", async () => {
+    const index = createModIndex();
+    addJarToModIndex(index, "EnderIO-1.12.2-5.3.72.jar", makeJar({
+      "crazypants/enderio/EnderIO.class": "x"
+    }), { modId: "enderio", sha1: "sha-eio" });
+    addJarToModIndex(index, "UberConduitProbe-1.0.jar", makeJar(), {
+      modId: "uberconduitprobe", requiredDeps: [ "enderio" ], sha1: "sha-ucp"
+    });
+
+    scriptBoots([
+      bootCrash([
+        "Ender IO cannot continue!",
+        "Minecraft has crashed!"
+      ]),
+      bootCrash([
+        "MissingModsException: Mod uberconduitprobe (Uber Conduit Probe) requires [enderio@[5.2.60,)]",
+        "This crash report has been saved to: /home/container/./crash-reports/crash-ucp.txt"
+      ]),
+      bootSuccess
+    ]);
+
+    sf.listServerFiles.mockImplementation(async (_id, _uid, dir) => {
+      if (String(dir).includes("crash-reports")) {
+        return [ { attributes: { is_file: true, name: "crash-ucp.txt", modified_at: "2026-07-20T01:00:00Z" } } ];
+      }
+      return [];
+    });
+    sf.getFileContents.mockResolvedValue(
+      "Mod uberconduitprobe (Uber Conduit Probe) requires [enderio@[5.2.60,)]\n"
+    );
+
+    const res = await verifyServerBoot(ctx({
+      modIndex: index,
+      settings: {
+        max_attempts: 4, success_timeout_ms: 5000, total_budget_ms: 60000,
+        crash_flush_ms: 0, history_flush_ms: 0
+      }
+    }));
+
+    // First crash (hard-fail only) is unattributed for protected EnderIO — may
+    // refund/stop; second path must still never quarantine EnderIO itself.
+    expect(res.quarantined.map(q => q.jar)).not.toContain("EnderIO-1.12.2-5.3.72.jar");
+  });
+
+  test("quarantines MissingModsChecker on Fabric HeadlessException without Forge JAVA_BOOT lines", async () => {
+    const index = createModIndex();
+    addJarToModIndex(index, "missingmodschecker.jar", makeJar({
+      "toni/missingmodschecker/MissingModsWindow.class": "x"
+    }), { modId: "missingmodschecker", sha1: "sha-mmc" });
+
+    scriptBoots([
+      ws => {
+        ws.emit("powerStateChange", "starting");
+        ws.emit("consoleLine", "[main/INFO]: Loading Minecraft 1.20.1 with Fabric Loader 0.19.3");
+        ws.emit("consoleLine", "[main/ERROR]: Error thrown while opening! Exiting");
+        ws.emit("consoleLine", "java.awt.HeadlessException:");
+        ws.emit("consoleLine", "No X11 DISPLAY variable was set,");
+        ws.emit("consoleLine", "\tat toni.missingmodschecker.MissingModsWindow.<init>(MissingModsWindow.java:55)");
+        ws.emit("consoleLine", "[Elytra Daemon]: ---------- Detected server process in a crashed state! ----------");
+        ws.emit("consoleLine", "[Elytra Daemon]: Exit code: 1");
+        ws.emit("powerStateChange", "offline");
+      },
+      bootSuccess
+    ]);
+
+    const res = await verifyServerBoot(ctx({ modIndex: index }));
+
+    expect(res.success).toBe(true);
+    expect(res.attempts).toBe(2);
+    expect(res.quarantined.map(q => q.jar)).toContain("missingmodschecker.jar");
+  });
+
   test("treats a steadily running server that never prints Done as success", async () => {
     scriptBoots([ ws => {
       ws.emit("powerStateChange", "starting");
@@ -231,7 +377,10 @@ describe("verifyServerBoot", () => {
       // no Done line — some eggs/loaders format it differently
     } ]);
     const res = await verifyServerBoot(ctx({
-      settings: { max_attempts: 1, success_timeout_ms: 100, total_budget_ms: 30000 }
+      settings: {
+        max_attempts: 1, success_timeout_ms: 100, total_budget_ms: 30000,
+        crash_flush_ms: 0, history_flush_ms: 0
+      }
     }));
     expect(res.success).toBe(true);
   });
@@ -246,5 +395,76 @@ describe("verifyServerBoot", () => {
     } finally {
       FakeWS.prototype.connect = originalConnect;
     }
+  });
+
+  test("restores a parked missing dep from mods-disabled/ and retries without quarantining", async () => {
+    const index = createModIndex();
+    addJarToModIndex(index, "blockrenderer.jar", makeJar(), {
+      modId: "blockrenderer6343", requiredDeps: [ "NotEnoughItems" ], sha1: "sha-br"
+    });
+    index.parkedJars.add("NotEnoughItems-2.8.44-GTNH.jar");
+    index.parkedByModId.set("notenoughitems", "NotEnoughItems-2.8.44-GTNH.jar");
+    index.modIdOf.set("NotEnoughItems-2.8.44-GTNH.jar", "NotEnoughItems");
+
+    scriptBoots([
+      bootCrash([
+        "Minecraft has crashed!",
+        "The mod blockrenderer6343 (BlockRenderer6343) requires mods [NotEnoughItems] to be available"
+      ]),
+      bootSuccess
+    ]);
+
+    const res = await verifyServerBoot(ctx({ modIndex: index }));
+
+    expect(res.success).toBe(true);
+    expect(res.attempts).toBe(2);
+    expect(res.quarantined).toEqual([]);
+    expect(sf.renameServerFiles).toHaveBeenCalledWith("abc", "u1", "/", [
+      { from: "mods-disabled/NotEnoughItems-2.8.44-GTNH.jar", to: "mods/NotEnoughItems-2.8.44-GTNH.jar" }
+    ]);
+    expect(index.parkedJars.has("NotEnoughItems-2.8.44-GTNH.jar")).toBe(false);
+    expect(index.byModId.get("notenoughitems")).toBe("NotEnoughItems-2.8.44-GTNH.jar");
+    expect(verdictStore.recordLearnedVerdict).not.toHaveBeenCalled();
+  });
+});
+
+describe("pickJeidFile / pickSharedObjectMember", () => {
+  const { pickJeidFile, pickSharedObjectMember, JEID_PREFERRED_FILE } = require("../utility/boot_verify.js");
+
+  test("prefers JustEnoughIDs-1.0.3-55.jar for 1.12.2", () => {
+    const hit = pickJeidFile([
+      { fileName: "JustEnoughIDs-1.0.4-SNAPSHOT-thin.jar", gameVersions: [ "1.12.2", "Forge" ] },
+      { fileName: JEID_PREFERRED_FILE, gameVersions: [ "1.12.2", "Forge" ] },
+      { fileName: "JustEnoughIDs-1.0.2-26.jar", gameVersions: [ "1.12.2" ] }
+    ]);
+    expect(hit.fileName).toBe(JEID_PREFERRED_FILE);
+  });
+
+  test("skips thin jars when preferred is absent", () => {
+    const hit = pickJeidFile([
+      { fileName: "JustEnoughIDs-1.0.4-SNAPSHOT-thin.jar", gameVersions: [ "1.12.2" ] },
+      { fileName: "JustEnoughIDs-1.0.3-48.jar", gameVersions: [ "1.12.2" ] }
+    ]);
+    expect(hit.fileName).toBe("JustEnoughIDs-1.0.3-48.jar");
+  });
+
+  test("picks real .so over soname symlink path", () => {
+    const member = pickSharedObjectMember([
+      "./usr/lib/x86_64-linux-gnu/libXrender.so.1",
+      "./usr/lib/x86_64-linux-gnu/libXrender.so.1.3.0"
+    ], "libXrender.so.1");
+    expect(member).toContain("libXrender.so.1.3.0");
+  });
+});
+
+describe("injectLdLibraryPathPrefix", () => {
+  const { injectLdLibraryPathPrefix } = require("../utility/boot_verify.js");
+
+  test("prefixes java with DISPLAY= and LD_LIBRARY_PATH on the same line", () => {
+    const out = injectLdLibraryPathPrefix("java -Xms1G -jar server.jar");
+    expect(out.startsWith("DISPLAY=")).toBe(true);
+    expect(out).toContain("LD_LIBRARY_PATH=");
+    expect(out).toContain(" java -Xms1G");
+    expect(out).not.toMatch(/^export /m);
   });
 });

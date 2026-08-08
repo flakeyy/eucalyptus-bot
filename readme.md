@@ -73,8 +73,10 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `java_overhead_mb` | Additional overhead for Java-based servers |
 | `modpack_eggs` | Egg IDs for each modloader (`forge`, `fabric`, `neoforge`, `quilt`) |
 | `mc_version_variable` | Panel egg variable name for the Minecraft version (e.g. `MC_VERSION`) |
-| `java_images` | Docker image map keyed by Java version (8, 11, 17, 21) |
-| `minecraft_java_map` | Map of Minecraft version prefixes to required Java version |
+| `forge_build_type_variable` | Forge egg variable for recommended vs latest when the pack does not pin a build (e.g. `BUILD_TYPE`) |
+| `loader_version_variables` | Map of loader → egg env var used to pin an exact build from the pack (`FORGE_VERSION`, `NEOFORGE_VERSION`, `LOADER_VERSION`) |
+| `java_images` | Docker image map keyed by Java version (8, 11, 17, 21, 25) |
+| `minecraft_java_map` | Minecraft version thresholds → required Java major. Highest key ≤ the pack's MC version wins; anything older than the lowest key (e.g. 1.7.10) falls back to Java 8. Use patch-aware keys like `1.20.5` / `26.1` when Mojang bumps the requirement mid-series. |
 | `mod_id_blocklist` | Array of mod IDs as declared inside the mod's own metadata (e.g. `"drippyloadingscreen"`), not CurseForge project IDs. Mods matching an entry are always skipped during manifest installs. |
 
 ## First-run setup

@@ -96,13 +96,18 @@ describe("verdict store", () => {
       filename: "addon.jar",
       detail: "dependent of quarantined mod"
     });
+    store.recordLearnedVerdict("stacky", "crashes-server", {
+      filename: "noisy.jar",
+      detail: "stack frame in com.example.Bad"
+    });
     store.recordLearnedVerdict("real", "crashes-server", {
       filename: "bad.jar",
-      detail: "stack frame in com.example.Bad"
+      detail: "ClassMetadataNotFoundException: net.minecraft.client.particle.ParticleManager"
     });
     expect(store.getLearnedVerdict("uni")).toBeNull();
     expect(store.getLearnedVerdict("camp")).toBeNull();
     expect(store.getLearnedVerdict("dep")).toBeNull();
+    expect(store.getLearnedVerdict("stacky")).toBeNull();
     expect(store.getLearnedVerdict("real")).toBe("crashes-server");
   });
 
@@ -120,20 +125,27 @@ describe("verdict store", () => {
           filename: "campfirebackport-1.7.10-1.11.3.jar",
           detail: "mixin config campfirebackport.mixin.json"
         },
+        stacksha: {
+          learnedVerdict: "crashes-server",
+          filename: "noisy.jar",
+          detail: "stack frame in lumien.custommainmenu.CustomMainMenu"
+        },
         realsha: {
           learnedVerdict: "crashes-server",
-          filename: "GTNH_custommainmenu-1.14.1.jar",
-          detail: "stack frame in lumien.custommainmenu.CustomMainMenu"
+          filename: "badclient.jar",
+          detail: "ClassMetadataNotFoundException: net.minecraft.client.gui.GuiScreen"
         }
       }
     }));
     store._resetForTests(storePath);
     expect(store.getLearnedVerdict("unisha")).toBeNull();
     expect(store.getLearnedVerdict("campsha")).toBeNull();
+    expect(store.getLearnedVerdict("stacksha")).toBeNull();
     expect(store.getLearnedVerdict("realsha")).toBe("crashes-server");
     const raw = JSON.parse(fs.readFileSync(storePath, "utf8"));
     expect(raw.entries.unisha.learnedVerdict).toBeUndefined();
     expect(raw.entries.campsha.learnedVerdict).toBeUndefined();
+    expect(raw.entries.stacksha.learnedVerdict).toBeUndefined();
     expect(raw.entries.realsha.learnedVerdict).toBe("crashes-server");
   });
 });

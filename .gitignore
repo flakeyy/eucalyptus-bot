@@ -21,3 +21,6 @@ users.json
 blacklist.json
 
 test-docs/
+
+# Regenerable live matrix run artifacts
+docs/live-modpack-matrix*

@@ -24,9 +24,16 @@
         "quilt": 0
     },
     "mc_version_variable": "MC_VERSION",
+    "forge_build_type_variable": "BUILD_TYPE",
+    "loader_version_variables": {
+        "forge": "FORGE_VERSION",
+        "neoforge": "NEOFORGE_VERSION",
+        "fabric": "LOADER_VERSION",
+        "quilt": "LOADER_VERSION"
+    },
     "boot_verify": {
         "enabled": true,
-        "max_attempts": 5,
+        "max_attempts": 8,
         "success_timeout_ms": 600000,
         "total_budget_ms": 1800000
     },
@@ -34,7 +41,8 @@
         "8": "ghcr.io/pterodactyl/yolks:java_8",
         "11": "ghcr.io/pterodactyl/yolks:java_11",
         "17": "ghcr.io/pterodactyl/yolks:java_17",
-        "21": "ghcr.io/pterodactyl/yolks:java_21"
+        "21": "ghcr.io/pterodactyl/yolks:java_21",
+        "25": "ghcr.io/pterodactyl/yolks:java_25"
     },
     "mod_id_blocklist": [
         "drippyloadingscreen",
@@ -48,8 +56,9 @@
     ],
     "mod_id_allowlist": [],
     "minecraft_java_map": {
-        "1.21": 21,
-        "1.20": 21,
+        "26.1": 25,
+        "1.20.5": 21,
+        "1.20": 17,
         "1.19": 17,
         "1.18": 17,
         "1.17": 17,

@@ -2,6 +2,8 @@
 // Requires the caller to have already mocked utility/server_functions.js and
 // global.fetch — this module only provides convenience builders.
 
+const AdmZip = require("adm-zip");
+
 function makeState(overrides = {}) {
   return {
     source: "curseforge",
@@ -33,10 +35,18 @@ function makeStreamResponse(bytes = new Uint8Array([ 1, 2, 3, 4 ])) {
   };
 }
 
+// Minimal non-manifest archive used by archive-install happy paths.
+function makeArchivePackBytes() {
+  const zip = new AdmZip();
+  zip.addFile("mods/servermod.jar", Buffer.from("server-jar-bytes"));
+  zip.addFile("config/foo.toml", Buffer.from("x = 1\n"));
+  return zip.toBuffer();
+}
+
 // Wire up the happy-path mock returns for server_functions and global.fetch.
 // Pass the already-required serverFunctions module so we don't reach across
 // jest's module registry from inside the fixture.
-function mockHappyPath(serverFunctions, { firstListResult = [] } = {}) {
+function mockHappyPath(serverFunctions, { firstListResult = [], packBytes = null } = {}) {
   serverFunctions.setServerPowerState.mockResolvedValue({ statusCode: 204 });
   serverFunctions.getServerResourceInfoById.mockResolvedValue({
     statusCode: 200,
@@ -50,9 +60,13 @@ function mockHappyPath(serverFunctions, { firstListResult = [] } = {}) {
   serverFunctions.decompressFile.mockResolvedValue(204);
   serverFunctions.writeServerFile.mockResolvedValue(204);
   serverFunctions.renameServerFiles.mockResolvedValue(204);
+  if (typeof serverFunctions.createServerDirectory === "function") {
+    serverFunctions.createServerDirectory.mockResolvedValue(204);
+  }
+  const bytes = packBytes || makeArchivePackBytes();
   global.fetch = jest.fn()
-    .mockResolvedValueOnce(makeStreamResponse())  // download
-    .mockResolvedValueOnce({ ok: true });         // upload
+    .mockResolvedValueOnce(makeStreamResponse(bytes)) // download
+    .mockResolvedValue({ ok: true, status: 200 }); // chunked batch uploads
 }
 
 // Configure server_functions for an installation that gets past the
@@ -70,4 +84,10 @@ function mockUpToTransfer(serverFunctions) {
   serverFunctions.getServerInstallStatus.mockResolvedValue(null);
 }
 
-module.exports = { makeState, makeStreamResponse, mockHappyPath, mockUpToTransfer };
+module.exports = {
+  makeState,
+  makeStreamResponse,
+  makeArchivePackBytes,
+  mockHappyPath,
+  mockUpToTransfer
+};
