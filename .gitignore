@@ -22,5 +22,9 @@ blacklist.json
 
 test-docs/
 
-# Regenerable live matrix run artifacts
+# Regenerable verification run artifacts (Tier 1/Tier 2 output, eval sweeps).
+# These are several hundred KB each and are reproduced by re-running the script,
+# so they are outputs to inspect locally rather than source to review.
 docs/live-modpack-matrix*
+docs/modpack-smoke-*
+docs/modpack-corpus-phase*-summary.json

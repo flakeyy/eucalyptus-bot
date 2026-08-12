@@ -1,114 +1,126 @@
-# Live Modpack Matrix — Final Summary
+# Modpack installer — current state
 
-**Date:** 2026-07-19 / 2026-07-20  
-**Branch:** `dev`  
-**Goal:** Auto-install and boot-verify all **50** curated Minecraft modpacks on Pterodactyl server `f20fed63` (`https://srv.flakey.tech/`).
+**Branch:** `rebuild/modpack-installer`
+**Updated:** 2026-08-08 (realignment pass, Phases 1–5)
 
-## Result
+This replaces the previous SUMMARY.md, which reported the 50-pack live matrix run
+on `dev` in July 2026. That document is no longer accurate: this branch deleted
+the X11 and JEID remediations it credited, replaced Layer 2 with `client_signals`,
+and rewrote selection to be server-pack-first. Its results describe code that no
+longer exists.
 
-| Metric | Count |
-|--------|------:|
-| Packs | 50 |
-| Install OK | **50** |
-| Boot OK | **50** |
-| Install / boot failures | **0** |
+## What `/install-modpack` does
 
-Evidence: `docs/live-modpack-matrix-NOTES.md`, `docs/live-modpack-matrix-results.json`.  
-Last successful `mc-eternal` retest (~4m 37s): EnderIO family quarantined, false-crash resume, then `Done`.
+Takes a CurseForge or Modrinth pack from an empty Pterodactyl server to a booted
+dedicated server:
 
-> Rotate the panel client API key used for live runs if it was exposed in chat/logs.
+1. **Select** — autocomplete search across both providers, ranked locally by name
+   relevance rather than downloads (`utility/modpack/search.js`). One option per
+   version, preferring the author's server pack when one is published.
+2. **Resolve** — download, unwrap ServerStarter wrappers, and choose a strategy:
+   manifest plan (Modrinth `.mrpack`, CF manifest packs) or archive extract
+   (CF server packs, loose zips).
+3. **Place** — nothing destructive happens until the server confirms *offline*.
+   Then wipe → change egg (pinning loader build and Java image from the pack) →
+   reinstall → place files.
+4. **Verify** — start the server and empirically confirm it boots, attributing
+   crashes to specific jars, quarantining them, and retrying
+   (`utility/boot_verify.js` + `utility/boot_remediations/`).
 
-## What this campaign proved
+Everything after step 1 runs through `runModpackJob` against a **reporter**, not
+a Discord interaction — so the same path runs under Discord, Jest, and the live
+smoke harness.
 
-`/install-modpack` + `verifyServerBoot` can take a curated CurseForge/Modrinth pack from empty server → installed mods → running dedicated server, including hard packs that need:
+## Verification ladder
 
-- Client-jar filtering and crash attribution
-- Quarantine + dependency expansion
-- Headless / X11 workarounds on yolk images
-- Registry-overflow rescue (JEID)
-- Ignoring Wings console history and false “crashed state” markers
+| Tier | Command | Needs | Status |
+|---|---|---|---|
+| 0 | `npm test` && `npx eslint .` | nothing | **green** — 493 tests, 26 suites |
+| 1 | `node scripts/modpack_preflight.js --corpus` | provider API keys | **12/12 corpus packs clean** |
+| 2 | `node scripts/modpack_smoke.js --server=<id>` | live panel, ~16m | **6/6 install + boot** |
 
-## Environment
+Tier 1's first sweep found that **All the Mods 9**'s server pack wraps everything
+in `Server-Files-1.1.1/`. That pack met every condition for the Wings pull fast
+path, so before this pass it would have installed 0 of its 397 mods and reported
+success. Details in [`docs/modpack-blockers.md`](docs/modpack-blockers.md).
 
-```text
-PANEL_URL=https://srv.flakey.tech/
-Server: f20fed63
-Auth: LIVE_CLIENT_API_KEY (or panel client key in users DB) from .env
-Also: CURSEFORGE_API_KEY for CDN downloads
-```
+**Tier 1** prints the plan the installer *would* execute — strategy, nested
+archive root, mod counts, per-jar skips with precedence slot and reason,
+unavailable files — while touching no server. It is the loop to work in; a full
+pack preflights in a few seconds.
 
-Retest one pack:
+**Tier 2** installs and boots six packs, one per axis (CF server pack Forge and
+NeoForge, CF manifest-only Fabric, Modrinth `.mrpack`, legacy 1.12 Forge,
+ServerStarter-wrapped), asserts install *and* boot, and records per-stage wall
+clock. **Required before deploying.**
 
-```powershell
-cd C:\Users\Dylan\Desktop\Things\cs\js\pterobot
-$env:PANEL_URL = "https://srv.flakey.tech/"
-node scripts/live_modpack_matrix.js --server=f20fed63 --only=<pack-key>
-```
+The ladder exists because the bugs fixed in this pass were all invisible to Tier 0
+and would have been obvious one tier up. Its stop rule: *a fix that cannot be
+reproduced in Tier 1 or Tier 2 first does not get written* — if a failure cannot
+be reproduced in the harness, the harness is the thing to fix.
 
-Full matrix: omit `--only`. Notes/results are rewritten under `docs/`.
+## What this pass changed
 
-## Hard packs and how they were fixed
+**Correctness**
 
-| Pack | Failure mode | Fix |
-|------|----------------|-----|
-| **Archive / Wings 500s** (ATM9, RAD, RAD2, Create Perfect World, etc.) | Nested decompress / list 500s | Local extract + filter + chunked upload (`modpack_install` / HTTP path) |
-| **CDN / null downloadUrl** (Enigmatica 9, …) | ForgeCDN auth / missing URLs | `x-api-key` on CDN; `synthesizeCurseForgeCdnUrl` |
-| **Client jars on “server” packs** (DawnCraft, Meatball, …) | `ParticleManager` / client class missing | Curated client filter + `clientClassMissing` quarantine (no AE2 cascade) |
-| **create-astral / ATM10** | KubeJS / MI / nested scripts | Protect MI; surgical kubejs neutralize; unix_args headless insert (don’t wipe) |
-| **meatballcraft** | Forge registry ID overflow | Auto-download/install JustEnoughIDs (CurseForge 296289) |
-| **cottage-witch** | AWT / missing X11 + GUI | Debian 11 X11 `.so`s in `/native`, inline `DISPLAY=` + `LD_LIBRARY_PATH`, append `nogui` to `unix_args.txt` |
-| **mc-eternal** | EnderIO hard-fail; then Wings false crashes mid-Morph | EnderIO hard-fail + family quarantine; protect CraftTweaker; post-pull crash grace; ignore definite crash while loading without new report; **resume watch without kill** on stale report + loading |
+- A nested archive root (`/PackName/mods/…`, the common CF server-pack layout)
+  no longer takes the Wings pull fast path, which extracts as-is and would leave
+  `/mods` empty while reporting success. An empty `/mods` after a successful
+  decompress is now a fallback trigger rather than a result.
+- Triage `max_tokens` raised to 8192 with thinking disabled, and a null
+  `parsed_output` now logs its `stop_reason` instead of no-oping silently.
+  **Measured caveat:** the plan predicted 1024 would routinely truncate; against
+  the live API it does not. At the configured `effort: medium` a verdict is
+  ~100–140 output tokens even with a 29K-character prompt and adaptive thinking
+  left on. The larger budget is cheap headroom (`max_tokens` is a cap, not a
+  reservation) and matters only if `effort` is raised — at `effort: max` the same
+  prompt produced 584 output tokens. Treat this as hardening, not a bug fix.
+- `done()` now takes the channel handoff path, so a job finishing past the
+  15-minute token window reports its result to a live message instead of a dead
+  token that swallows the failure.
+- The handoff clock starts at the original interaction, not at confirm — a user
+  can spend minutes in the wizard before the install begins.
 
-GTNH was replaced in the matrix with **ATM6** (client-pack-only GTNH listing was not a viable dedicated target).
+**Operational**
 
-## Boot-verify design (what matters)
+- Triage requests bounded (60s timeout, 1 retry) instead of the SDK default of
+  10 minutes × 2 retries, which could consume the entire boot budget.
+- Autocomplete fan-out cut: 3-character minimum, slug resolution capped, and an
+  in-flight map so repeated prefixes share one upstream round trip.
+- Server autocomplete cached per user and bounded against Discord's 3s deadline.
+- Version lists no longer emit both the server and client pack for every version.
 
-Core loop: `utility/boot_verify.js` + `utility/crash_attribution.js` + `utility/verdict_store.js`.
+**Structure**
 
-1. **Start + watch** websocket console for `Done (...)!` or hard crash markers.
-2. **Attribute** crash report / console → jars → quarantine to `mods-disabled/` (+ dependents).
-3. **Retry** until success, attempt budget, or unattributed stop.
+- The two per-pack tables that grew outside the capped registry now live in
+  `data/protected_mods.json` and `data/search_aliases.json`, each with a
+  per-entry rationale and a test enforcing its cap.
 
-Important behaviors added during this push:
+## Known deviations
 
-- Prefer `*-server.txt` crash reports; ignore already-acted report names.
-- Soft Forge noise (`has failed to load correctly`, etc.) does **not** end the watch; hard markers do.
-- Wings “Detected server process in a crashed state” alone does not kill a still-running JVM.
-- After Docker pull: grace window + don’t arm `javaBootSeen` from history burst.
-- If outcome is “crash” but console shows Morph/recipe loading and only a **stale** crash report → **resume watch without restart** (this unlocked Eternal).
-- Protect pack-critical mods from weak quarantine (CraftTweaker, Mekanism, MI, MineColonies, …).
-- Cap weak stack-frame / mixin-only quarantines; don’t quarantine CraftTweaker via stack frames.
-- MissingMods short ids (e.g. `art`) resolve via `byModId`, not filename heuristic alone.
-- Egg startup: env/file/`nogui` patches — do **not** wrap multiline Forge eggs with `rm`/`export` shells.
+Recorded with rationale and current numbers in
+**[`docs/modpack-blockers.md`](docs/modpack-blockers.md)** — three modules over
+the 600-line tripwire, `boot_remediations/` at 976 lines against a ~340 estimate,
+and four `attempt--` refund sites. All reviewed and accepted; none is a
+regression to chase.
 
-## Key files touched
-
-| Area | Paths |
-|------|--------|
-| Boot verify | `utility/boot_verify.js`, `tests/boot_verify.test.js` |
-| Attribution | `utility/crash_attribution.js`, `tests/crash_attribution.test.js` |
-| Learned verdicts | `utility/verdict_store.js` |
-| Install / HTTP / CF | `utility/modpack_install.js`, `modpack_http.js`, `curseforge.js`, `mod_inspector.js` |
-| Command / matrix | `commands/ptero/install_modpack.js`, `scripts/live_modpack_matrix.js` |
-| Data | `data/client_side_mods.json`, `data/server_side_overrides.json` |
-| Config sample | `config.json.sample` (`boot_verify.max_attempts` → 8) |
-| Results | `docs/live-modpack-matrix-NOTES.md`, `docs/live-modpack-matrix-results.json` |
-
-## Quarantine reality check
-
-“Boot OK” means the dedicated process reached a verified running state after automatic remediation. Some packs quarantine broken or client-tied jars (e.g. Eternal drops EnderIO + dependents). That is intentional for **server bring-up**, not a claim that every upstream mod remains enabled.
-
-## Suggested next steps
-
-1. Commit the uncommitted matrix/boot-verify work on `dev` when ready (do not commit `.env` / live keys).
-2. Rotate the live client API key used on `f20fed63`.
-3. Optionally fold Eternal-style “resume watch on stale crash” into a short regression test with a FakeWS Morph flood.
-4. Keep `HANDOFF.md` as historical mid-campaign notes; this file is the **final** scoreboard.
-
-## Commands
+## Running it
 
 ```bash
-npm test
-npx eslint .
-node scripts/live_modpack_matrix.js --server=f20fed63
+# Tier 1 — offline, no panel
+node scripts/modpack_preflight.js --pack="all the mods 10"
+node scripts/modpack_preflight.js --pack=cf:336409 --version=2792369
+node scripts/modpack_preflight.js --corpus --limit=10
+
+# Tier 2 — live panel (rotate the client key afterwards)
+export LIVE_CLIENT_API_KEY="…"
+node scripts/modpack_smoke.js --list
+node scripts/modpack_smoke.js --server=<server-id>
+
+# Search ranking only
+node scripts/modpack_search.js "better mc"
+node scripts/eval_modpack_search.js
 ```
+
+Optional: `npm install @anthropic-ai/sdk` and set `ANTHROPIC_API_KEY` to enable
+last-resort crash triage. Without either, triage is a clean no-op.

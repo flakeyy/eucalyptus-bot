@@ -100,6 +100,44 @@ describe("modpack job stage ordering", () => {
     expect(wipeIdx).toBeGreaterThan(stopIdx);
   });
 
+  test("nested-root server pack skips the Wings pull and extracts locally", async () => {
+    const { makeNestedArchivePackBytes } = require("../fixtures/modpack.js");
+    mockHappyPath(serverFunctions, { packBytes: makeNestedArchivePackBytes() });
+    // Pull would succeed if we let it — the point is that we never try.
+    serverFunctions.pullServerFile.mockResolvedValue(204);
+
+    const reporter = new CollectingReporter();
+    const p = runModpackJob({ ...makeState(), userId: "u", username: "u" }, reporter);
+    await jest.runAllTimersAsync();
+    const result = await p;
+
+    expect(result.ok).toBe(true);
+    expect(serverFunctions.pullServerFile).not.toHaveBeenCalled();
+    // Local extract path uploads via the chunked Wings upload.
+    expect(serverFunctions.getFileUploadUrl).toHaveBeenCalled();
+  });
+
+  test("pull that leaves mods/ empty falls back to the local extract", async () => {
+    mockHappyPath(serverFunctions);
+    serverFunctions.pullServerFile.mockResolvedValue(204);
+    serverFunctions.decompressFile.mockResolvedValue(204);
+    // Root listing has files, but /mods comes back empty — the layout defeated
+    // Wings' in-place decompress even though every call returned 2xx.
+    serverFunctions.listServerFiles.mockImplementation(async (_id, _user, dir) =>
+      dir === "/mods" ? [] : []
+    );
+
+    const reporter = new CollectingReporter();
+    const p = runModpackJob({ ...makeState(), userId: "u", username: "u" }, reporter);
+    await jest.runAllTimersAsync();
+    const result = await p;
+
+    expect(result.ok).toBe(true);
+    expect(serverFunctions.pullServerFile).toHaveBeenCalled();
+    expect(serverFunctions.getFileUploadUrl).toHaveBeenCalled();
+    expect(result.manifestInstalled).toBeGreaterThan(0);
+  });
+
   test("CollectingReporter records pct on download callbacks", async () => {
     const { makeArchivePackBytes } = require("../fixtures/modpack.js");
     const bytes = makeArchivePackBytes();

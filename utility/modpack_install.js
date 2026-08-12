@@ -49,6 +49,93 @@ function decideWithClientSignals({ inspection, providerServerSide, modId, filena
   return decision;
 }
 
+// Pure client renderers / splash providers — never dep-rescue. ATM10's
+// sodium-neoforge was skipped as provider-unsupported then force-installed
+// because another mod listed it as required, which immediately crashes the
+// dedicated server on org.lwjgl.Version (ImmediateWindowHandler).
+const NEVER_RESCUE_CLIENT_IDS = new Set([
+  "sodium", "embeddium", "rubidium", "iris", "oculus", "fancymenu", "optifine"
+]);
+
+function neverRescueClient(info) {
+  const id = String(info.modId ?? "").toLowerCase();
+  if (id && NEVER_RESCUE_CLIENT_IDS.has(id)) return true;
+  const name = String(info.filename ?? "").toLowerCase();
+  return /^(sodium|embeddium|rubidium|iris|oculus|fancymenu|optifine)[-_.]/i.test(name);
+}
+
+/**
+ * Dependency rescue + client-dep propagation over a decided mod list, mutating
+ * `isClientOnly` / `source` in place. Runs after every mod has a Layer 1
+ * decision but before anything is uploaded.
+ *
+ * Shared by both install paths on purpose. It used to live inline in
+ * installFilePlan only, so archive installs (CF server packs) had no second
+ * chance at all: on ATM9, cofh_core was skipped by a client-signals false
+ * positive while five Thermal mods that hard-require it installed, and the
+ * server could not boot. A single classification mistake was terminal there.
+ *
+ * @param {Array<{filename,modId,requiredDeps,isClientOnly,rescuable,source,providerServerSide?}>} modInfos
+ * @returns {{rescued: string[], propagated: string[]}} filenames, for logging/tests
+ */
+function applyDependencyRescue(modInfos) {
+  const rescuedNames = [];
+  const propagatedNames = [];
+
+  // Rescue: a rescuably-skipped mod that an installed mod hard-requires must be
+  // present server-side anyway (the loader would fail on the missing
+  // dependency), so install it rather than dropping the dependent — this is how
+  // server-needed libraries with client-leaning metadata survive. Runs to a
+  // fixpoint so a rescued mod's own rescuable dependencies get rescued too.
+  let rescued = true;
+  while (rescued) {
+    rescued = false;
+    const requiredByInstalled = new Set(
+      modInfos.filter(m => !m.isClientOnly).flatMap(m => m.requiredDeps || [])
+    );
+    for (const info of modInfos) {
+      if (
+        info.isClientOnly && info.rescuable && info.modId &&
+        requiredByInstalled.has(info.modId) &&
+        !neverRescueClient(info) &&
+        info.source !== "learned-crashes-server"
+      ) {
+        info.isClientOnly = false;
+        info.source = "dep-rescue";
+        rescued = true;
+        rescuedNames.push(info.filename);
+        msgLog.debugExtended(`[install-modpack] install (required by installed mod): ${info.filename}`);
+      }
+    }
+  }
+
+  // Propagate client-only status: if a mod's required dependency was skipped,
+  // skip the mod too. Provider-vouched mods (required/optional) are exempt —
+  // the pack author asserts they run server-side (their "dep" on a client mod
+  // is typically integration-only, e.g. chipped→ctm, configscreens→modmenu);
+  // if the dependency truly is hard, the boot-verify loop attributes the
+  // missing-dep failure and quarantines the dependent.
+  const providerVouched = m => m.providerServerSide === "required" || m.providerServerSide === "optional";
+  const skippedModIds = new Set(modInfos.filter(m => m.isClientOnly && m.modId).map(m => m.modId));
+  let propagated = true;
+  while (propagated) {
+    propagated = false;
+    for (const info of modInfos) {
+      if (
+        !info.isClientOnly && !providerVouched(info) &&
+        (info.requiredDeps || []).some(dep => skippedModIds.has(dep))
+      ) {
+        info.isClientOnly = true;
+        propagatedNames.push(info.filename);
+        if (info.modId) { skippedModIds.add(info.modId); propagated = true; }
+        msgLog.debugExtended(`[install-modpack] skip (client-dep chain): ${info.filename}`);
+      }
+    }
+  }
+
+  return { rescued: rescuedNames, propagated: propagatedNames };
+}
+
 // Uploads override entries as a single overrides.zip extracted at the server
 // root. Mod JARs bundled under overrides/mods/ don't go through the manifest
 // download path, so they get the same Layer 1 decision here (without provider
@@ -212,65 +299,7 @@ async function installFilePlan(ctx, plan) {
     );
   }
 
-  // Pure client renderers / splash providers — never dep-rescue. ATM10's
-  // sodium-neoforge was skipped as provider-unsupported then force-installed
-  // because another mod listed it as required, which immediately crashes the
-  // dedicated server on org.lwjgl.Version (ImmediateWindowHandler).
-  const NEVER_RESCUE_CLIENT_IDS = new Set([
-    "sodium", "embeddium", "rubidium", "iris", "oculus", "fancymenu", "optifine"
-  ]);
-  const neverRescueClient = info => {
-    const id = String(info.modId ?? "").toLowerCase();
-    if (id && NEVER_RESCUE_CLIENT_IDS.has(id)) return true;
-    const name = String(info.filename ?? "").toLowerCase();
-    return /^(sodium|embeddium|rubidium|iris|oculus|fancymenu|optifine)[-_.]/i.test(name);
-  };
-
-  // Rescue pass: a rescuably-skipped mod that an installed mod hard-requires
-  // must be present server-side anyway (the loader would fail on the missing
-  // dependency), so install it rather than dropping the dependent — this is how
-  // server-needed libraries with client-leaning metadata survive. Runs to a
-  // fixpoint so a rescued mod's own rescuable dependencies get rescued too.
-  let rescued = true;
-  while (rescued) {
-    rescued = false;
-    const requiredByInstalled = new Set(
-      modInfos.filter(m => !m.isClientOnly).flatMap(m => m.requiredDeps)
-    );
-    for (const info of modInfos) {
-      if (
-        info.isClientOnly && info.rescuable && info.modId &&
-        requiredByInstalled.has(info.modId) &&
-        !neverRescueClient(info) &&
-        info.source !== "learned-crashes-server"
-      ) {
-        info.isClientOnly = false;
-        info.source = "dep-rescue";
-        rescued = true;
-        msgLog.debugExtended(`[install-modpack] install (required by installed mod): ${info.filename}`);
-      }
-    }
-  }
-
-  // Propagate client-only status: if a mod's required dependency was skipped,
-  // skip the mod too. Provider-vouched mods (required/optional) are exempt —
-  // the pack author asserts they run server-side (their "dep" on a client mod
-  // is typically integration-only, e.g. chipped→ctm, configscreens→modmenu);
-  // if the dependency truly is hard, the boot-verify loop attributes the
-  // missing-dep failure and quarantines the dependent.
-  const providerVouched = m => m.providerServerSide === "required" || m.providerServerSide === "optional";
-  const skippedModIds = new Set(modInfos.filter(m => m.isClientOnly && m.modId).map(m => m.modId));
-  let propagated = true;
-  while (propagated) {
-    propagated = false;
-    for (const info of modInfos) {
-      if (!info.isClientOnly && !providerVouched(info) && info.requiredDeps.some(dep => skippedModIds.has(dep))) {
-        info.isClientOnly = true;
-        if (info.modId) { skippedModIds.add(info.modId); propagated = true; }
-        msgLog.debugExtended(`[install-modpack] skip (client-dep chain): ${info.filename}`);
-      }
-    }
-  }
+  applyDependencyRescue(modInfos);
 
   // Index installed mods for crash attribution, and surface client-signal
   // warnings for mods that install anyway (provider vouched — never a skip).
@@ -486,6 +515,9 @@ async function installArchiveBuffer(ctx, buffer) {
 
   await update("Extracting archive locally and filtering client-only mods...");
 
+  // Pass 1: decide every mod jar, but commit nothing. Non-mod entries can be
+  // queued immediately — only mod decisions participate in dependency rescue.
+  const modInfos = [];
   for (const entry of zip.getEntries()) {
     if (entry.isDirectory) continue;
     const path = normalizeArchiveEntryPath(entry.entryName, nestedRoot);
@@ -499,45 +531,74 @@ async function installArchiveBuffer(ctx, buffer) {
       continue;
     }
 
-    if (isArchiveModsJar(path)) {
-      modJarTotal += 1;
-      const filename = path.split("/").pop();
-      const inspection = inspectModJarCached(null, data, loaderType);
-      const { modId, requiredDeps } = extractModDeps(data, loaderType);
-      const decision = decideWithClientSignals({
-        inspection,
-        providerServerSide: null,
-        modId,
-        filename,
-        sha1: null,
-        buffer: data
-      });
-      if (!decision.install) {
-        skippedClient += 1;
-        msgLog.debugExtended(
-          `[install-modpack] skip archive mod (client-only, ${decision.source}): ${filename}`
-        );
-        if (decision.rescuable) {
-          toPark.push({
-            path: `mods-disabled/${filename}`,
-            buffer: data,
-            filename,
-            modId
-          });
-        }
-        continue;
-      }
-      addJarToModIndex(modIndex, filename, data, { modId, requiredDeps });
-      const risk = assessClientSignals(data);
-      if (risk.risk || risk.advisory) {
-        crashRiskWarnings.push({ filename, path, detail: risk.detail, modId });
-        msgLog.warn(`[install-modpack] client-signal (archive): ${filename}: ${risk.detail}`);
-      }
+    if (!isArchiveModsJar(path)) {
+      toUpload.push({ path, buffer: data });
+      continue;
     }
 
-    toUpload.push({ path, buffer: data });
+    modJarTotal += 1;
+    const filename = path.split("/").pop();
+    const inspection = inspectModJarCached(null, data, loaderType);
+    const { modId, requiredDeps } = extractModDeps(data, loaderType);
+    const decision = decideWithClientSignals({
+      inspection,
+      providerServerSide: null,
+      modId,
+      filename,
+      sha1: null,
+      buffer: data
+    });
+    modInfos.push({
+      path,
+      filename,
+      buffer: data,
+      modId,
+      requiredDeps,
+      isClientOnly: !decision.install,
+      rescuable: decision.rescuable,
+      source: decision.source,
+      // Archive entries carry no provider metadata, so nothing is vouched and
+      // client-dep propagation applies uniformly.
+      providerServerSide: null
+    });
   }
   flushModInspectorCache();
+
+  // Pass 2: rescue libraries an installed mod hard-requires, then propagate
+  // skips down the dependency chain. Without this an archive install had no
+  // recovery from a single client-signals false positive (see ATM9/cofh_core).
+  const { rescued } = applyDependencyRescue(modInfos);
+  if (rescued.length) {
+    msgLog.log(`[install-modpack] archive dep-rescue reinstated ${rescued.length} mod(s): ${rescued.join(", ")}`);
+  }
+
+  // Pass 3: commit the decisions.
+  for (const info of modInfos) {
+    if (info.isClientOnly) {
+      skippedClient += 1;
+      msgLog.debugExtended(
+        `[install-modpack] skip archive mod (client-only, ${info.source}): ${info.filename}`
+      );
+      if (info.rescuable) {
+        toPark.push({
+          path: `mods-disabled/${info.filename}`,
+          buffer: info.buffer,
+          filename: info.filename,
+          modId: info.modId
+        });
+      }
+      continue;
+    }
+    addJarToModIndex(modIndex, info.filename, info.buffer, {
+      modId: info.modId, requiredDeps: info.requiredDeps
+    });
+    const risk = assessClientSignals(info.buffer);
+    if (risk.risk || risk.advisory) {
+      crashRiskWarnings.push({ filename: info.filename, path: info.path, detail: risk.detail, modId: info.modId });
+      msgLog.warn(`[install-modpack] client-signal (archive): ${info.filename}: ${risk.detail}`);
+    }
+    toUpload.push({ path: info.path, buffer: info.buffer });
+  }
 
   if (toUpload.length === 0 && toPark.length === 0) {
     msgLog.error("[install-modpack] archive contained no uploadable files after extract/filter");
@@ -600,5 +661,13 @@ module.exports = {
   buildProgressBar,
   installFilePlan,
   installArchiveBuffer,
-  detectNestedArchiveRoot
+  detectNestedArchiveRoot,
+  // Exported for scripts/modpack_preflight.js (Tier 1). The preflight must run
+  // the same classification the install runs, minus the uploads — reimplementing
+  // it there would let the two drift and make a green preflight meaningless.
+  decideWithClientSignals,
+  applyDependencyRescue,
+  normalizeArchiveEntryPath,
+  shouldSkipArchiveEntry,
+  isArchiveModsJar
 };

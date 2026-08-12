@@ -32,34 +32,66 @@ function isMixinInfrastructureJar({ modId = null, filename = null } = {}) {
 // Core / pack-defining mods — never persist or honor learned crashes-server skips.
 // False positives here (stack frames, MissingMods collateral) brick entire packs
 // (e.g. EnderIO skipped → GasConduits MissingModsException on MC Eternal).
-const PROTECTED_LEARNED_MOD_IDS = new Set([
-  "minecraft", "forge", "neoforge", "fabricloader", "fabric-api", "java",
-  "enderio", "enderioconduits", "enderiobase", "enderiopowertools", "enderiomachines",
-  "gregtech", "gregtechceu", "gtceu", "kubejs", "rhino", "architectury",
-  "groovyscript", "llibrary",
-  "codechickenlib", "cofhcore", "mantle", "thermalexpansion",
-  "thermalfoundation", "mekanism", "create", "ae2", "appliedenergistics2",
-  "ic2", "industrialcraft", "thaumcraft", "botania", "tconstruct",
-  "frostedheart", "caupona", "guideme",
-  // Pack-defining industrial mods — never leave parked as "missing deps".
-  "modern_industrialization", "powah",
-  // Colony packs die without this; stack-frame quarantine was collateral.
-  "minecolonies",
-  "ftblibrary", "ftbchunks", "ftbquests", "ftbteams",
-  "astralsorcery",
-  // Script hosts / pack-title content — never sticky-learn as crashes-server.
-  "crafttweaker", "contenttweaker", "mtlib", "modtweaker",
-  "the_vault", "irons_spellbooks", "custommachinery"
-]);
+// The list lives in data/protected_mods.json so it stays countable and capped —
+// each entry carries the per-pack rationale that justified adding it.
+const { ids: PROTECTED_LEARNED_MOD_IDS, filenameIds: PROTECTED_FILENAME_IDS } = loadProtectedModIds();
+
+function loadProtectedModIds() {
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(__dirname, "../data/protected_mods.json"), "utf8"));
+    const entries = data.entries ?? [];
+    return {
+      ids: new Set(entries.map(e => String(e.modId).toLowerCase())),
+      // Entries opted out of filename matching (loader/runtime cores) — see the
+      // data file's _comment for why "forge" as a filename token is destructive.
+      filenameIds: new Set(
+        entries.filter(e => e.filenameMatch !== false).map(e => String(e.modId).toLowerCase())
+      )
+    };
+  } catch {
+    // An unreadable list must not silently disable protection — the boot loop
+    // would then be free to quarantine loader cores. Keep the irreducible set,
+    // all modId-only.
+    const core = new Set([ "minecraft", "forge", "neoforge", "fabricloader", "fabric-api", "java" ]);
+    return { ids: core, filenameIds: new Set() };
+  }
+}
+
+// Mod authors are inconsistent about separators across Minecraft generations:
+// CoFH Core is `cofhcore` on 1.12 and `cofh_core` on 1.16+, Thermal is
+// `thermalfoundation` then `thermal_foundation`. Comparing separator-stripped
+// forms makes one list entry cover every spelling — without it, a list that
+// looks correct silently fails to protect the mod it names, which is how
+// cofh_core got skipped on ATM9 while `cofhcore` sat in the list.
+function stripSeparators(s) {
+  return String(s ?? "").toLowerCase().replace(/[-_.]/g, "");
+}
+
+const PROTECTED_IDS_NORMALIZED = new Set(
+  [ ...PROTECTED_LEARNED_MOD_IDS ].map(stripSeparators)
+);
+const PROTECTED_FILENAME_IDS_NORMALIZED = new Set(
+  [ ...PROTECTED_FILENAME_IDS ].map(stripSeparators)
+);
 
 function isProtectedLearnedMod({ modId = null, filename = null } = {}) {
   const id = String(modId ?? "").toLowerCase();
   if (id && PROTECTED_LEARNED_MOD_IDS.has(id)) return true;
+  if (id && PROTECTED_IDS_NORMALIZED.has(stripSeparators(id))) return true;
+
   const name = String(filename ?? "").toLowerCase().replace(/_/g, "-");
   if (!name) return false;
   if (/^crafttweaker2?[-_.]/i.test(name)) return true;
   if (/^contenttweaker[-_.]/i.test(name)) return true;
-  for (const protectedId of PROTECTED_LEARNED_MOD_IDS) {
+  // The jar's leading name segment, separator-stripped, compared exactly.
+  // "cofh_core-1.20.1-11.0.2.56.jar" → "cofhcore"; "CoFHCore-1.12.2-…" → "cofhcore".
+  // Exact comparison keeps this tight: a loose subsequence match would also hit
+  // "journeymap" and "MouseTweaks", and a false positive here force-*installs* a
+  // client-only mod, which crashes the server just as surely as a wrong skip.
+  const leadingName = name.match(/^(.+?)[-_.]v?\d/)?.[1] ?? name.replace(/\.jar$/, "");
+  if (PROTECTED_FILENAME_IDS_NORMALIZED.has(stripSeparators(leadingName))) return true;
+
+  for (const protectedId of PROTECTED_FILENAME_IDS) {
     if (protectedId.length < 5) continue;
     const normalized = protectedId.replace(/_/g, "-");
     const token = new RegExp(`(?:^|[^a-z0-9])${normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:[^a-z0-9]|$)`, "i");

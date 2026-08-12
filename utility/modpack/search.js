@@ -8,6 +8,8 @@
  * CurseForge requires sortField=Popularity or searchFilter returns unrelated junk.
  */
 
+const fs = require("fs");
+const path = require("path");
 const msgLog = require("../logger.js");
 
 const CURSEFORGE_BASE_URL = "https://api.curseforge.com/v1";
@@ -18,25 +20,47 @@ const SEARCH_BUDGET_MS = 2000;
 const CACHE_TTL_MS = 60_000;
 const MAX_CHOICES = 25;
 const PROVIDER_LIMIT = 25;
+/**
+ * Autocomplete fires per keystroke and each query prefix is a distinct cache
+ * key, so every extra character is a fresh fan-out against a rate-limited
+ * CurseForge. Three characters is the shortest prefix that identifies a pack
+ * ("atm", "sop", "rlc") while dropping the noisiest one- and two-key bursts.
+ */
+const MIN_QUERY_LENGTH = 3;
+/** Each slug costs a CF *and* an MR request — two is enough for alias + slugified. */
+const MAX_CANDIDATE_SLUGS = 2;
 /** CurseForge ModsSearchSortField.Popularity — required for usable searchFilter results. */
 const CF_SORT_POPULARITY = 2;
 
 /**
  * Extra Modrinth/CurseForge slugs to resolve when provider text search misses
- * well-known packs (e.g. Modrinth does not return project `sop` for "Simply Optimized").
+ * well-known packs (e.g. Modrinth does not return project `sop` for "Simply
+ * Optimized"). Lives in data/search_aliases.json so the per-pack surface stays
+ * countable and capped — each entry carries the rationale that justified it.
  */
-const QUERY_SLUG_ALIASES = {
-  "simply optimized": [ "sop" ],
-  sop: [ "sop" ],
-  rlcraft: [ "rlcraft" ],
-  "rl craft": [ "rlcraft" ],
-  pixelmon: [ "the-pixelmon-modpack" ],
-  "create above and beyond": [ "create-above-and-beyond" ],
-  "create aab": [ "create-above-and-beyond" ],
-  aab: [ "create-above-and-beyond" ]
-};
+const QUERY_SLUG_ALIASES = loadQuerySlugAliases();
+
+function loadQuerySlugAliases() {
+  try {
+    const data = JSON.parse(fs.readFileSync(path.join(__dirname, "../../data/search_aliases.json"), "utf8"));
+    const table = {};
+    for (const entry of data.entries ?? []) {
+      if (entry?.query && Array.isArray(entry.slugs)) table[entry.query] = entry.slugs;
+    }
+    return table;
+  } catch (err) {
+    // Aliases are a ranking nicety, not a correctness requirement — degrade to
+    // provider search rather than failing autocomplete outright.
+    msgLog.warn(`[modpack-search] could not load search aliases: ${err.message}`);
+    return {};
+  }
+}
 
 const cache = new Map(); // queryLower → { at, results }
+// queryLower → in-flight promise. A user typing quickly re-fires the same prefix
+// before the first round trip lands; without this each keystroke starts its own
+// fan-out and the cache only helps after they all return.
+const inFlight = new Map();
 
 function cacheGet(key) {
   const hit = cache.get(key);
@@ -260,7 +284,9 @@ function candidateSlugs(query) {
   if (compact.length >= 2 && compact !== slugified) slugs.add(compact);
   // Single-token queries often are already CF/MR slugs (rlcraft, atm9, sop).
   if (!q.includes(" ") && q.length >= 2) slugs.add(q);
-  return [ ...slugs ];
+  // Insertion order puts the alias first, then the slugified query — the two
+  // most likely to hit. Everything after is speculative and not worth 2 requests.
+  return [ ...slugs ].slice(0, MAX_CANDIDATE_SLUGS);
 }
 
 /** Resolve exact slug hits on both providers (fills gaps when text search misses). */
@@ -282,12 +308,21 @@ async function resolveSlugHits(query) {
  */
 async function searchModpacksDetailed(query) {
   const q = String(query || "").trim();
-  if (q.length < 2) return [];
+  if (q.length < MIN_QUERY_LENGTH) return [];
 
   const cacheKey = `detailed:${q.toLowerCase()}`;
   const cached = cacheGet(cacheKey);
   if (cached) return cached;
 
+  const pending = inFlight.get(cacheKey);
+  if (pending) return pending;
+
+  const run = fetchModpacksDetailed(q, cacheKey).finally(() => inFlight.delete(cacheKey));
+  inFlight.set(cacheKey, run);
+  return run;
+}
+
+async function fetchModpacksDetailed(q, cacheKey) {
   const settled = await Promise.allSettled([
     withTimeout(searchCurseForge(q), SEARCH_BUDGET_MS),
     withTimeout(searchModrinth(q), SEARCH_BUDGET_MS),
@@ -328,7 +363,7 @@ async function searchModpacksDetailed(query) {
  */
 async function searchModpacks(query) {
   const q = String(query || "").trim();
-  if (q.length < 2) return [];
+  if (q.length < MIN_QUERY_LENGTH) return [];
 
   const cacheKey = q.toLowerCase();
   const cached = cacheGet(cacheKey);
@@ -352,6 +387,7 @@ function parsePackChoice(value) {
 
 function clearSearchCache() {
   cache.clear();
+  inFlight.clear();
 }
 
 module.exports = {
@@ -362,8 +398,11 @@ module.exports = {
   normalizeSearchText,
   scoreHit,
   rankHits,
+  candidateSlugs,
   SEARCH_BUDGET_MS,
   CACHE_TTL_MS,
   PROVIDER_LIMIT,
+  MIN_QUERY_LENGTH,
+  MAX_CANDIDATE_SLUGS,
   QUERY_SLUG_ALIASES
 };

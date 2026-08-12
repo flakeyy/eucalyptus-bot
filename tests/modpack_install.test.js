@@ -50,7 +50,9 @@ jest.mock("../utility/client_signals.js", () => ({
 }));
 
 const AdmZip = require("adm-zip");
-const { installFilePlan, buildProgressBar, installArchiveBuffer, detectNestedArchiveRoot } = require("../utility/modpack_install.js");
+const {
+  installFilePlan, buildProgressBar, installArchiveBuffer, detectNestedArchiveRoot, applyDependencyRescue
+} = require("../utility/modpack_install.js");
 const http = require("../utility/modpack_http.js");
 const sf = require("../utility/server_functions.js");
 const inspector = require("../utility/mod_inspector.js");
@@ -533,4 +535,113 @@ describe("installArchiveBuffer", () => {
     expect(entries).not.toContain("mods/client.jar");
     expect(entries.some(e => e.startsWith("PackRoot/"))).toBe(false);
   });
+
+  // Regression (ATM9): an archive install used to decide each jar in one
+  // streaming pass with no rescue, so a client-signals false positive on a
+  // library was terminal — cofh_core was skipped while five Thermal mods that
+  // hard-require it installed, and the server could not boot.
+  test("rescues a skipped library that an installed mod hard-requires", async () => {
+    // Slot 8 (client-signals) is what misfired on cofh_core — a bytecode signal,
+    // not self-declared metadata, so the skip is rescuable.
+    clientSignals.assessClientSignals.mockImplementation(buf =>
+      buf.toString() === "lib"
+        ? { risk: true, detail: "server-applied client mixin config", reason: "mixin" }
+        : { risk: false, detail: null, reason: "clean" });
+    inspector.extractModDeps.mockImplementation(buf => {
+      const text = buf.toString();
+      if (text === "lib") return { modId: "corelib", requiredDeps: [] };
+      if (text === "dependent") return { modId: "useslib", requiredDeps: [ "corelib" ] };
+      return { modId: null, requiredDeps: [] };
+    });
+
+    const zip = new AdmZip();
+    zip.addFile("mods/corelib.jar", Buffer.from("lib"));
+    zip.addFile("mods/dependent.jar", Buffer.from("dependent"));
+
+    const res = await installArchiveBuffer(ctx(), zip.toBuffer());
+
+    expect(res.installed).toBe(2);
+    expect(res.skippedClient).toBe(0);
+    expect(lastBatchEntries()).toEqual(
+      expect.arrayContaining([ "mods/corelib.jar", "mods/dependent.jar" ])
+    );
+  });
+
+  test("still skips a client-only mod nothing depends on", async () => {
+    inspector.inspectModJarCached.mockImplementation((_sha, buf) =>
+      buf.toString() === "client" ? clientVerdict("high") : unknownVerdict);
+    inspector.extractModDeps.mockImplementation(buf => (
+      buf.toString() === "client"
+        ? { modId: "lonelyclient", requiredDeps: [] }
+        : { modId: "server", requiredDeps: [] }
+    ));
+
+    const zip = new AdmZip();
+    zip.addFile("mods/server.jar", Buffer.from("server"));
+    zip.addFile("mods/client.jar", Buffer.from("client"));
+
+    const res = await installArchiveBuffer(ctx(), zip.toBuffer());
+
+    expect(res.installed).toBe(1);
+    expect(res.skippedClient).toBe(1);
+    expect(lastBatchEntries()).not.toContain("mods/client.jar");
+  });
 });
+
+describe("applyDependencyRescue", () => {
+  const info = (filename, over = {}) => ({
+    filename, modId: filename.replace(/\.jar$/, ""), requiredDeps: [],
+    isClientOnly: false, rescuable: true, source: "test", providerServerSide: null, ...over
+  });
+
+  test("rescues to a fixpoint through a dependency chain", () => {
+    // app → mid → base, with both mid and base wrongly marked client-only.
+    const infos = [
+      info("app.jar", { requiredDeps: [ "mid" ] }),
+      info("mid.jar", { requiredDeps: [ "base" ], isClientOnly: true }),
+      info("base.jar", { isClientOnly: true })
+    ];
+    const { rescued } = applyDependencyRescue(infos);
+    expect(rescued).toEqual(expect.arrayContaining([ "mid.jar", "base.jar" ]));
+    expect(infos.every(i => !i.isClientOnly)).toBe(true);
+  });
+
+  test("never rescues a pure client renderer even when required", () => {
+    // Force-installing sodium crashes the dedicated server on org.lwjgl.Version.
+    const infos = [
+      info("pack.jar", { requiredDeps: [ "sodium" ] }),
+      info("sodium.jar", { modId: "sodium", isClientOnly: true })
+    ];
+    const { rescued } = applyDependencyRescue(infos);
+    expect(rescued).toEqual([]);
+    expect(infos[1].isClientOnly).toBe(true);
+  });
+
+  test("does not rescue a non-rescuable skip", () => {
+    const infos = [
+      info("app.jar", { requiredDeps: [ "hard" ] }),
+      info("hard.jar", { modId: "hard", isClientOnly: true, rescuable: false })
+    ];
+    expect(applyDependencyRescue(infos).rescued).toEqual([]);
+  });
+
+  test("propagates a skip to a dependent that is not provider-vouched", () => {
+    const infos = [
+      info("dependent.jar", { requiredDeps: [ "gone" ] }),
+      info("gone.jar", { modId: "gone", isClientOnly: true, rescuable: false })
+    ];
+    const { propagated } = applyDependencyRescue(infos);
+    expect(propagated).toContain("dependent.jar");
+  });
+
+  test("a provider-vouched mod survives a skipped dependency", () => {
+    const infos = [
+      info("vouched.jar", { requiredDeps: [ "gone" ], providerServerSide: "required" }),
+      info("gone.jar", { modId: "gone", isClientOnly: true, rescuable: false })
+    ];
+    const { propagated } = applyDependencyRescue(infos);
+    expect(propagated).not.toContain("vouched.jar");
+    expect(infos[0].isClientOnly).toBe(false);
+  });
+});
+

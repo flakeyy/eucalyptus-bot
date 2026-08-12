@@ -43,6 +43,15 @@ function makeArchivePackBytes() {
   return zip.toBuffer();
 }
 
+// Same pack wrapped in a single top-level folder — the common CF server-pack
+// layout that Wings' decompress leaves un-flattened.
+function makeNestedArchivePackBytes(root = "PackRoot") {
+  const zip = new AdmZip();
+  zip.addFile(`${root}/mods/servermod.jar`, Buffer.from("server-jar-bytes"));
+  zip.addFile(`${root}/config/foo.toml`, Buffer.from("x = 1\n"));
+  return zip.toBuffer();
+}
+
 // Wire up the happy-path mock returns for server_functions and global.fetch.
 // Pass the already-required serverFunctions module so we don't reach across
 // jest's module registry from inside the fixture.
@@ -88,6 +97,7 @@ module.exports = {
   makeState,
   makeStreamResponse,
   makeArchivePackBytes,
+  makeNestedArchivePackBytes,
   mockHappyPath,
   mockUpToTransfer
 };

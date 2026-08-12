@@ -80,6 +80,8 @@ The bot creates a `pterobot.db` SQLite database on first run.
 | `minecraft_java_map` | Minecraft version thresholds → required Java major. Highest key ≤ the pack's MC version wins; anything older than the lowest key (e.g. 1.7.10) falls back to Java 8. Use patch-aware keys like `1.20.5` / `26.1` when Mojang bumps the requirement mid-series. |
 | `boot_verify` | Boot-verification loop settings (`enabled`, `max_attempts`, timeouts) |
 | `triage` | Optional Claude triage settings (`provider`, `model`, `effort`, `max_calls_per_install`, `min_confidence`). Requires `ANTHROPIC_API_KEY`. |
+| `mod_id_blocklist` | Mod IDs never installed onto a server, whatever the pack says (precedence slot 1 — read by `utility/mod_inspector.js`). Client-only mods that reliably crash a dedicated server. |
+| `mod_id_allowlist` | Mod IDs always installed, overriding client-only detection (precedence slot 2). Use when a provider mislabels a server-capable mod. |
 
 ## First-run setup
 

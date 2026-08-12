@@ -2,9 +2,9 @@
 // Live modpack search against CurseForge + Modrinth with local relevance ranking.
 //
 // Usage:
-//   node scripts/modpack-search.js atm
-//   node scripts/modpack-search.js "better mc" --json
-//   node scripts/modpack-search.js rlcraft --limit 10
+//   node scripts/modpack_search.js atm
+//   node scripts/modpack_search.js "better mc" --json
+//   node scripts/modpack_search.js rlcraft --limit 10
 
 "use strict";
 
@@ -40,7 +40,7 @@ function formatDownloads(n) {
 async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (opts.help || !opts.query) {
-    console.log(`Usage: node scripts/modpack-search.js <query> [--json] [--limit N]
+    console.log(`Usage: node scripts/modpack_search.js <query> [--json] [--limit N]
 
 Fetches up to ${PROVIDER_LIMIT} hits per provider, re-ranks by name/slug relevance.
 Requires CURSEFORGE_API_KEY in .env for CurseForge results (Modrinth works without).`);

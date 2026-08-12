@@ -16,7 +16,7 @@ const msgLog = require("../logger.js");
 const { getErrorMessage } = require("../error_messages.js");
 const { isManifestZip, findClientFileForServerPack, defaultLoaderForLegacyMc } = require("../curseforge.js");
 const { downloadToBuffer } = require("../modpack_http.js");
-const { installFilePlan, installArchiveBuffer } = require("../modpack_install.js");
+const { installFilePlan, installArchiveBuffer, detectNestedArchiveRoot } = require("../modpack_install.js");
 const { verifyServerBoot } = require("../boot_verify.js");
 const { resolveModpackInstall } = require("../modpack_providers.js");
 const { detectLoaderVersionFromBuffer, buildLoaderEggEnv } = require("../loader_version.js");
@@ -319,8 +319,14 @@ async function runModpackJob(state, reporter) {
     // Fast path: Wings pulls the archive from the CDN and decompresses in place.
     // Bytes never round-trip through the bot. Falls back to local extract + chunked
     // upload on any non-2xx (SUMMARY.md notes decompress 500s on some packs).
+    //
+    // Wings extracts as-is, so a pack wrapped in a single top-level folder — the
+    // common CF server-pack layout — would land at /PackName/mods/ with nothing
+    // at /mods. installArchiveBuffer flattens that; the pull cannot. Skip the fast
+    // path when the buffer we already hold shows a nested root.
+    const nestedRoot = detectNestedArchiveRoot(buffer);
     let placedViaPull = false;
-    if (archivePullUrl && !usingClientPack) {
+    if (archivePullUrl && !usingClientPack && !nestedRoot) {
       await progress("Pulling server pack onto the panel (fast path)...", { stage: "place" });
       const pullName = `_modpack_pull_${Date.now()}.zip`;
       try {
@@ -329,36 +335,49 @@ async function runModpackJob(state, reporter) {
           const decStatus = await decompressFile(serverId, userId, "/", pullName);
           await deleteServerFiles(serverId, userId, [ pullName ]).catch(() => {});
           if (decStatus >= 200 && decStatus < 300) {
-            placedViaPull = true;
-            unavailableMods = [];
-            crashRiskWarnings = [];
-            modIndex = createModIndex();
-            // Strip server-icon — forces AWT on headless yolks.
-            try {
-              const rootFiles = await listServerFiles(serverId, userId, "/");
-              const icons = (rootFiles || [])
-                .map(f => f.attributes?.name)
-                .filter(n => n && /^server-icon\.(png|jpe?g)$/i.test(n));
-              if (icons.length) await deleteServerFiles(serverId, userId, icons).catch(() => {});
-            } catch { /* ignore */ }
+            const pulledIndex = createModIndex();
             // Sparse index: filenames only — enough for jar-name attribution.
+            let jarCount = 0;
             try {
               const modEntries = await listServerFiles(serverId, userId, "/mods");
               for (const f of modEntries || []) {
                 const name = f.attributes?.name;
                 if (name && /\.jar$/i.test(name)) {
-                  modIndex.byFileName.set(name.toLowerCase(), name);
+                  pulledIndex.byFileName.set(name.toLowerCase(), name);
                 }
               }
-              manifestInstalled = modIndex.byFileName.size;
-              manifestTotal = manifestInstalled;
+              jarCount = pulledIndex.byFileName.size;
             } catch {
-              manifestInstalled = 0;
-              manifestTotal = 0;
+              jarCount = 0;
             }
-            msgLog.log(
-              `[install-modpack] Wings pull path ok: ${manifestInstalled} jar(s) under mods/`
-            );
+
+            // Every call returned 2xx yet /mods is empty: the archive's layout
+            // defeated an as-is extract (a nested root detectNestedArchiveRoot
+            // doesn't recognise, for instance). That is a fallback trigger, not
+            // a result — a "success" with no mods is the worst outcome here.
+            if (jarCount === 0) {
+              msgLog.warn(
+                "[install-modpack] Wings pull decompressed but /mods is empty; falling back to local extract"
+              );
+            } else {
+              placedViaPull = true;
+              unavailableMods = [];
+              crashRiskWarnings = [];
+              modIndex = pulledIndex;
+              manifestInstalled = jarCount;
+              manifestTotal = jarCount;
+              // Strip server-icon — forces AWT on headless yolks.
+              try {
+                const rootFiles = await listServerFiles(serverId, userId, "/");
+                const icons = (rootFiles || [])
+                  .map(f => f.attributes?.name)
+                  .filter(n => n && /^server-icon\.(png|jpe?g)$/i.test(n));
+                if (icons.length) await deleteServerFiles(serverId, userId, icons).catch(() => {});
+              } catch { /* ignore */ }
+              msgLog.log(
+                `[install-modpack] Wings pull path ok: ${manifestInstalled} jar(s) under mods/`
+              );
+            }
           } else {
             msgLog.warn(`[install-modpack] Wings decompress after pull returned ${decStatus}; falling back`);
           }

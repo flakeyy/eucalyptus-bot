@@ -149,3 +149,73 @@ describe("verdict store", () => {
     expect(raw.entries.realsha.learnedVerdict).toBe("crashes-server");
   });
 });
+
+describe("data/protected_mods.json", () => {
+  const protectedMods = require("../data/protected_mods.json");
+
+  test("stays under its declared cap", () => {
+    // Each entry is a mod the boot loop can never quarantine. Growth past the
+    // cap should be a decision, not something a later reader discovers.
+    expect(protectedMods.entries.length).toBeLessThanOrEqual(protectedMods.max_entries);
+  });
+
+  test("every entry carries a lowercase modId and a rationale", () => {
+    for (const entry of protectedMods.entries) {
+      expect(entry.modId).toBe(String(entry.modId).toLowerCase());
+      expect(entry.modId).not.toMatch(/\s/);
+      expect(typeof entry.note).toBe("string");
+      expect(entry.note.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("modIds are unique", () => {
+    const ids = protectedMods.entries.map(e => e.modId);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test("the data file is what isProtectedLearnedMod actually consults", () => {
+    for (const entry of protectedMods.entries) {
+      expect(store.isProtectedLearnedMod({ modId: entry.modId })).toBe(true);
+    }
+    expect(store.isProtectedLearnedMod({ modId: "definitely-not-in-the-list" })).toBe(false);
+  });
+});
+
+describe("isProtectedLearnedMod matching", () => {
+  // Regression: CoFH Core is `cofhcore` on 1.12 and `cofh_core` on 1.16+.
+  // The list carried only the 1.12 spelling, so on ATM9 (1.20.1) cofh_core was
+  // skipped as client-only at install time while five Thermal mods that
+  // hard-require it were installed — the server could not boot.
+  test.each([
+    [ "modern underscored modId", { modId: "cofh_core" } ],
+    [ "modern underscored filename", { filename: "cofh_core-1.20.1-11.0.2.56.jar" } ],
+    [ "legacy unseparated filename", { filename: "CoFHCore-1.12.2-4.6.6.1-universal.jar" } ],
+    [ "thermal_expansion filename", { filename: "thermal_expansion-1.20.1-11.0.1.29.jar" } ],
+    [ "thermal_foundation filename", { filename: "thermal_foundation-1.20.1-11.0.6.70.jar" } ]
+  ])("protects %s", (_label, input) => {
+    expect(store.isProtectedLearnedMod(input)).toBe(true);
+  });
+
+  // Regression: "forge" is 5 chars, so the filename token loop matched every
+  // jar named *-forge-*.jar. That silently protected most of a Forge pack from
+  // quarantine. Loader cores are modId-only via "filenameMatch": false.
+  test.each([
+    [ "journeymap-1.20.1-5.10.3-forge.jar" ],
+    [ "MouseTweaks-forge-mc1.20.1-2.25.1.jar" ],
+    [ "Controlling-forge-1.20.1-12.0.2.jar" ],
+    [ "sodiumdynamiclights-forge-1.0.10-1.20.1.jar" ]
+  ])("does not protect client mod %s merely for containing 'forge'", filename => {
+    expect(store.isProtectedLearnedMod({ filename })).toBe(false);
+  });
+
+  test("loader cores are still protected by modId", () => {
+    for (const modId of [ "forge", "neoforge", "minecraft", "fabricloader", "fabric-api", "java" ]) {
+      expect(store.isProtectedLearnedMod({ modId })).toBe(true);
+    }
+  });
+
+  test("a protected id does not match an unrelated longer name", () => {
+    expect(store.isProtectedLearnedMod({ filename: "createaddon-1.20.1.jar" })).toBe(false);
+    expect(store.isProtectedLearnedMod({ modId: "jei" })).toBe(false);
+  });
+});

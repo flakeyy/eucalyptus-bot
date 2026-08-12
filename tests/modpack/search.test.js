@@ -11,7 +11,9 @@ const {
   clearSearchCache,
   scoreHit,
   rankHits,
-  normalizeSearchText
+  normalizeSearchText,
+  candidateSlugs,
+  MAX_CANDIDATE_SLUGS
 } = require("../../utility/modpack/search.js");
 
 describe("parsePackChoice", () => {
@@ -75,7 +77,34 @@ describe("searchModpacks", () => {
 
   test("returns empty for short queries", async () => {
     expect(await searchModpacks("a")).toEqual([]);
+    expect(await searchModpacks("at")).toEqual([]);
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  test("concurrent identical prefixes share one fan-out", async () => {
+    global.fetch.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ data: [], hits: [] })
+    }));
+
+    // Same keystroke prefix fired three times before the first round trip lands.
+    const [ a, b, c ] = await Promise.all([
+      searchModpacks("rlcraft"), searchModpacks("rlcraft"), searchModpacks("rlcraft")
+    ]);
+
+    expect(a).toEqual(b);
+    expect(b).toEqual(c);
+    const singlePassCalls = global.fetch.mock.calls.length;
+    clearSearchCache();
+    await searchModpacks("rlcraft");
+    // One deduped pass costs the same as one lone pass — not three.
+    expect(global.fetch.mock.calls.length).toBe(singlePassCalls * 2);
+  });
+
+  test("slug resolution is capped so a query cannot fan out unbounded", () => {
+    // "create above and beyond" hits the alias table and also slugifies/compacts.
+    expect(candidateSlugs("create above and beyond").length).toBeLessThanOrEqual(MAX_CANDIDATE_SLUGS);
+    expect(candidateSlugs("all the mods 10").length).toBeLessThanOrEqual(MAX_CANDIDATE_SLUGS);
   });
 
   test("merges CF + MR results, ranks by relevance, and caches", async () => {
@@ -155,5 +184,34 @@ describe("searchModpacks", () => {
     const hits = await searchModpacksDetailed("rlcraft");
     expect(hits[0].value).toBe("cf:285109");
     expect(hits[0].score).toBeGreaterThan(1000);
+  });
+});
+
+describe("data/search_aliases.json", () => {
+  const aliases = require("../../data/search_aliases.json");
+
+  test("stays under its declared cap", () => {
+    // Growth past the cap is a decision to make, not a drift to discover:
+    // every alias costs two upstream requests on each matching keystroke.
+    expect(aliases.entries.length).toBeLessThanOrEqual(aliases.max_entries);
+  });
+
+  test("every entry carries a normalized query, slugs, and a rationale", () => {
+    for (const entry of aliases.entries) {
+      expect(entry.query).toBe(normalizeSearchText(entry.query));
+      expect(Array.isArray(entry.slugs) && entry.slugs.length).toBeTruthy();
+      expect(typeof entry.note).toBe("string");
+      expect(entry.note.length).toBeGreaterThan(0);
+    }
+  });
+
+  test("queries are unique", () => {
+    const queries = aliases.entries.map(e => e.query);
+    expect(new Set(queries).size).toBe(queries.length);
+  });
+
+  test("aliased queries resolve their slug first", () => {
+    expect(candidateSlugs("simply optimized")[0]).toBe("sop");
+    expect(candidateSlugs("aab")[0]).toBe("create-above-and-beyond");
   });
 });

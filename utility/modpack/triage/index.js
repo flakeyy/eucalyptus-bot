@@ -20,6 +20,20 @@ const DEFAULTS = {
 
 const CONFIDENCE_RANK = { low: 0, medium: 1, high: 2 };
 
+// max_tokens caps thinking *and* response together, and it is a cap rather than
+// a reservation — unused budget costs nothing. Measured against the live API at
+// effort "medium", a verdict is ~100-140 output tokens even with a 29K-character
+// prompt and adaptive thinking on, so the previous 1024 was not actually
+// truncating. This is headroom, not a fix: the same prompt at effort "max"
+// produced 584 output tokens, so 1024 would be uncomfortably close if effort
+// were ever raised. Thinking is disabled because this is a pure classifier with
+// no tool use, so the disabled-thinking tool-call failure mode does not apply.
+const MAX_TOKENS = 8192;
+// The boot loop's total_budget_ms is the whole install's patience. The SDK
+// default (10 min × 2 retries) could eat all of it on one hung call.
+const REQUEST_TIMEOUT_MS = 60_000;
+const MAX_RETRIES = 1;
+
 function sha1(text) {
   return crypto.createHash("sha1").update(String(text)).digest("hex");
 }
@@ -32,16 +46,21 @@ function createNoneProvider() {
   };
 }
 
-function createAnthropicProvider(settings) {
-  let client = null;
-  try {
-    // Lazy require so missing dep doesn't break boot without triage.
-    const Anthropic = require("@anthropic-ai/sdk");
-    if (!process.env.ANTHROPIC_API_KEY) return createNoneProvider();
-    client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  } catch (err) {
-    msgLog.debugExtended(`[triage] anthropic sdk unavailable: ${err.message}`);
-    return createNoneProvider();
+function createAnthropicProvider(settings, injectedClient = null) {
+  let client = injectedClient;
+  if (!client) {
+    try {
+      // Lazy require so missing dep doesn't break boot without triage.
+      const Anthropic = require("@anthropic-ai/sdk");
+      if (!process.env.ANTHROPIC_API_KEY) return createNoneProvider();
+      client = new Anthropic({
+        apiKey: process.env.ANTHROPIC_API_KEY,
+        maxRetries: MAX_RETRIES
+      });
+    } catch (err) {
+      msgLog.debugExtended(`[triage] anthropic sdk unavailable: ${err.message}`);
+      return createNoneProvider();
+    }
   }
 
   return {
@@ -50,14 +69,21 @@ function createAnthropicProvider(settings) {
       try {
         const res = await client.messages.parse({
           model: settings.model || DEFAULTS.model,
-          max_tokens: 1024,
+          max_tokens: MAX_TOKENS,
+          thinking: { type: "disabled" },
           output_config: {
             effort: settings.effort || DEFAULTS.effort,
             format: { type: "json_schema", schema: VERDICT_SCHEMA }
           },
           messages: [ { role: "user", content: prompt } ]
-        });
-        return res.parsed_output ?? null;
+        }, { timeout: REQUEST_TIMEOUT_MS });
+        if (!res?.parsed_output) {
+          // Name the truncation rather than no-oping silently — a null verdict
+          // and a budget overrun look identical from the boot loop.
+          msgLog.warn(`[triage] no verdict parsed (stop_reason: ${res?.stop_reason ?? "unknown"})`);
+          return null;
+        }
+        return res.parsed_output;
       } catch (err) {
         msgLog.warn(`[triage] anthropic call failed: ${err.message}`);
         return null;
@@ -161,7 +187,11 @@ module.exports = {
   diagnose,
   sanitizeVerdict,
   createNoneProvider,
+  createAnthropicProvider,
   buildPrompt,
   DEFAULTS,
+  MAX_TOKENS,
+  REQUEST_TIMEOUT_MS,
+  MAX_RETRIES,
   VERDICT_SCHEMA
 };

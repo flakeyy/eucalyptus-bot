@@ -63,4 +63,59 @@ describe("DiscordReporter", () => {
     await r.progress("after");
     expect(channelMessage.edit).toHaveBeenCalled();
   });
+
+  test("done() past the window reaches the channel, not a dead token", async () => {
+    const editReply = jest.fn().mockResolvedValue(undefined);
+    const channelMessage = { edit: jest.fn().mockResolvedValue(undefined) };
+    const channel = { send: jest.fn().mockResolvedValue(channelMessage) };
+    const r = new DiscordReporter({ editReply }, { channel, handoffMs: 100, throttleMs: 0 });
+    // The job crossed the handoff window without ever emitting a progress edit,
+    // so done() is the first call past it — the exact case the guard used to miss.
+    r._startedAt = Date.now() - 200;
+
+    await r.done("**Installation Complete**");
+
+    expect(channel.send).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(channel.send.mock.calls[0][0])).toContain("Installation Complete");
+  });
+
+  test("done() before the window still edits the original reply", async () => {
+    const editReply = jest.fn().mockResolvedValue(undefined);
+    const channel = { send: jest.fn() };
+    const r = new DiscordReporter({ editReply }, { channel, handoffMs: 100_000, throttleMs: 0 });
+
+    await r.done("**Installation Complete**");
+
+    expect(channel.send).not.toHaveBeenCalled();
+    expect(JSON.stringify(editReply.mock.calls.at(-1))).toContain("Installation Complete");
+  });
+
+  test("done() after an earlier handoff edits the channel message", async () => {
+    const editReply = jest.fn().mockResolvedValue(undefined);
+    const channelMessage = { edit: jest.fn().mockResolvedValue(undefined) };
+    const channel = { send: jest.fn().mockResolvedValue(channelMessage) };
+    const r = new DiscordReporter({ editReply }, { channel, handoffMs: 100, throttleMs: 0 });
+    r._startedAt = Date.now() - 200;
+    await r.progress("late");
+
+    await r.done("**Installation Complete**");
+
+    expect(channel.send).toHaveBeenCalledTimes(1); // no second channel message
+    expect(JSON.stringify(channelMessage.edit.mock.calls.at(-1))).toContain("Installation Complete");
+  });
+
+  test("opts.startedAt anchors the handoff clock to the original interaction", async () => {
+    const editReply = jest.fn().mockResolvedValue(undefined);
+    const channelMessage = { edit: jest.fn().mockResolvedValue(undefined) };
+    const channel = { send: jest.fn().mockResolvedValue(channelMessage) };
+    // The user sat on the wizard for a while before confirming: the token is
+    // already 200ms old at construction even though the job just started.
+    const r = new DiscordReporter({ editReply }, {
+      channel, handoffMs: 100, throttleMs: 0, startedAt: Date.now() - 200
+    });
+
+    await r.progress("first update");
+
+    expect(channel.send).toHaveBeenCalledTimes(1);
+  });
 });

@@ -1,0 +1,91 @@
+{
+  "_comment": [
+    "Core / pack-defining mods that must never be persisted or honored as a",
+    "learned crashes-server skip. A false positive here does not degrade a pack,",
+    "it bricks it: quarantining EnderIO on MC Eternal made GasConduits throw",
+    "MissingModsException and took the whole install down.",
+    "",
+    "Consulted by isProtectedLearnedMod (utility/verdict_store.js) and by the",
+    "client-signal remediation in utility/boot_remediations/jars.js.",
+    "",
+    "Matching is by lowercase modId (separator-insensitive, so one entry covers",
+    "both 'cofhcore' and 'cofh_core'), plus a filename match for ids of 5+",
+    "characters — short ids like 'ae2' or 'ic2' are modId-only so they cannot",
+    "match inside unrelated filenames.",
+    "",
+    "\"filenameMatch\": false marks an entry as modId-only regardless of length.",
+    "Loader/runtime cores need this: 'forge' as a filename token matched EVERY",
+    "jar named *-forge-*.jar (journeymap, MouseTweaks, Controlling...), silently",
+    "protecting most of a Forge pack from ever being quarantined.",
+    "",
+    "max_entries is enforced by tests/verdict_store.test.js. Growing past it is a",
+    "decision to make deliberately, not a drift to discover later: each addition",
+    "is a mod the boot loop can no longer quarantine, so a genuinely broken jar",
+    "in this list becomes an install that fails with no remediation available."
+  ],
+  "max_entries": 60,
+  "entries": [
+    { "modId": "minecraft", "filenameMatch": false, "note": "Loader/runtime core — never a crash culprit in the sense the loop can act on." },
+    { "modId": "forge", "filenameMatch": false, "note": "Loader/runtime core. modId-only: as a filename token it matched every *-forge-*.jar in a Forge pack." },
+    { "modId": "neoforge", "filenameMatch": false, "note": "Loader/runtime core. modId-only for the same reason as forge." },
+    { "modId": "fabricloader", "filenameMatch": false, "note": "Loader/runtime core." },
+    { "modId": "fabric-api", "filenameMatch": false, "note": "Loader/runtime core — nearly every Fabric mod hard-depends on it. modId-only: 'fabric-api' appears in many Fabric jar names." },
+    { "modId": "java", "filenameMatch": false, "note": "Loader/runtime core — appears in System Details inventory noise." },
+
+    { "modId": "enderio", "note": "EnderIO family: quarantine on MC Eternal caused GasConduits MissingModsException." },
+    { "modId": "enderioconduits", "note": "EnderIO family — see enderio." },
+    { "modId": "enderiobase", "note": "EnderIO family — see enderio." },
+    { "modId": "enderiopowertools", "note": "EnderIO family — see enderio." },
+    { "modId": "enderiomachines", "note": "EnderIO family — see enderio." },
+
+    { "modId": "gregtech", "note": "GregTech line — pack-defining; dependents cascade on removal." },
+    { "modId": "gregtechceu", "note": "GregTech line — see gregtech." },
+    { "modId": "gtceu", "note": "GregTech line — see gregtech." },
+
+    { "modId": "kubejs", "note": "Script host — pack scripts fail to load without it, cascading unrelated errors." },
+    { "modId": "rhino", "note": "KubeJS script engine — see kubejs." },
+    { "modId": "architectury", "note": "Cross-loader shim that most modern packs depend on transitively." },
+    { "modId": "groovyscript", "note": "Script host — see kubejs." },
+    { "modId": "llibrary", "note": "Legacy shared library with wide 1.12-era dependents." },
+
+    { "modId": "codechickenlib", "note": "Shared library — wide 1.12-era dependent set." },
+    { "modId": "cofhcore", "note": "Shared library — Thermal series depends on it." },
+    { "modId": "mantle", "note": "Shared library — Tinkers' Construct depends on it." },
+    { "modId": "thermalexpansion", "note": "Pack-defining tech mod." },
+    { "modId": "thermalfoundation", "note": "Pack-defining tech mod; Thermal series base." },
+    { "modId": "mekanism", "note": "Pack-defining tech mod." },
+    { "modId": "create", "note": "Pack-defining tech mod with a large dependent set." },
+    { "modId": "ae2", "note": "Applied Energistics 2 — pack-defining storage mod." },
+    { "modId": "appliedenergistics2", "note": "Alternate modId for AE2 — see ae2." },
+    { "modId": "ic2", "note": "IndustrialCraft 2 — pack-defining tech mod." },
+    { "modId": "industrialcraft", "note": "Alternate modId for IC2 — see ic2." },
+    { "modId": "thaumcraft", "note": "Pack-defining magic mod with a large addon set." },
+    { "modId": "botania", "note": "Pack-defining magic mod." },
+    { "modId": "tconstruct", "note": "Tinkers' Construct — pack-defining; many packs gate progression on it." },
+
+    { "modId": "frostedheart", "note": "Pack-title content — the pack is unplayable without it." },
+    { "modId": "caupona", "note": "FrostedHeart dependency — see frostedheart." },
+    { "modId": "guideme", "note": "AE2 documentation dependency; removal breaks AE2 startup." },
+
+    { "modId": "modern_industrialization", "note": "Pack-defining industrial mod — never leave parked as 'missing deps'." },
+    { "modId": "powah", "note": "Pack-defining industrial mod — see modern_industrialization." },
+
+    { "modId": "minecolonies", "note": "Colony packs die without this; stack-frame quarantine was collateral, not cause." },
+
+    { "modId": "ftblibrary", "note": "FTB suite — quests/chunks/teams all fail to load without it." },
+    { "modId": "ftbchunks", "note": "FTB suite — see ftblibrary." },
+    { "modId": "ftbquests", "note": "FTB suite — pack progression content." },
+    { "modId": "ftbteams", "note": "FTB suite — see ftblibrary." },
+
+    { "modId": "astralsorcery", "note": "Pack-defining magic mod." },
+
+    { "modId": "crafttweaker", "note": "Script host — recipe scripts fail pack-wide without it." },
+    { "modId": "contenttweaker", "note": "Script host — see crafttweaker." },
+    { "modId": "mtlib", "note": "CraftTweaker support library — see crafttweaker." },
+    { "modId": "modtweaker", "note": "CraftTweaker support library — see crafttweaker." },
+
+    { "modId": "the_vault", "note": "Pack-title content (Vault Hunters) — the pack is the mod." },
+    { "modId": "irons_spellbooks", "note": "Pack-title content in several RPG packs." },
+    { "modId": "custommachinery", "note": "Pack-defining: machines are defined by pack data, so removal voids progression." }
+  ]
+}

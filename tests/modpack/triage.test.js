@@ -1,7 +1,12 @@
 "use strict";
 
+jest.mock("../../utility/logger.js", () => ({
+  log: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn(), debugExtended: jest.fn()
+}));
+
 const {
-  sanitizeVerdict, createNoneProvider, diagnose, DEFAULTS
+  sanitizeVerdict, createNoneProvider, createAnthropicProvider, diagnose,
+  DEFAULTS, MAX_TOKENS, REQUEST_TIMEOUT_MS
 } = require("../../utility/modpack/triage/index.js");
 const { createModIndex } = require("../../utility/crash_attribution.js");
 
@@ -41,6 +46,47 @@ describe("sanitizeVerdict", () => {
     }, index);
     expect(v.jars).toEqual([]);
     expect(v.action).toBe("give-up");
+  });
+});
+
+describe("anthropic provider request shape", () => {
+  function fakeClient(response) {
+    const parse = jest.fn().mockResolvedValue(response);
+    return { client: { messages: { parse } }, parse };
+  }
+
+  test("budgets max_tokens well above the verdict and disables thinking", async () => {
+    const { client, parse } = fakeClient({
+      parsed_output: { diagnosis: "d", action: "give-up", jars: [], confidence: "high" },
+      stop_reason: "end_turn"
+    });
+    const provider = createAnthropicProvider(DEFAULTS, client);
+    await provider.diagnose({ consoleTail: "boom", crashReport: "", modList: [] });
+
+    const [ body, options ] = parse.mock.calls[0];
+    // A verdict is a few hundred tokens; the budget must clear the prompt's
+    // overhead by a wide margin or the response is truncated to nothing.
+    expect(body.max_tokens).toBe(MAX_TOKENS);
+    expect(body.max_tokens).toBeGreaterThanOrEqual(4096);
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect(body.output_config.effort).toBe("medium");
+    expect(options.timeout).toBe(REQUEST_TIMEOUT_MS);
+  });
+
+  test("a max_tokens truncation no-ops cleanly instead of throwing", async () => {
+    const { client } = fakeClient({ parsed_output: null, stop_reason: "max_tokens" });
+    const provider = createAnthropicProvider(DEFAULTS, client);
+    await expect(
+      provider.diagnose({ consoleTail: "boom", crashReport: "", modList: [] })
+    ).resolves.toBeNull();
+  });
+
+  test("a thrown SDK error no-ops cleanly", async () => {
+    const client = { messages: { parse: jest.fn().mockRejectedValue(new Error("timeout")) } };
+    const provider = createAnthropicProvider(DEFAULTS, client);
+    await expect(
+      provider.diagnose({ consoleTail: "boom", crashReport: "", modList: [] })
+    ).resolves.toBeNull();
   });
 });
 

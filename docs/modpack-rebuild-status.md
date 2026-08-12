@@ -16,12 +16,27 @@ Plan: `.claude/plans/currently-have-a-setup-delegated-gosling.md`
 | 6 Search UX | done | Autocomplete in `index.js`; `/install-modpack pack:` + optional `server:`; single confirm; channel handoff |
 | 7 Docs | partial | readme + config/.env samples updated; SUMMARY.md / live smoke matrix still pending |
 
+## Realignment pass (2026-08-08)
+
+Phases 1–5 of `.claude/plans/robust-cuddling-snail.md`: four correctness fixes
+(nested-archive bypass, triage token budget, `done()` handoff, handoff clock),
+operational bounds on triage and both autocompletes, per-pack tables moved into
+capped `data/*.json`, and the two missing verification tiers built. Live
+`config.json` migrated. See `SUMMARY.md` for current state and
+`docs/modpack-blockers.md` for accepted structural deviations.
+
+| Phase | Status |
+|---|---|
+| 7 Docs | done — readme, CLAUDE.md, SUMMARY.md, blockers doc |
+| Tier 1 `scripts/modpack_preflight.js` | done — offline plan dump |
+| Tier 2 `scripts/modpack_smoke.js` | built (replaces `live_modpack_matrix.js`), **not yet run** |
+
 ## Remaining before “feature done”
 
 1. `npm install @anthropic-ai/sdk` when enabling live triage (optional dep — code soft-requires it).
-2. `node deploy.js` then Discord smoke: `/install-modpack pack:` autocomplete → install on scratch server.
-3. Tier 2 smoke: `scripts/modpack_smoke.js` (rewrite from `live_modpack_matrix.js` still pending).
-4. Update `SUMMARY.md` against new results.
+2. Set `ANTHROPIC_API_KEY` in `.env` and confirm a real verdict comes back (the no-key path is already a verified no-op).
+3. **Tier 2 smoke against a live panel** — `node scripts/modpack_smoke.js --server=<id>`. Required before deploying.
+4. `node deploy.js` then Discord smoke: `/install-modpack pack:` autocomplete → install on scratch server.
 
 ## Expected unsupported after X11/JEID cut
 

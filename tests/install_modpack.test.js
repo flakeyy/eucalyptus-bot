@@ -70,7 +70,8 @@ jest.mock("../config.json", () => ({
 const curseforge = require("../utility/curseforge.js");
 const { parseProjectId, parseModpackSlug, detectLoaderType, findServerPack } = curseforge;
 
-const { execute, runInstallation } = require("../commands/ptero/install_modpack.js");
+const installModpack = require("../commands/ptero/install_modpack.js");
+const { execute, runInstallation, clearServerListCache } = installModpack;
 const serverFunctions = require("../utility/server_functions.js");
 const helpers = require("../utility/helper_functions.js");
 const perms = require("../utility/permissions.js");
@@ -702,5 +703,77 @@ describe("runInstallation behavior", () => {
       const lastCall = JSON.stringify(mockInteraction.editReply.mock.calls.at(-1)[0].components[0]);
       expect(lastCall).toContain("Installation Complete");
     });
+  });
+});
+
+// ─── Server Autocomplete Budget ──────────────────────────────────────────────
+
+describe("server autocomplete", () => {
+  function makeAutocompleteInteraction(value = "") {
+    return {
+      user: { id: "discord1", username: "tester" },
+      options: { getFocused: () => ({ name: "server", value }) },
+      respond: jest.fn().mockResolvedValue(undefined)
+    };
+  }
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    clearServerListCache();
+    helpers.getUserId.mockReturnValue(1);
+    serverFunctions.getClientServers.mockResolvedValue({
+      data: [
+        { attributes: { identifier: "abc123", name: "Survival", internal_id: 1 } },
+        { attributes: { identifier: "def456", name: "Creative", internal_id: 2 } }
+      ]
+    });
+    helpers.applicationApiCall.mockResolvedValue({
+      statusCode: 200,
+      body: {
+        json: async () => ({
+          attributes: { relationships: { servers: { data: [
+            { attributes: { identifier: "abc123", nest: 1 } },
+            { attributes: { identifier: "def456", nest: 1 } }
+          ] } } }
+        })
+      }
+    });
+  });
+
+  test("caches the panel round trip across keystrokes", async () => {
+    const i1 = makeAutocompleteInteraction("s");
+    await installModpack.autocomplete(i1);
+    const i2 = makeAutocompleteInteraction("su");
+    await installModpack.autocomplete(i2);
+    const i3 = makeAutocompleteInteraction("sur");
+    await installModpack.autocomplete(i3);
+
+    // Three keystrokes, one fetch of the server list.
+    expect(serverFunctions.getClientServers).toHaveBeenCalledTimes(1);
+    expect(helpers.applicationApiCall).toHaveBeenCalledTimes(1);
+    expect(i3.respond).toHaveBeenCalledWith([ { name: "Survival", value: "abc123" } ]);
+  });
+
+  test("filters the cached list by the typed query", async () => {
+    const i = makeAutocompleteInteraction("creat");
+    await installModpack.autocomplete(i);
+    expect(i.respond).toHaveBeenCalledWith([ { name: "Creative", value: "def456" } ]);
+  });
+
+  test("a hung panel responds empty rather than blowing the 3s deadline", async () => {
+    jest.useFakeTimers();
+    try {
+      clearServerListCache();
+      serverFunctions.getClientServers.mockImplementation(() => new Promise(() => {}));
+
+      const i = makeAutocompleteInteraction("s");
+      const p = installModpack.autocomplete(i);
+      await jest.advanceTimersByTimeAsync(3000);
+      await p;
+
+      expect(i.respond).toHaveBeenCalledWith([]);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

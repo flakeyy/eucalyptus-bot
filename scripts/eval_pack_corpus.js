@@ -755,7 +755,13 @@ async function main() {
   console.log(reportMd.split("\n").slice(0, 80).join("\n"));
 }
 
-main().catch(e => {
-  console.error(e);
-  process.exit(1);
-});
+// Only run the (long, network-heavy) sweep when invoked directly — requiring
+// this module just to read PACKS must not kick off a full corpus download.
+if (require.main === module) {
+  main().catch(e => {
+    console.error(e);
+    process.exit(1);
+  });
+}
+
+module.exports = { PACKS };

@@ -83,8 +83,7 @@ function watchBootAttempt(
   {
     ignoreEulaMarkers = false,
     historyFlushMs = DEFAULTS.history_flush_ms,
-    ignoreCrashReportNames = null,
-    skipStart = false
+    ignoreCrashReportNames = null
   } = {}
 ) {
   return new Promise(resolve => {
@@ -296,10 +295,6 @@ function watchBootAttempt(
       }
       if (settled) return;
       acceptingConsole = true;
-      if (skipStart) {
-        msgLog.warn(`[boot-verify] ${serverId}: resuming boot watch without restart`);
-        return;
-      }
       try {
         await setServerPowerState(serverId, userId, "start");
       } catch (err) {

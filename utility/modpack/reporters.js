@@ -18,13 +18,17 @@ class DiscordReporter {
    * @param {object} [opts.channel]  Discord channel for late handoff
    * @param {number} [opts.throttleMs]
    * @param {number} [opts.handoffMs]
+   * @param {number} [opts.startedAt]  Interaction createdTimestamp. Discord kills
+   *   the token 15 minutes after the *original* interaction, not after the install
+   *   was confirmed — a user can spend minutes in the wizard first, so defaulting
+   *   this to construction time would let the handoff fire after the token is dead.
    */
   constructor(replyTarget, opts = {}) {
     this._reply = replyTarget;
     this._channel = opts.channel ?? replyTarget?.channel ?? null;
     this._throttleMs = opts.throttleMs ?? WS_THROTTLE_MS;
     this._handoffMs = opts.handoffMs ?? TOKEN_HANDOFF_MS;
-    this._startedAt = Date.now();
+    this._startedAt = opts.startedAt ?? Date.now();
     this._lastEditAt = 0;
     this._pending = null;
     this._pendingTimer = null;
@@ -81,15 +85,20 @@ class DiscordReporter {
       .setAccentColor(accent)
       .addTextDisplayComponents(text => text.setContent(message));
 
+    // done() takes this path too: a job that finishes past the window without
+    // ever having crossed it during a progress edit would otherwise send its
+    // final result to a dead token, where .catch() swallows the failure — the
+    // frozen-message outcome the handoff exists to prevent.
     const elapsed = Date.now() - this._startedAt;
-    if (!this._handedOff && !isDone && elapsed >= this._handoffMs && this._channel?.send) {
+    if (!this._handedOff && elapsed >= this._handoffMs && this._channel?.send) {
+      const pointer = isDone
+        ? "**Installing Modpack**\n\nFinished — the result is in the channel below."
+        : "**Installing Modpack**\n\nContinuing in the channel below — this install is taking longer than Discord allows for ephemeral updates.";
       try {
         await this._reply.editReply({
           components: [ new ContainerBuilder()
             .setAccentColor(COLORS.PRIMARY)
-            .addTextDisplayComponents(text =>
-              text.setContent("**Installing Modpack**\n\nContinuing in the channel below — this install is taking longer than Discord allows for ephemeral updates.")
-            ) ],
+            .addTextDisplayComponents(text => text.setContent(pointer)) ],
           flags: MessageFlags.IsComponentsV2
         }).catch(() => {});
         this._channelMessage = await this._channel.send({

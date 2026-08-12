@@ -1,0 +1,60 @@
+{
+  "_comment": [
+    "Extra CurseForge/Modrinth slugs to resolve directly when provider text",
+    "search misses a well-known pack. Consulted by candidateSlugs()",
+    "(utility/modpack/search.js) and merged into the ranked hit list.",
+    "",
+    "Keys are normalized queries (lowercase, punctuation collapsed to spaces —",
+    "see normalizeSearchText). Values are provider slugs tried on both providers.",
+    "",
+    "Each alias costs two upstream requests per keystroke that matches it, and",
+    "candidateSlugs caps the total tried per query (MAX_CANDIDATE_SLUGS), so",
+    "aliases are for packs the providers genuinely fail to return by name — not",
+    "a general-purpose ranking fix. Reach for the scoring in scoreHit() first.",
+    "",
+    "max_entries is enforced by tests/modpack/search.test.js."
+  ],
+  "max_entries": 15,
+  "entries": [
+    {
+      "query": "simply optimized",
+      "slugs": [ "sop" ],
+      "note": "Modrinth text search does not return project 'sop' for its own title."
+    },
+    {
+      "query": "sop",
+      "slugs": [ "sop" ],
+      "note": "Users type the abbreviation; it is the literal Modrinth slug."
+    },
+    {
+      "query": "rlcraft",
+      "slugs": [ "rlcraft" ],
+      "note": "CF search ranks fan packs above the original for this exact query."
+    },
+    {
+      "query": "rl craft",
+      "slugs": [ "rlcraft" ],
+      "note": "Common spacing variant of rlcraft."
+    },
+    {
+      "query": "pixelmon",
+      "slugs": [ "the-pixelmon-modpack" ],
+      "note": "Official pack's slug does not lead with the searched word."
+    },
+    {
+      "query": "create above and beyond",
+      "slugs": [ "create-above-and-beyond" ],
+      "note": "Long titles dilute CF relevance scoring; resolve the slug directly."
+    },
+    {
+      "query": "create aab",
+      "slugs": [ "create-above-and-beyond" ],
+      "note": "Community abbreviation for Create: Above and Beyond."
+    },
+    {
+      "query": "aab",
+      "slugs": [ "create-above-and-beyond" ],
+      "note": "Bare community abbreviation — no provider returns the pack for it."
+    }
+  ]
+}

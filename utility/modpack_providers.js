@@ -118,37 +118,38 @@ async function listCurseforgeFiles(modpack) {
 
   // Prefer server packs when the author published one. Fall back to the client
   // pack (manifest + strip client-only jars) only when no linked server pack exists.
+  // One option per version: emitting both doubled the list past MAX_FILE_OPTIONS
+  // (which was applied to client files only) and interleaved near-identical pairs
+  // across 20 pages. The description marks which kind was chosen.
+  // `metaFile` is the client file the version was listed from: server-pack
+  // entries frequently ship sparse gameVersions, so loader/MC detection reads
+  // through to the client file rather than losing the metadata with the option.
   const rawOptions = [];
   for (const clientFile of sortedClientFiles) {
     const sp = clientFile.serverPackFileId
       ? serverPackById.get(clientFile.serverPackFileId)
       : null;
-    if (sp?.downloadUrl) {
-      rawOptions.push(sp);
-      rawOptions.push(clientFile);
-    } else {
-      rawOptions.push(clientFile);
-    }
+    rawOptions.push(sp?.downloadUrl
+      ? { file: sp, metaFile: clientFile }
+      : { file: clientFile, metaFile: clientFile });
   }
 
-  return rawOptions.map(file => {
-    const mcVersion = detectMCVersion(cf, file);
-    const mcVer = file.gameVersions?.find(v => /^\d+\.\d+/.test(v) && !LOADER_KEYWORDS.test(v));
-    const date = file.fileDate?.slice(0, 10) ?? "";
+  return rawOptions.map(({ file, metaFile }) => {
+    const mcVersion = detectMCVersion(cf, file) ?? detectMCVersion(cf, metaFile);
+    const gameVersions = file.gameVersions?.length ? file.gameVersions : metaFile.gameVersions;
+    const mcVer = gameVersions?.find(v => /^\d+\.\d+/.test(v) && !LOADER_KEYWORDS.test(v));
+    const date = (file.fileDate ?? metaFile.fileDate)?.slice(0, 10) ?? "";
     const packType = file.isServerPack ? "Server pack" : "Client pack";
     const sizeMb = file.fileLength ? `${(file.fileLength / 1_048_576).toFixed(1)} MB` : null;
     const description = [ mcVer, date, sizeMb, packType ].filter(Boolean).join(" · ").slice(0, 100);
     return {
       id: String(file.id),
-      label: file.displayName.slice(0, 100),
+      label: String(file.displayName || metaFile.displayName || file.id).slice(0, 100),
       description,
       downloadUrl: file.downloadUrl,
       isServerPack: !!file.isServerPack,
       mcVersion,
-      loaderType: resolveLoaderType({
-        gameVersions: file.gameVersions,
-        mcVersion
-      }) || loaderType
+      loaderType: resolveLoaderType({ gameVersions, mcVersion }) || loaderType
     };
   });
 }

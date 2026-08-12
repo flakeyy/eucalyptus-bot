@@ -10,13 +10,62 @@ const { getErrorMessage } = require("../../utility/error_messages.js");
 const { lookupModpack, listModpackFiles, FILE_SELECT_PAGE_SIZE } = require("../../utility/modpack_providers.js");
 const { runModpackJob } = require("../../utility/modpack/job.js");
 const { DiscordReporter } = require("../../utility/modpack/reporters.js");
-const { searchModpacks, parsePackChoice } = require("../../utility/modpack/search.js");
+const { searchModpacks, parsePackChoice, SEARCH_BUDGET_MS, CACHE_TTL_MS } = require("../../utility/modpack/search.js");
 const config = require("../../config.json");
 const { COLORS, COLLECTOR_IDLE_TIMEOUT, HTTP_STATUS_CODES } = require("../../utility/constants.js");
 
+// Server autocomplete does a full getClientServers plus an application-API user
+// fetch per keystroke against Discord's 3s deadline. Cache the resolved list per
+// user on the same TTL the pack search uses, and bound it the same way.
+const serverListCache = new Map(); // discordUserId → { at, servers: [{ name, value }] }
+
+function withTimeout(promise, ms) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error("autocomplete-timeout")), ms);
+  });
+  return Promise.race([ promise, timeout ]).finally(() => clearTimeout(timer));
+}
+
+/** Minecraft servers the user owns, as autocomplete choices. Cached per user. */
+async function loadServerChoices(discordUserId) {
+  const hit = serverListCache.get(discordUserId);
+  if (hit && Date.now() - hit.at <= CACHE_TTL_MS) return hit.servers;
+
+  const serverObjects = await getClientServers(discordUserId);
+  const nestMap = {};
+  const panelId = getUserId(discordUserId);
+  if (panelId > 0) {
+    try {
+      const userApi = await applicationApiCall(`application/users/${panelId}?include=servers`, "GET");
+      if (userApi.statusCode === HTTP_STATUS_CODES.OK) {
+        const userData = await userApi.body.json();
+        for (const server of userData.attributes.relationships.servers.data) {
+          nestMap[server.attributes.identifier] = server.attributes.nest;
+        }
+      }
+    } catch { /* ignore — list without nest filter */ }
+  }
+
+  const servers = (serverObjects?.data || [])
+    .filter(s => nestMap[s.attributes.identifier] === config.minecraft_nest_id)
+    .map(s => ({ name: `${s.attributes.name}`.slice(0, 100), value: s.attributes.identifier }));
+
+  serverListCache.set(discordUserId, { at: Date.now(), servers });
+  return servers;
+}
+
+function clearServerListCache() {
+  serverListCache.clear();
+}
+
 /** Thin Discord adapter — job lives in utility/modpack/job.js. */
 async function runInstallation(i, state, interaction) {
-  const reporter = new DiscordReporter(i, { channel: interaction.channel ?? null });
+  const reporter = new DiscordReporter(i, {
+    channel: interaction.channel ?? null,
+    // Token lifetime runs from the original interaction, not from confirm.
+    startedAt: interaction.createdTimestamp
+  });
   return runModpackJob({
     ...state,
     userId: interaction.user.id,
@@ -140,6 +189,7 @@ function buildConfirmView1(serverName, modpackName, fileName, loaderType) {
 
 module.exports = {
   runInstallation,
+  clearServerListCache,
 
   category: "Servers",
   requiresApiKey: true,
@@ -169,29 +219,11 @@ module.exports = {
     }
     if (focused.name === "server") {
       try {
-        const serverObjects = await getClientServers(interaction.user.id);
-        const nestMap = {};
-        const panelId = getUserId(interaction.user.id);
-        if (panelId > 0) {
-          try {
-            const userApi = await applicationApiCall(`application/users/${panelId}?include=servers`, "GET");
-            if (userApi.statusCode === HTTP_STATUS_CODES.OK) {
-              const userData = await userApi.body.json();
-              for (const server of userData.attributes.relationships.servers.data) {
-                nestMap[server.attributes.identifier] = server.attributes.nest;
-              }
-            }
-          } catch { /* ignore — list without nest filter */ }
-        }
+        const servers = await withTimeout(loadServerChoices(interaction.user.id), SEARCH_BUDGET_MS);
         const q = String(focused.value || "").toLowerCase();
-        const choices = (serverObjects?.data || [])
-          .filter(s => nestMap[s.attributes.identifier] === config.minecraft_nest_id)
-          .filter(s => !q || s.attributes.name.toLowerCase().includes(q) || s.attributes.identifier.includes(q))
-          .slice(0, 25)
-          .map(s => ({
-            name: `${s.attributes.name}`.slice(0, 100),
-            value: s.attributes.identifier
-          }));
+        const choices = servers
+          .filter(s => !q || s.name.toLowerCase().includes(q) || s.value.includes(q))
+          .slice(0, 25);
         await interaction.respond(choices);
       } catch {
         await interaction.respond([]);
